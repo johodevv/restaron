@@ -1,0 +1,29 @@
+services:
+  # Backend FastAPI Service (Free Tier on Render)
+  - type: web
+    name: restaron-backend
+    runtime: python
+    region: frankfurt
+    plan: free
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.0
+      - key: APP_ENV
+        value: production
+      - key: DEBUG
+        value: "false"
+      - key: SECRET_KEY
+        generateValue: true
+      - key: ALGORITHM
+        value: HS256
+      - key: ACCESS_TOKEN_EXPIRE_MINUTES
+        value: "1440"
+      - key: DATABASE_URL
+        value: sqlite+aiosqlite:///./restaron.db
+      - key: CORS_ORIGINS
+        value: "*"
+      - key: QR_BASE_URL
+        value: https://restaron-frontend.vercel.app
