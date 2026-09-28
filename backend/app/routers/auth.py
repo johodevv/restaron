@@ -4,17 +4,18 @@ Auth API — Login, token olish
 from datetime import timedelta
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, func
 
 from app.core.database import get_db
 from app.core.security import (
-    verify_password, create_access_token, get_current_user
+    verify_password, get_password_hash, create_access_token, get_current_user
 )
 from app.core.config import settings
-from app.models.user import User
+from app.models.user import User, UserRole
 from app.schemas.user import LoginRequest, TokenResponse, UserResponse
 
 router = APIRouter(prefix="/auth", tags=["🔐 Auth"])
+
 
 
 @router.post("/login", response_model=TokenResponse, summary="Login qilish")
