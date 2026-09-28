@@ -1,7 +1,7 @@
-/**
- * RestAron API Helper
- */
-const BASE_URL = import.meta.env.VITE_API_URL || '/api/v1';
+const rawApiUrl = import.meta.env.VITE_API_URL || '';
+export const BASE_URL = rawApiUrl
+  ? (rawApiUrl.endsWith('/api/v1') ? rawApiUrl : `${rawApiUrl.replace(/\/+$/, '')}/api/v1`)
+  : '/api/v1';
 
 async function request(endpoint, options = {}) {
   const token = localStorage.getItem('restaron_token');

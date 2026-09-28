@@ -4,8 +4,8 @@ from typing import Optional
 
 class Settings(BaseSettings):
     # Database
-    DATABASE_URL: str = "postgresql+asyncpg://postgres:password@localhost:5432/restaron_db"
-    SYNC_DATABASE_URL: str = "postgresql://postgres:password@localhost:5432/restaron_db"
+    DATABASE_URL: str = "sqlite+aiosqlite:///./restaron.db"
+    SYNC_DATABASE_URL: str = "sqlite:///./restaron.db"
 
     # JWT
     SECRET_KEY: str = "your-super-secret-key-change-in-production-min-32-chars"

@@ -76,7 +76,17 @@ export const WebSocketProvider = ({ children, restaurantId = 1, tableId = null }
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const host = window.location.host;
 
-    const baseWs = import.meta.env.VITE_WS_URL || `${protocol}//${host}/api/v1/ws`;
+    let baseWs = import.meta.env.VITE_WS_URL;
+    if (!baseWs) {
+      const rawApi = import.meta.env.VITE_API_URL;
+      if (rawApi && rawApi.startsWith('http')) {
+        const wsProto = rawApi.startsWith('https') ? 'wss:' : 'ws:';
+        const cleanHost = rawApi.replace(/^https?:\/\//, '').replace(/\/api\/v1\/?$/, '').replace(/\/+$/, '');
+        baseWs = `${wsProto}//${cleanHost}/api/v1/ws`;
+      } else {
+        baseWs = `${protocol}//${host}/api/v1/ws`;
+      }
+    }
     const params = new URLSearchParams();
     if (token) params.append('token', token);
     if (tableId) params.append('table_id', tableId);
