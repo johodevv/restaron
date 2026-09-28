@@ -43,12 +43,23 @@ export const App = () => {
   const [reviewOpen, setReviewOpen] = useState(false);
 
   useEffect(() => {
-    // URL dan ?table=TOKEN ni tekshirish
+    // Auth yuklanayotgan bo'lsa kutamiz
+    if (authLoading) return;
+
+    // Xodim (admin/waiter/chef) login bo'lgan — QR scan kerak emas, darhol ishga tushsin
+    if (user) {
+      setTableInfo(null);
+      setTableUnlocked(false);
+      setLoadingTable(false);
+      return;
+    }
+
+    // URL dan ?table=TOKEN ni tekshirish (faqat mijozlar uchun)
     const params = new URLSearchParams(window.location.search);
     const qrToken = params.get('table');
 
-    // 5 soniyadan keyin qolib ketishining oldini olish
-    const timeout = setTimeout(() => setLoadingTable(false), 5000);
+    // 8 soniyadan keyin qolib ketishining oldini olish
+    const timeout = setTimeout(() => setLoadingTable(false), 8000);
 
     const resolveTable = async () => {
       let currentTable = null;
@@ -91,7 +102,7 @@ export const App = () => {
 
     resolveTable();
     return () => clearTimeout(timeout);
-  }, []);
+  }, [authLoading, user]);
 
   const handleSelectTable = async (table) => {
     setTableInfo(table);
@@ -136,7 +147,11 @@ export const App = () => {
 
   const restaurantId = user?.restaurant_id || tableInfo?.restaurant_id || 1;
 
-  if (authLoading || loadingTable) {
+  // Xodim login bo'lgan — loadingTable ni kutmaydi (darhol dashboard ko'rsatiladi)
+  // Mijoz — auth va tableInfo ikkalasini kutadi
+  const showLoading = authLoading || (!user && loadingTable);
+
+  if (showLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-theme-bg text-theme-muted">
         <div className="text-center space-y-3">
