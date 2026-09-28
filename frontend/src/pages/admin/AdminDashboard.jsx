@@ -29,6 +29,7 @@ import {
   Clock,
   Flame,
   CheckCircle,
+  CheckCircle2,
   AlertTriangle,
   FileImage,
   Receipt,
