@@ -47,6 +47,9 @@ export const App = () => {
     const params = new URLSearchParams(window.location.search);
     const qrToken = params.get('table');
 
+    // 5 soniyadan keyin qolib ketishining oldini olish
+    const timeout = setTimeout(() => setLoadingTable(false), 5000);
+
     const resolveTable = async () => {
       let currentTable = null;
       if (qrToken) {
@@ -82,10 +85,12 @@ export const App = () => {
         }
       }
 
+      clearTimeout(timeout);
       setLoadingTable(false);
     };
 
     resolveTable();
+    return () => clearTimeout(timeout);
   }, []);
 
   const handleSelectTable = async (table) => {

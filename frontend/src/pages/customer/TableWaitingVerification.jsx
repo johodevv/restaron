@@ -18,7 +18,9 @@ export const TableWaitingVerification = ({
   onUnlocked,
   onReturnToLanding,
 }) => {
-  const { addEventListener, playChime } = useWebSocket();
+  const wsContext = useWebSocket();
+  const addEventListener = wsContext?.addEventListener;
+  const playChime = wsContext?.playChime;
   const [callingWaiter, setCallingWaiter] = useState(false);
   const [callSent, setCallSent] = useState(false);
   const [unlockedSuccess, setUnlockedSuccess] = useState(false);
@@ -40,6 +42,7 @@ export const TableWaitingVerification = ({
     }
 
     // Listen to real-time table_unlocked websocket event
+    if (!addEventListener) return;
     const unsubscribe = addEventListener('table_unlocked', (event) => {
       if (
         event.table_id === tableInfo?.id ||
@@ -63,7 +66,7 @@ export const TableWaitingVerification = ({
       }
     });
 
-    return () => unsubscribe();
+    return () => { if (unsubscribe) unsubscribe(); };
   }, [tableInfo?.id, onUnlocked, playChime]);
 
   const handleCallWaiter = async () => {

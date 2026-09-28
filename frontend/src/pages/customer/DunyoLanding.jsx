@@ -64,15 +64,12 @@ export const DunyoLanding = ({ onOpenLogin }) => {
             Samovarda damlangan shifobaxsh choylar, issiq tandir somsasi, qarsildoq qozon kabob va afsonaviy devzira palovimizdan bahramand bo'ling.
           </p>
 
-          {/* Action CTAs: Only Staff Portal */}
+          {/* QR orqali kirishni eslatish */}
           <div className="flex items-center justify-center pt-2">
-            <button
-              onClick={onOpenLogin}
-              className="px-6 py-3.5 rounded-2xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-black font-extrabold text-sm shadow-xl shadow-amber-500/20 flex items-center gap-2 active:scale-98 transition-all"
-            >
-              <Users className="w-4 h-4" />
-              <span>Xodimlar Portali</span>
-            </button>
+            <div className="inline-flex items-center gap-2 px-5 py-3 rounded-2xl bg-white/5 border border-white/10 text-theme-muted text-xs">
+              <span>📱</span>
+              <span>Menyuni ko'rish uchun stoldagi QR kodni skaner qiling</span>
+            </div>
           </div>
 
           {/* Feature Highlights */}
