@@ -68,8 +68,7 @@ export const App = () => {
           const tableData = await api.get(`/tables/scan/${qrToken}`);
           currentTable = tableData;
           setTableInfo(tableData);
-          const savedUnlocked = localStorage.getItem(`unlocked_table_${tableData.id}`);
-          setTableUnlocked(Boolean(tableData.is_unlocked || savedUnlocked === 'true'));
+          setTableUnlocked(Boolean(tableData.is_unlocked));
         } catch (e) {
           console.warn('QR token topilmadi:', e);
           setTableInfo(null);

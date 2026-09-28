@@ -127,14 +127,12 @@ async def scan_qr(qr_token: str, db: AsyncSession = Depends(get_db)):
     if not table:
         raise HTTPException(status_code=404, detail="QR kod yaroqsiz yoki stol faol emas")
 
-    # Agar stol kodi yo'q bo'lsa yoki hali tasdiqlanmagan bo'lsa, 4-xonali PIN generatsiya
+    # Agar stol hali tasdiqlanmagan bo'lsa yoki bo'sh (AVAILABLE) bo'lsa -> yangi PIN va qulf holati
     needs_broadcast = False
-    if not table.is_unlocked and not table.current_pin:
-        table.current_pin = f"{random.randint(1000, 9999)}"
-        table.is_unlocked = False
-        needs_broadcast = True
-
-    if table.status == TableStatus.AVAILABLE or table.status == "available":
+    if not table.is_unlocked or not table.current_pin or table.status == TableStatus.AVAILABLE or table.status == "available":
+        if not table.current_pin or table.status == TableStatus.AVAILABLE or table.status == "available":
+            table.current_pin = f"{random.randint(1000, 9999)}"
+            table.is_unlocked = False
         table.status = TableStatus.OCCUPIED
         needs_broadcast = True
 
@@ -199,6 +197,38 @@ async def unlock_table(table_id: int, db: AsyncSession = Depends(get_db)):
         },
     )
     return {"status": "success", "message": f"Stol #{table.number} muvaffaqiyatli ochildi", "is_unlocked": True}
+
+
+@router.post("/{table_id}/lock", summary="Stolni qayta qulflash va yangi PIN berish")
+async def lock_table(
+    table_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role("waiter", "admin", "developer")),
+):
+    """Ofitsiant yoki Admin stolni qayta bloklaydi va yangi PIN generatsiya qiladi"""
+    result = await db.execute(select(Table).where(Table.id == table_id))
+    table = result.scalar_one_or_none()
+    if not table:
+        raise HTTPException(status_code=404, detail="Stol topilmadi")
+
+    table.is_unlocked = False
+    table.current_pin = f"{random.randint(1000, 9999)}"
+    await db.flush()
+    await db.commit()
+
+    await manager.broadcast_to_restaurant(
+        table.restaurant_id,
+        {
+            "type": "table_status_updated",
+            "table_id": table.id,
+            "table_number": table.number,
+            "is_unlocked": False,
+            "pin": table.current_pin,
+            "message": f"Stol #{table.number} qayta qulflandi. Yangi kod: {table.current_pin}",
+        },
+    )
+    return {"status": "success", "message": f"Stol #{table.number} qulflandi", "pin": table.current_pin, "is_unlocked": False}
+
 
 
 @router.get("/{table_id}/bill", response_model=TableBillResponse, summary="Stol hisobi (Chek)")

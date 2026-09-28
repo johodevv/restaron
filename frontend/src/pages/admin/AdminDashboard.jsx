@@ -35,7 +35,8 @@ import {
   UserMinus,
   BellRing,
   Power,
-  ShieldCheck
+  ShieldCheck,
+  Lock
 } from 'lucide-react';
 
 export const AdminDashboard = () => {
@@ -177,6 +178,17 @@ export const AdminDashboard = () => {
       alert(err.message || 'Stolni tasdiqlashda xatolik yuz berdi');
     }
   };
+
+  // Handle Table Lock (Qayta qulflash / Yangi PIN)
+  const handleLockTable = async (tableId) => {
+    try {
+      await api.post(`/tables/${tableId}/lock`, {});
+      await loadAll();
+    } catch (err) {
+      alert(err.message || 'Stolni qulflashda xatolik yuz berdi');
+    }
+  };
+
 
   // Handle Staff Deletion (Bo'shatish)
   const handleDeleteStaff = async (staffId, staffName) => {
@@ -1140,6 +1152,16 @@ export const AdminDashboard = () => {
                       <Receipt className="w-3.5 h-3.5" />
                       <span>Chek / Hisobni ko'rish</span>
                     </button>
+
+                    {t.is_unlocked && (
+                      <button
+                        onClick={() => handleLockTable(t.id)}
+                        className="w-full py-2 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30 text-amber-300 font-bold text-xs flex items-center justify-center gap-1.5 transition-all"
+                      >
+                        <Lock className="w-3.5 h-3.5" />
+                        <span>Qayta Qulflash (Yangi PIN)</span>
+                      </button>
+                    )}
 
                     {isOccupied && (
                       <button

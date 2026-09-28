@@ -28,18 +28,12 @@ export const TableWaitingVerification = ({
   const pinCode = tableInfo?.pin || tableInfo?.current_pin || '----';
 
   useEffect(() => {
-    // Check if table is already unlocked
+    // Check if table is already unlocked from server
     if (tableInfo?.is_unlocked) {
       onUnlocked();
       return;
     }
 
-    // Check localStorage
-    const savedUnlocked = localStorage.getItem(`unlocked_table_${tableInfo?.id}`);
-    if (savedUnlocked === 'true') {
-      onUnlocked();
-      return;
-    }
 
     // Listen to real-time table_unlocked websocket event
     if (!addEventListener) return;

@@ -116,7 +116,8 @@ async def seed():
         # ─── 1. Developer akkaunt ─────────────────────────────
         from sqlalchemy import select
         result = await db.execute(select(User).where(User.username == "developer"))
-        if not result.scalar_one_or_none():
+        dev_user = result.scalar_one_or_none()
+        if not dev_user:
             dev = User(
                 username="developer",
                 full_name="Tizim Dasturchi",
@@ -126,6 +127,29 @@ async def seed():
             )
             db.add(dev)
             print("✅ Developer akkaunt yaratildi: developer / dev123456")
+        else:
+            dev_user.hashed_password = get_password_hash("dev123456")
+            dev_user.role = UserRole.DEVELOPER
+            dev_user.is_active = True
+            print("✅ Developer akkaunt yangilandi: developer / dev123456")
+
+        result_dev2 = await db.execute(select(User).where(User.username == "dev"))
+        dev2_user = result_dev2.scalar_one_or_none()
+        if not dev2_user:
+            dev2 = User(
+                username="dev",
+                full_name="Tizim Dasturchi",
+                hashed_password=get_password_hash("dev123456"),
+                role=UserRole.DEVELOPER,
+                is_active=True,
+            )
+            db.add(dev2)
+            print("✅ Dev akkaunt yaratildi: dev / dev123456")
+        else:
+            dev2_user.hashed_password = get_password_hash("dev123456")
+            dev2_user.role = UserRole.DEVELOPER
+            dev2_user.is_active = True
+
 
         # ─── 2. Temalar ───────────────────────────────────────
         for theme_data in THEMES:

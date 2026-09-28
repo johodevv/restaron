@@ -14,7 +14,8 @@ import {
   Sparkles,
   AlertCircle,
   Table as TableIcon,
-  Receipt
+  Receipt,
+  Lock
 } from 'lucide-react';
 
 export const WaiterDashboard = () => {
@@ -92,6 +93,20 @@ export const WaiterDashboard = () => {
       setActionLoadingId(null);
     }
   };
+
+  // "Qayta qulflash" (Lock table / New PIN) handler!
+  const handleLockTable = async (tableId) => {
+    setActionLoadingId(`lock_${tableId}`);
+    try {
+      await api.post(`/tables/${tableId}/lock`, {});
+      await loadData();
+    } catch (err) {
+      alert(err.message || 'Stolni qulflashda xatolik yuz berdi');
+    } finally {
+      setActionLoadingId(null);
+    }
+  };
+
 
   // "Yetkazib berdim" (Delivered) handler!
   const handleDeliver = async (orderId, tableNumber) => {
@@ -533,6 +548,17 @@ export const WaiterDashboard = () => {
                       <Receipt className="w-3.5 h-3.5" />
                       <span>Chek / Hisobni ko'rish</span>
                     </button>
+
+                    {t.is_unlocked && (
+                      <button
+                        onClick={() => handleLockTable(t.id)}
+                        disabled={actionLoadingId === `lock_${t.id}`}
+                        className="w-full py-2 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30 text-amber-300 font-bold text-xs flex items-center justify-center gap-1.5 transition-all disabled:opacity-50"
+                      >
+                        <Lock className="w-3.5 h-3.5" />
+                        <span>Qayta qulflash (PIN)</span>
+                      </button>
+                    )}
 
                     {isOccupied && (
                       <button
