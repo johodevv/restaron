@@ -33,6 +33,11 @@ async def lifespan(app: FastAPI):
     """Startup va shutdown hodisalari"""
     # Jadvallarni yaratish
     await create_tables()
+    try:
+        from seed import seed
+        await seed()
+    except Exception as e:
+        print(f"[WARN] Auto seed xatosi: {e}")
 
     print(f"[OK] {settings.APP_NAME} ishga tushdi!")
     yield

@@ -153,38 +153,27 @@ async def seed():
             settings_obj = RestaurantSettings(restaurant_id=restaurant.id)
             db.add(settings_obj)
 
-            # Admin akkaunt
-            admin = User(
-                username="admin",
-                full_name="Restoran Admin",
-                hashed_password=get_password_hash("admin123"),
-                role=UserRole.ADMIN,
-                restaurant_id=restaurant.id,
-                is_active=True,
-            )
-            db.add(admin)
-
-            # Ofitsiant
-            waiter = User(
-                username="ofitsiant1",
-                full_name="Akbar Ofitsiant",
-                hashed_password=get_password_hash("waiter123"),
-                role=UserRole.WAITER,
-                restaurant_id=restaurant.id,
-                is_active=True,
-            )
-            db.add(waiter)
-
-            # Oshpaz
-            chef = User(
-                username="oshpaz1",
-                full_name="Zafar Oshpaz",
-                hashed_password=get_password_hash("chef123"),
-                role=UserRole.CHEF,
-                restaurant_id=restaurant.id,
-                is_active=True,
-            )
-            db.add(chef)
+            # Demo xodimlar ro'yxati
+            demo_users = [
+                {"username": "admin", "full_name": "Restoran Admin", "role": UserRole.ADMIN, "pass": "admin123"},
+                {"username": "waiter", "full_name": "Asosiy Ofitsiant", "role": UserRole.WAITER, "pass": "waiter123"},
+                {"username": "ofitsiant1", "full_name": "Akbar Ofitsiant", "role": UserRole.WAITER, "pass": "waiter123"},
+                {"username": "cook", "full_name": "Bosh Oshpaz", "role": UserRole.CHEF, "pass": "cook123"},
+                {"username": "chef", "full_name": "Chef Oshpaz", "role": UserRole.CHEF, "pass": "chef123"},
+                {"username": "oshpaz1", "full_name": "Zafar Oshpaz", "role": UserRole.CHEF, "pass": "chef123"},
+            ]
+            for u in demo_users:
+                user_res = await db.execute(select(User).where(User.username == u["username"]))
+                if not user_res.scalar_one_or_none():
+                    db_user = User(
+                        username=u["username"],
+                        full_name=u["full_name"],
+                        hashed_password=get_password_hash(u["pass"]),
+                        role=u["role"],
+                        restaurant_id=restaurant.id,
+                        is_active=True,
+                    )
+                    db.add(db_user)
             await db.flush()
 
             # Stollar (5 ta)

@@ -120,8 +120,49 @@ export const Login = ({ onSuccess, onBackToMenu }) => {
           </button>
         </form>
 
+        {/* Demo Akkauntlar Tezkor Tugmalari */}
+        <div className="pt-2 border-t border-theme-border/50">
+          <p className="text-[11px] text-center text-theme-muted mb-2 font-medium">
+            💡 Sinab ko'rish uchun tezkor kirish (bosing):
+          </p>
+          <div className="grid grid-cols-2 gap-2">
+            <button
+              type="button"
+              onClick={() => { setUsername('admin'); setPassword('admin123'); }}
+              className="px-2.5 py-1.5 rounded-lg bg-white/5 hover:bg-theme-primary/20 border border-white/10 hover:border-theme-primary/40 text-left transition-all group"
+            >
+              <span className="block text-[11px] font-bold text-white group-hover:text-theme-primary">👑 Admin</span>
+              <span className="block text-[9px] text-theme-muted font-mono">admin / admin123</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => { setUsername('waiter'); setPassword('waiter123'); }}
+              className="px-2.5 py-1.5 rounded-lg bg-white/5 hover:bg-theme-primary/20 border border-white/10 hover:border-theme-primary/40 text-left transition-all group"
+            >
+              <span className="block text-[11px] font-bold text-white group-hover:text-theme-primary">🤵 Ofitsiant</span>
+              <span className="block text-[9px] text-theme-muted font-mono">waiter / waiter123</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => { setUsername('cook'); setPassword('cook123'); }}
+              className="px-2.5 py-1.5 rounded-lg bg-white/5 hover:bg-theme-primary/20 border border-white/10 hover:border-theme-primary/40 text-left transition-all group"
+            >
+              <span className="block text-[11px] font-bold text-white group-hover:text-theme-primary">👨‍🍳 Oshpaz</span>
+              <span className="block text-[9px] text-theme-muted font-mono">cook / cook123</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => { setUsername('developer'); setPassword('dev123456'); }}
+              className="px-2.5 py-1.5 rounded-lg bg-white/5 hover:bg-theme-primary/20 border border-white/10 hover:border-theme-primary/40 text-left transition-all group"
+            >
+              <span className="block text-[11px] font-bold text-white group-hover:text-theme-primary">💻 Developer</span>
+              <span className="block text-[9px] text-theme-muted font-mono">dev / dev123456</span>
+            </button>
+          </div>
+        </div>
+
         {onBackToMenu && (
-          <div className="text-center pt-3 border-t border-theme-border/60">
+          <div className="text-center pt-1">
             <button
               onClick={onBackToMenu}
               className="text-xs text-theme-muted hover:text-white transition-colors inline-flex items-center gap-1 font-medium"
