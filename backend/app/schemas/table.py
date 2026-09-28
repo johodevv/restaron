@@ -34,6 +34,8 @@ class TableResponse(TableBase):
     qr_image_url: Optional[str] = None
     status: TableStatus
     is_active: bool
+    is_unlocked: bool = False
+    current_pin: Optional[str] = None
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -47,5 +49,8 @@ class TablePublic(BaseModel):
     room: Optional[str] = None
     capacity: int
     restaurant_id: int
+    is_unlocked: bool = False
+    pin: Optional[str] = None
+    current_pin: Optional[str] = None
 
     model_config = {"from_attributes": True}

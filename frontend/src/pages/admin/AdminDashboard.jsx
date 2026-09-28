@@ -152,6 +152,8 @@ export const AdminDashboard = () => {
         event.type === 'new_order' ||
         event.type === 'table_cleared' ||
         event.type === 'table_status_updated' ||
+        event.type === 'table_guest_arrived' ||
+        event.type === 'table_unlocked' ||
         event.type === 'order_delivered' ||
         event.type === 'order_ready' ||
         event.type === 'order_status_updated' ||
@@ -165,6 +167,16 @@ export const AdminDashboard = () => {
 
     return () => unsubscribe();
   }, [restaurantId]);
+
+  // Handle Table Unlock (Tasdiqlash)
+  const handleUnlockTable = async (tableId) => {
+    try {
+      await api.post(`/tables/${tableId}/unlock`, {});
+      await loadAll();
+    } catch (err) {
+      alert(err.message || 'Stolni tasdiqlashda xatolik yuz berdi');
+    }
+  };
 
   // Handle Staff Deletion (Bo'shatish)
   const handleDeleteStaff = async (staffId, staffName) => {
@@ -557,6 +569,46 @@ export const AdminDashboard = () => {
       {/* TAB 1: OVERVIEW */}
       {tab === 'overview' && (
         <div className="space-y-6">
+          {/* Active Guest Verification Alerts (Ofitsiant/Admin tasdiqlashi kerak) */}
+          {tables.filter(t => !t.is_unlocked && t.current_pin).length > 0 && (
+            <div className="p-5 rounded-3xl bg-amber-500/15 border-2 border-amber-500/50 shadow-xl shadow-amber-500/10 space-y-3 animate-fade-in">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2 text-amber-300 font-bold text-sm">
+                  <Sparkles className="w-5 h-5 text-amber-400 animate-bounce-subtle" />
+                  <span>Yangi mehmonlar ({tables.filter(t => !t.is_unlocked && t.current_pin).length} ta stol tasdiqlashni kutmoqda!)</span>
+                </div>
+                <span className="text-[11px] uppercase font-extrabold px-2.5 py-0.5 rounded-full bg-amber-500 text-black">
+                  Stolga borish lozim
+                </span>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 pt-1">
+                {tables.filter(t => !t.is_unlocked && t.current_pin).map((t) => (
+                  <div
+                    key={t.id}
+                    className="p-4 rounded-2xl bg-black/40 border border-amber-500/40 flex items-center justify-between gap-3 text-xs shadow-md"
+                  >
+                    <div>
+                      <div className="font-extrabold text-white text-sm">
+                        Stol #{t.number} {t.room ? `(${t.room})` : ''}
+                      </div>
+                      <div className="text-amber-300 font-mono font-black text-base mt-0.5">
+                        Kodi: {t.current_pin}
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => handleUnlockTable(t.id)}
+                      className="px-3.5 py-2 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-black font-extrabold text-xs shadow-md active:scale-95 transition-all flex items-center gap-1.5"
+                    >
+                      <CheckCircle2 className="w-4 h-4" />
+                      <span>Tasdiqlash</span>
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* Active Waiter Calls Alert if any */}
           {waiterCalls.length > 0 && (
             <div className="p-5 rounded-3xl bg-amber-500/15 border-2 border-amber-500/50 shadow-xl shadow-amber-500/10 space-y-3 animate-fade-in">
@@ -1008,14 +1060,16 @@ export const AdminDashboard = () => {
                         </span>
                         <span
                           className={`px-2.5 py-1 rounded-lg font-bold text-[10px] uppercase ${
-                            isOccupied
+                            !t.is_unlocked && t.current_pin
+                              ? 'bg-amber-500/30 text-amber-300 border border-amber-500/50 animate-pulse'
+                              : isOccupied
                               ? 'bg-red-500/20 text-red-300 border border-red-500/30'
                               : isReserved
                               ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
                               : 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
                           }`}
                         >
-                          {isOccupied ? 'Band' : isReserved ? 'Bron' : "Bo'sh"}
+                          {!t.is_unlocked && t.current_pin ? '🔒 Kod Kutilmoqda' : (isOccupied ? 'Band' : isReserved ? 'Bron' : "Bo'sh")}
                         </span>
                       </div>
                       <div className="text-xs text-theme-muted mt-0.5">
@@ -1031,6 +1085,21 @@ export const AdminDashboard = () => {
                       <Trash2 className="w-4 h-4" />
                     </button>
                   </div>
+
+                  {/* If table is locked with pin */}
+                  {!t.is_unlocked && t.current_pin && (
+                    <div className="p-3 rounded-2xl bg-amber-500/15 border border-amber-500/40 text-center space-y-1.5">
+                      <span className="text-[10px] uppercase text-amber-300 font-bold block">Mijoz Kirdi (Kodi):</span>
+                      <span className="text-xl font-mono font-black text-amber-300 block">{t.current_pin}</span>
+                      <button
+                        onClick={() => handleUnlockTable(t.id)}
+                        className="w-full py-2 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-black font-extrabold text-xs shadow-md active:scale-95 transition-all flex items-center justify-center gap-1.5"
+                      >
+                        <CheckCircle2 className="w-3.5 h-3.5" />
+                        <span>Ulanishni Tasdiqlash</span>
+                      </button>
+                    </div>
+                  )}
 
                   {/* QR Image Preview */}
                   <div

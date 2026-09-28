@@ -3,6 +3,7 @@ Stollar API — QR kod generatsiya bilan
 """
 import os
 import uuid
+import random
 import qrcode
 import aiofiles
 from io import BytesIO
@@ -126,13 +127,34 @@ async def scan_qr(qr_token: str, db: AsyncSession = Depends(get_db)):
     if not table:
         raise HTTPException(status_code=404, detail="QR kod yaroqsiz yoki stol faol emas")
 
-    # Agar stol bo'sh bo'lsa, avtomatik band deb belgilash
+    # Agar stol kodi yo'q bo'lsa yoki hali tasdiqlanmagan bo'lsa, 4-xonali PIN generatsiya
+    needs_broadcast = False
+    if not table.is_unlocked and not table.current_pin:
+        table.current_pin = f"{random.randint(1000, 9999)}"
+        table.is_unlocked = False
+        needs_broadcast = True
+
     if table.status == TableStatus.AVAILABLE or table.status == "available":
         table.status = TableStatus.OCCUPIED
-        await db.flush()
-        await db.commit()
+        needs_broadcast = True
 
+    await db.flush()
+    await db.commit()
+
+    if needs_broadcast:
         # Real-time WebSocket orqali Admin va Ofitsiantga xabar berish
+        await manager.broadcast_to_roles(
+            table.restaurant_id,
+            ["admin", "waiter"],
+            {
+                "type": "table_guest_arrived",
+                "table_id": table.id,
+                "table_number": table.number,
+                "room": table.room,
+                "pin": table.current_pin,
+                "message": f"🔔 Stol #{table.number} ga yangi mijoz keldi! Tasdiqlash kodi: {table.current_pin}",
+            },
+        )
         await manager.broadcast_to_roles(
             table.restaurant_id,
             ["admin", "waiter"],
@@ -142,11 +164,41 @@ async def scan_qr(qr_token: str, db: AsyncSession = Depends(get_db)):
                 "table_number": table.number,
                 "status": TableStatus.OCCUPIED.value,
                 "new_status": TableStatus.OCCUPIED.value,
-                "message": f"Stol #{table.number} QR kod orqali ochildi (Mijoz o'tirdi)",
+                "message": f"Stol #{table.number} band qilindi",
             },
         )
 
-    return TablePublic.model_validate(table)
+    res = TablePublic.model_validate(table)
+    res.pin = table.current_pin
+    res.current_pin = table.current_pin
+    res.is_unlocked = bool(table.is_unlocked)
+    return res
+
+
+@router.post("/{table_id}/unlock", summary="Ofitsiant tomonidan stolni tasdiqlash / faollashtirish")
+async def unlock_table(table_id: int, db: AsyncSession = Depends(get_db)):
+    """Ofitsiant stolga borib kodni ko'rib stolni faollashtiradi"""
+    result = await db.execute(select(Table).where(Table.id == table_id))
+    table = result.scalar_one_or_none()
+    if not table:
+        raise HTTPException(status_code=404, detail="Stol topilmadi")
+
+    table.is_unlocked = True
+    table.status = TableStatus.OCCUPIED
+    await db.flush()
+    await db.commit()
+
+    # Barcha mijoz va xodimlarga e'lon qilish
+    await manager.broadcast_to_restaurant(
+        table.restaurant_id,
+        {
+            "type": "table_unlocked",
+            "table_id": table.id,
+            "table_number": table.number,
+            "message": f"Stol #{table.number} ofitsiant tomonidan faollashtirildi!",
+        },
+    )
+    return {"status": "success", "message": f"Stol #{table.number} muvaffaqiyatli ochildi", "is_unlocked": True}
 
 
 @router.get("/{table_id}/bill", response_model=TableBillResponse, summary="Stol hisobi (Chek)")
@@ -293,6 +345,8 @@ async def checkout_table(
             o.call_status = CallStatus.COMPLETED
 
     table.status = TableStatus.AVAILABLE
+    table.is_unlocked = False
+    table.current_pin = None
     await db.flush()
     await db.commit()
 
@@ -410,6 +464,8 @@ async def clear_table(
         raise HTTPException(status_code=404, detail="Stol topilmadi")
 
     table.status = TableStatus.AVAILABLE
+    table.is_unlocked = False
+    table.current_pin = None
     await db.flush()
     await db.commit()
 

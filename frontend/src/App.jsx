@@ -23,6 +23,7 @@ import DeveloperDashboard from './pages/developer/DeveloperDashboard';
 import Login from './pages/auth/Login';
 
 import DunyoLanding from './pages/customer/DunyoLanding';
+import TableWaitingVerification from './pages/customer/TableWaitingVerification';
 
 export const App = () => {
   const { user, isWaiter, isChef, isAdmin, isDev, loading: authLoading } = useAuth();
@@ -32,6 +33,7 @@ export const App = () => {
 
   // Table information from QR token in URL
   const [tableInfo, setTableInfo] = useState(null);
+  const [tableUnlocked, setTableUnlocked] = useState(false);
   const [loadingTable, setLoadingTable] = useState(true);
 
   // Modals & Drawers
@@ -52,13 +54,17 @@ export const App = () => {
           const tableData = await api.get(`/tables/scan/${qrToken}`);
           currentTable = tableData;
           setTableInfo(tableData);
+          const savedUnlocked = localStorage.getItem(`unlocked_table_${tableData.id}`);
+          setTableUnlocked(Boolean(tableData.is_unlocked || savedUnlocked === 'true'));
         } catch (e) {
           console.warn('QR token topilmadi:', e);
           setTableInfo(null);
+          setTableUnlocked(false);
         }
       } else {
         // Stol skaner qilinmagan -> Asosiy Landing sahifaga kiradi
         setTableInfo(null);
+        setTableUnlocked(false);
       }
 
       // Check active orders specifically for THIS table
@@ -177,71 +183,81 @@ export const App = () => {
             </div>
           )}
 
-          {/* If Not Logged In and Table IS Selected -> Table Menu */}
+          {/* If Not Logged In and Table IS Selected */}
           {!user && currentView !== 'login' && tableInfo && (
             <div>
-              <Navbar
-                tableInfo={tableInfo}
-                onOpenCart={() => setCartOpen(true)}
-                onOpenCallWaiter={() => setCallWaiterOpen(true)}
-                onOpenBill={() => setBillOpen(true)}
-                currentView={currentView}
-                onNavigate={(view) => {
-                  if (view === 'landing') handleReturnToLanding();
-                  else setCurrentView(view);
-                }}
-                onReturnToLanding={handleReturnToLanding}
-                activeOrderId={activeOrderId}
-              />
-
-              <main>
-                {currentView === 'tracker' && activeOrderId ? (
-                  <OrderTracker
-                    orderId={activeOrderId}
-                    onOpenReview={handleOpenReview}
-                    onOpenBill={() => setBillOpen(true)}
-                    onBackToMenu={() => setCurrentView('menu')}
-                  />
-                ) : (
-                  <CustomerMenu
-                    restaurantId={restaurantId}
+              {!tableUnlocked && !tableInfo.is_unlocked ? (
+                <TableWaitingVerification
+                  tableInfo={tableInfo}
+                  onUnlocked={() => setTableUnlocked(true)}
+                  onReturnToLanding={handleReturnToLanding}
+                />
+              ) : (
+                <div>
+                  <Navbar
                     tableInfo={tableInfo}
                     onOpenCart={() => setCartOpen(true)}
                     onOpenCallWaiter={() => setCallWaiterOpen(true)}
                     onOpenBill={() => setBillOpen(true)}
+                    currentView={currentView}
+                    onNavigate={(view) => {
+                      if (view === 'landing') handleReturnToLanding();
+                      else setCurrentView(view);
+                    }}
                     onReturnToLanding={handleReturnToLanding}
+                    activeOrderId={activeOrderId}
                   />
-                )}
-              </main>
 
-              {/* Customer Modals */}
-              <CartDrawer
-                isOpen={cartOpen}
-                onClose={() => setCartOpen(false)}
-                tableId={tableInfo?.id}
-                onOrderCreated={handleOrderCreated}
-              />
+                  <main>
+                    {currentView === 'tracker' && activeOrderId ? (
+                      <OrderTracker
+                        orderId={activeOrderId}
+                        onOpenReview={handleOpenReview}
+                        onOpenBill={() => setBillOpen(true)}
+                        onBackToMenu={() => setCurrentView('menu')}
+                      />
+                    ) : (
+                      <CustomerMenu
+                        restaurantId={restaurantId}
+                        tableInfo={tableInfo}
+                        onOpenCart={() => setCartOpen(true)}
+                        onOpenCallWaiter={() => setCallWaiterOpen(true)}
+                        onOpenBill={() => setBillOpen(true)}
+                        onReturnToLanding={handleReturnToLanding}
+                      />
+                    )}
+                  </main>
 
-              <CallWaiterModal
-                isOpen={callWaiterOpen}
-                onClose={() => setCallWaiterOpen(false)}
-                tableId={tableInfo?.id}
-                tableNumber={tableInfo?.number}
-              />
+                  {/* Customer Modals */}
+                  <CartDrawer
+                    isOpen={cartOpen}
+                    onClose={() => setCartOpen(false)}
+                    tableId={tableInfo?.id}
+                    onOrderCreated={handleOrderCreated}
+                  />
 
-              <BillModal
-                isOpen={billOpen}
-                onClose={() => setBillOpen(false)}
-                tableId={tableInfo?.id}
-                tableNumber={tableInfo?.number}
-                isStaff={false}
-              />
+                  <CallWaiterModal
+                    isOpen={callWaiterOpen}
+                    onClose={() => setCallWaiterOpen(false)}
+                    tableId={tableInfo?.id}
+                    tableNumber={tableInfo?.number}
+                  />
 
-              <ReviewModal
-                isOpen={reviewOpen}
-                onClose={() => setReviewOpen(false)}
-                order={reviewOrder}
-              />
+                  <BillModal
+                    isOpen={billOpen}
+                    onClose={() => setBillOpen(false)}
+                    tableId={tableInfo?.id}
+                    tableNumber={tableInfo?.number}
+                    isStaff={false}
+                  />
+
+                  <ReviewModal
+                    isOpen={reviewOpen}
+                    onClose={() => setReviewOpen(false)}
+                    order={reviewOrder}
+                  />
+                </div>
+              )}
             </div>
           )}
         </div>

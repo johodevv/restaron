@@ -63,15 +63,35 @@ export const WaiterDashboard = () => {
         event.type === 'call_completed' ||
         event.type === 'order_status_updated' ||
         event.type === 'table_status_updated' ||
+        event.type === 'table_guest_arrived' ||
+        event.type === 'table_unlocked' ||
         event.type === 'table_cleared' ||
         event.type === 'bill_paid'
       ) {
+        if (event.type === 'table_guest_arrived' && playChime) {
+          playChime('urgent');
+        }
         loadData();
       }
     });
 
     return () => unsubscribe();
-  }, [restaurantId]);
+  }, [restaurantId, playChime]);
+
+  // "Ulanishni tasdiqlash" (Unlock table) handler!
+  const handleUnlockTable = async (tableId, tableNumber) => {
+    setActionLoadingId(`unlock_${tableId}`);
+    try {
+      await api.post(`/tables/${tableId}/unlock`, {});
+      confetti({ particleCount: 80, spread: 70, origin: { y: 0.6 } });
+      playChime('success');
+      await loadData();
+    } catch (err) {
+      alert(err.message || 'Stolni tasdiqlashda xatolik yuz berdi');
+    } finally {
+      setActionLoadingId(null);
+    }
+  };
 
   // "Yetkazib berdim" (Delivered) handler!
   const handleDeliver = async (orderId, tableNumber) => {
@@ -116,9 +136,10 @@ export const WaiterDashboard = () => {
     setBillModalOpen(true);
   };
 
-  // Categorize orders
+  // Categorize orders & tables
   const readyOrders = orders.filter((o) => o.status === 'ready');
   const activeOrders = orders.filter((o) => ['pending', 'confirmed', 'preparing'].includes(o.status));
+  const pendingUnlockTables = tables.filter((t) => !t.is_unlocked && t.current_pin);
 
   return (
     <div className="max-w-7xl mx-auto px-4 py-6 space-y-6 animate-fade-in">
@@ -133,7 +154,7 @@ export const WaiterDashboard = () => {
             Salom, {user?.full_name || user?.username}! 👋
           </h1>
           <p className="text-xs text-theme-muted mt-1">
-            Buyurtmalarni tezkor yetkazib bering, chaqiruvlarga zudlik bilan javob bering va stollar hisobini boshqaring.
+            Yangi mijozlar ulanishini tasdiqlang, buyurtmalarni yetkazib bering va stollar hisobini boshqaring.
           </p>
         </div>
 
@@ -145,6 +166,48 @@ export const WaiterDashboard = () => {
           <span>Yangilash</span>
         </button>
       </div>
+
+      {/* PENDING UNLOCK GUESTS ALERT (OFITSIANT TASDIQLASHI KERAK) */}
+      {pendingUnlockTables.length > 0 && (
+        <div className="p-5 rounded-3xl bg-amber-500/15 border-2 border-amber-500/50 shadow-xl shadow-amber-500/10 space-y-3 animate-fade-in">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2 text-amber-300 font-bold text-sm">
+              <Sparkles className="w-5 h-5 text-amber-400 animate-bounce-subtle" />
+              <span>Yangi mehmonlar ({pendingUnlockTables.length} ta stol tasdiqlashni kutmoqda!)</span>
+            </div>
+            <span className="text-[11px] uppercase font-extrabold px-2.5 py-0.5 rounded-full bg-amber-500 text-black">
+              Stolga borish lozim
+            </span>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 pt-1">
+            {pendingUnlockTables.map((t) => (
+              <div
+                key={t.id}
+                className="p-4 rounded-2xl bg-black/40 border border-amber-500/40 flex items-center justify-between gap-3 text-xs shadow-md"
+              >
+                <div>
+                  <div className="font-extrabold text-white text-sm flex items-center gap-1.5">
+                    <span>Stol #{t.number}</span>
+                    {t.room && <span className="text-[11px] font-normal text-amber-200/80">({t.room})</span>}
+                  </div>
+                  <div className="text-amber-300 font-mono font-black text-base mt-0.5">
+                    Kodi: <span className="underline">{t.current_pin}</span>
+                  </div>
+                </div>
+                <button
+                  onClick={() => handleUnlockTable(t.id, t.number)}
+                  disabled={actionLoadingId === `unlock_${t.id}`}
+                  className="px-3.5 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-black font-extrabold text-xs shadow-md active:scale-95 transition-all flex items-center gap-1.5 disabled:opacity-50"
+                >
+                  <CheckCircle2 className="w-4 h-4" />
+                  <span>{actionLoadingId === `unlock_${t.id}` ? 'Ochilmoqda...' : 'Tasdiqlash'}</span>
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Navigation Tabs with Counters */}
       <div className="flex items-center gap-2 overflow-x-auto pb-2 scrollbar-none no-scrollbar">
@@ -433,16 +496,34 @@ export const WaiterDashboard = () => {
 
                     <span
                       className={`px-2.5 py-1 rounded-lg font-bold text-[10px] uppercase ${
-                        isOccupied
+                        !t.is_unlocked && t.current_pin
+                          ? 'bg-amber-500/30 text-amber-300 border border-amber-500/50 animate-pulse'
+                          : isOccupied
                           ? 'bg-red-500/20 text-red-300 border border-red-500/30'
                           : isReserved
                           ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
                           : 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
                       }`}
                     >
-                      {isOccupied ? 'Band' : isReserved ? 'Bron' : "Bo'sh"}
+                      {!t.is_unlocked && t.current_pin ? '🔒 Kod Kutilmoqda' : (isOccupied ? 'Band' : isReserved ? 'Bron' : "Bo'sh")}
                     </span>
                   </div>
+
+                  {/* If table is locked with pin */}
+                  {!t.is_unlocked && t.current_pin && (
+                    <div className="p-3 rounded-2xl bg-amber-500/15 border border-amber-500/40 text-center space-y-1.5">
+                      <span className="text-[10px] uppercase text-amber-300 font-bold block">Mijoz Kirdi (Kodi):</span>
+                      <span className="text-xl font-mono font-black text-amber-300 block">{t.current_pin}</span>
+                      <button
+                        onClick={() => handleUnlockTable(t.id, t.number)}
+                        disabled={actionLoadingId === `unlock_${t.id}`}
+                        className="w-full py-2 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-black font-extrabold text-xs shadow-md active:scale-95 transition-all flex items-center justify-center gap-1.5 disabled:opacity-50"
+                      >
+                        <CheckCircle2 className="w-3.5 h-3.5" />
+                        <span>{actionLoadingId === `unlock_${t.id}` ? 'Ochilmoqda...' : 'Ulanishni Tasdiqlash'}</span>
+                      </button>
+                    </div>
+                  )}
 
                   <div className="space-y-2 pt-2 border-t border-theme-border/50">
                     <button

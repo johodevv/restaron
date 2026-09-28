@@ -36,6 +36,10 @@ class Table(Base):
     status = Column(SAEnum(TableStatus), default=TableStatus.AVAILABLE)
     is_active = Column(Boolean, default=True)
 
+    # Xavfsizlik va ofitsiant tasdiqlashi
+    current_pin = Column(String(10), nullable=True)          # 4 xonali tasdiqlash kodi
+    is_unlocked = Column(Boolean, default=False)             # Ofitsiant tasdiqlaganligi
+
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
