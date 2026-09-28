@@ -20,6 +20,7 @@ export const CustomerMenu = ({
   onOpenCart,
   onOpenCallWaiter,
   onOpenBill,
+  onReturnToLanding,
 }) => {
   const [categories, setCategories] = useState([]);
   const [selectedCatId, setSelectedCatId] = useState(null);
@@ -63,15 +64,25 @@ export const CustomerMenu = ({
         <div className="p-5 sm:p-7 rounded-3xl glass-card border border-theme-border bg-gradient-to-r from-theme-surface via-theme-bg to-theme-surface shadow-2xl relative overflow-hidden">
           <div className="relative z-10 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div>
-              <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-theme-primary/15 border border-theme-primary/30 text-theme-primary text-xs font-bold mb-2">
-                <Sparkles className="w-3.5 h-3.5" />
-                <span>RestAron Smart Menu</span>
+              <div className="flex flex-wrap items-center gap-2 mb-2">
+                <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-500/15 border border-amber-500/30 text-amber-300 text-xs font-bold">
+                  <Sparkles className="w-3.5 h-3.5" />
+                  <span>Dunyo Choyxonasi • Stol #{tableInfo?.number || 1} {tableInfo?.room ? `(${tableInfo.room})` : ''}</span>
+                </div>
+                {onReturnToLanding && (
+                  <button
+                    onClick={onReturnToLanding}
+                    className="text-xs text-theme-muted hover:text-white underline transition-colors"
+                  >
+                    ← Bosh sahifaga qaytish
+                  </button>
+                )}
               </div>
               <h1 className="text-2xl sm:text-3xl font-extrabold text-white tracking-tight">
-                Xush kelibsiz! 🍽️
+                Xush kelibsiz! 🫖 🍽️
               </h1>
               <p className="text-xs sm:text-sm text-theme-muted mt-1 max-w-lg">
-                Ofitsiant kutib ovora bo'lmang. Stolingizdan to'g'ridan-to'g'ri buyurtma bering yoki ofitsiantni chaqiring.
+                Stolingizdan to'g'ridan-to'g'ri buyurtma bering yoki ofitsiantni chaqiring. Taomlar issiq va xushbo'y holda yetkaziladi.
               </p>
             </div>
 

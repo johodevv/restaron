@@ -109,11 +109,20 @@ async def list_tables(
 
 @router.get("/scan/{qr_token}", response_model=TablePublic, summary="QR kodni skanerlash")
 async def scan_qr(qr_token: str, db: AsyncSession = Depends(get_db)):
-    """Mijoz QR kodni skanerlaydi — stolni band (OCCUPIED) deb belgilaydi va ma'lumotni qaytaradi"""
+    # 1. QR token bo'yicha qidirish
     result = await db.execute(
         select(Table).where(Table.qr_token == qr_token, Table.is_active == True)
     )
     table = result.scalar_one_or_none()
+
+    # 2. Agar topilmasa va raqamli bo'lsa, stol raqami yoki ID bo'yicha topish
+    if not table and qr_token.isdigit():
+        num = int(qr_token)
+        result = await db.execute(
+            select(Table).where((Table.number == num) | (Table.id == num), Table.is_active == True)
+        )
+        table = result.scalar_one_or_none()
+
     if not table:
         raise HTTPException(status_code=404, detail="QR kod yaroqsiz yoki stol faol emas")
 

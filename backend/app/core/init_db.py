@@ -119,20 +119,20 @@ async def seed_initial_data():
                 if not t_res.scalar_one_or_none():
                     db.add(Theme(**theme_data))
 
-            # 3. Namuna Restoran
+            # 3. Dunyo Choyxonasi
             res = await db.execute(select(Restaurant).where(Restaurant.id == 1))
             restaurant = res.scalar_one_or_none()
             if not restaurant:
-                res_slug = await db.execute(select(Restaurant).where(Restaurant.slug == "demo-restoran"))
+                res_slug = await db.execute(select(Restaurant).where(Restaurant.slug == "dunyo-choyxonasi"))
                 restaurant = res_slug.scalar_one_or_none()
 
             if not restaurant:
                 restaurant = Restaurant(
-                    name="Demo Restoran",
-                    slug="demo-restoran",
-                    description="RestAron tizimini sinab ko'rish uchun namuna restoran",
-                    address="Toshkent, Chilonzor tumani",
-                    phone="+998 90 123 45 67",
+                    name="Dunyo Choyxonasi",
+                    slug="dunyo-choyxonasi",
+                    description="O'zbekona mehmondo'stlik, shinam so'rilar va haqiqiy milliy taomlar maskani",
+                    address="Toshkent shahri, Chilonzor tumani",
+                    phone="+998 71 200 00 00",
                     commission_percent=5.0,
                 )
                 db.add(restaurant)
@@ -140,10 +140,14 @@ async def seed_initial_data():
 
                 settings_obj = RestaurantSettings(restaurant_id=restaurant.id)
                 db.add(settings_obj)
+            else:
+                restaurant.name = "Dunyo Choyxonasi"
+                restaurant.description = "O'zbekona mehmondo'stlik, shinam so'rilar va haqiqiy milliy taomlar maskani"
+                restaurant.phone = "+998 71 200 00 00"
 
             # 4. Demo xodimlar
             demo_users = [
-                {"username": "admin", "full_name": "Restoran Admin", "role": UserRole.ADMIN, "pass": "admin123"},
+                {"username": "admin", "full_name": "Dunyo Choyxonasi Admin", "role": UserRole.ADMIN, "pass": "admin123"},
                 {"username": "waiter", "full_name": "Asosiy Ofitsiant", "role": UserRole.WAITER, "pass": "waiter123"},
                 {"username": "ofitsiant1", "full_name": "Akbar Ofitsiant", "role": UserRole.WAITER, "pass": "waiter123"},
                 {"username": "cook", "full_name": "Bosh Oshpaz", "role": UserRole.CHEF, "pass": "cook123"},
@@ -166,30 +170,35 @@ async def seed_initial_data():
                     existing_u.hashed_password = get_password_hash(u["pass"])
                     existing_u.is_active = True
 
-            # 5. Stollar (kamida 10 ta)
-            for i in range(1, 11):
+            # 5. Stollar (12 ta)
+            for i in range(1, 13):
                 t_res = await db.execute(
                     select(Table).where(Table.restaurant_id == restaurant.id, Table.number == i)
                 )
-                if not t_res.scalar_one_or_none():
+                existing_t = t_res.scalar_one_or_none()
+                room_name = "Asosiy Zal (So'ri)" if i <= 4 else ("Shinam Ayvon" if i <= 8 else "VIP Xona")
+                if not existing_t:
                     qr_token = str(uuid.uuid4())
                     db.add(Table(
                         restaurant_id=restaurant.id,
                         number=i,
                         name=f"Stol #{i}",
-                        capacity=4,
-                        location="Asosiy zal" if i <= 6 else "Terrasa",
+                        room=room_name,
+                        capacity=6 if i <= 4 else (8 if i <= 8 else 12),
                         qr_token=qr_token,
                         qr_code_url=f"/uploads/qr_codes/table_{i}.png",
                     ))
+                else:
+                    existing_t.room = room_name
 
-            # 6. Kategoriyalar va Taomlar
+            # 6. Kategoriyalar va Choyxona Taomlari
             categories_data = [
-                {"name": "Milliy Taomlar", "icon": "🍲", "sort_order": 0},
-                {"name": "Fast Food", "icon": "🍔", "sort_order": 1},
-                {"name": "Ichimliklar", "icon": "🥤", "sort_order": 2},
-                {"name": "Shirinliklar", "icon": "🍰", "sort_order": 3},
-                {"name": "Salatlar", "icon": "🥗", "sort_order": 4},
+                {"name": "Milliy Taomlar & Palov", "icon": "🍲", "sort_order": 0},
+                {"name": "Shashliklar & Kabob", "icon": "🍢", "sort_order": 1},
+                {"name": "Somsalar & Tandir", "icon": "🥟", "sort_order": 2},
+                {"name": "Salatlar & Gazaklar", "icon": "🥗", "sort_order": 3},
+                {"name": "Choyxona Choylari & Ichimliklar", "icon": "🫖", "sort_order": 4},
+                {"name": "Shirinliklar", "icon": "🍯", "sort_order": 5},
             ]
 
             category_map = {}
@@ -205,64 +214,113 @@ async def seed_initial_data():
                 category_map[idx] = cat_obj
 
             items_data = [
-                # Milliy
+                # Milliy Taomlar & Palov
                 {
-                    "cat_idx": 0, "name": "Toshkent Palovi", "price": 45000,
-                    "description": "Qo'y go'shti, devzira guruch, sabzi va mayiz bilan an'anaviy toshkentcha palov.",
-                    "prep_time_minutes": 15, "calories": 650, "is_available": True, "is_featured": True,
+                    "cat_idx": 0, "name": "Choyxona Maxsus Palovi", "price": 48000,
+                    "description": "Devzira guruch, barra qo'y go'shti, qazi, bedana tuxum, noxat va mayiz bilan damlangan afsonaviy palov.",
+                    "prep_time_minutes": 15, "calories": 720, "is_available": True, "is_featured": True,
                     "image_url": "https://images.unsplash.com/photo-1563379091339-03b21ab4a4f8?auto=format&fit=crop&w=600&q=80"
                 },
                 {
-                    "cat_idx": 0, "name": "Qozon Kabob", "price": 55000,
-                    "description": "Qarsildoq qovurilgan kartoshka va yumshoq mol go'shti.",
-                    "prep_time_minutes": 20, "calories": 720, "is_available": True,
+                    "cat_idx": 0, "name": "Qozon Kabob (Barra Go'sht)", "price": 58000,
+                    "description": "Qarsildoq tillarang kartoshka va erib ketadigan barra qo'y qovurg'asi.",
+                    "prep_time_minutes": 20, "calories": 780, "is_available": True, "is_featured": True,
                     "image_url": "https://images.unsplash.com/photo-1544025162-d76694265947?auto=format&fit=crop&w=600&q=80"
                 },
                 {
-                    "cat_idx": 0, "name": "Lag'mon (Cho'zma)", "price": 38000,
-                    "description": "Qo'lda cho'zilgan xamir, yangi sabzavotlar va go'shtli qayla.",
-                    "prep_time_minutes": 12, "calories": 520, "is_available": True,
+                    "cat_idx": 0, "name": "Tandir Go'shti (Jizzaxcha)", "price": 65000,
+                    "description": "Archa shoxlarida xushbo'y dimlangan yumshoq tandir go'shti.",
+                    "prep_time_minutes": 15, "calories": 690, "is_available": True, "is_featured": True,
+                    "image_url": "https://images.unsplash.com/photo-1555939594-58d7cb561ad1?auto=format&fit=crop&w=600&q=80"
+                },
+                {
+                    "cat_idx": 0, "name": "Uyg'urcha Lag'mon (Qo'lda Cho'zilgan)", "price": 38000,
+                    "description": "Yupqa cho'zilgan xamir, yangi jiblajon sabzavotlar va lahm go'shtli qayla.",
+                    "prep_time_minutes": 12, "calories": 540, "is_available": True,
                     "image_url": "https://images.unsplash.com/photo-1569718212165-3a8278d5f624?auto=format&fit=crop&w=600&q=80"
                 },
-                # Fast Food
                 {
-                    "cat_idx": 1, "name": "RestAron Burger", "price": 42000,
-                    "description": "100% mol go'shti kotleti, cheddar pishlog'i va maxsus sous.",
-                    "prep_time_minutes": 10, "calories": 580, "is_available": True, "is_featured": True,
-                    "image_url": "https://images.unsplash.com/photo-1568901346375-23c9450c58cd?auto=format&fit=crop&w=600&q=80"
+                    "cat_idx": 0, "name": "Xonadon Shurvasi (Qo'zichoq Go'shti)", "price": 35000,
+                    "description": "Yengil va to'yimli sho'rva, yirik barra go'sht va sabzavotlar bilan.",
+                    "prep_time_minutes": 10, "calories": 420, "is_available": True,
+                    "image_url": "https://images.unsplash.com/photo-1547592166-23ac45744acd?auto=format&fit=crop&w=600&q=80"
+                },
+                # Shashliklar
+                {
+                    "cat_idx": 1, "name": "G'ijduvon Shashlik (Qiyma)", "price": 22000,
+                    "description": "Yumshoq mol va qo'y go'shti qiymasi, maxsus ziravorlar bilan.",
+                    "prep_time_minutes": 15, "calories": 380, "is_available": True, "is_featured": True,
+                    "image_url": "https://images.unsplash.com/photo-1555939594-58d7cb561ad1?auto=format&fit=crop&w=600&q=80"
                 },
                 {
-                    "cat_idx": 1, "name": "Katta Lavash (Mol go'shtli)", "price": 35000,
-                    "description": "Yupqa xamirda marinadlangan go'sht, pomidor, bodring va sous.",
-                    "prep_time_minutes": 8, "calories": 490, "is_available": True,
+                    "cat_idx": 1, "name": "Kuskovoy (Bo'lak Go'sht) Shashlik", "price": 25000,
+                    "description": "Marinadlangan lahm go'sht va dumba bo'laklari.",
+                    "prep_time_minutes": 15, "calories": 410, "is_available": True,
+                    "image_url": "https://images.unsplash.com/photo-1529193591184-b1d58069ecdd?auto=format&fit=crop&w=600&q=80"
+                },
+                {
+                    "cat_idx": 1, "name": "Jigar Shashlik (Dumba Bilan)", "price": 20000,
+                    "description": "Barra jigar bo'laklari, erigan dumba yog'i va piyoz bilan.",
+                    "prep_time_minutes": 10, "calories": 340, "is_available": True,
+                    "image_url": "https://images.unsplash.com/photo-1544025162-d76694265947?auto=format&fit=crop&w=600&q=80"
+                },
+                {
+                    "cat_idx": 1, "name": "Tovuq Qanotlari Shashlik", "price": 20000,
+                    "description": "Qarsildoq tillarang pishgan marinadlangan tovuq qanotlari.",
+                    "prep_time_minutes": 15, "calories": 360, "is_available": True,
+                    "image_url": "https://images.unsplash.com/photo-1527477378733-d8a4362b083c?auto=format&fit=crop&w=600&q=80"
+                },
+                # Somsalar & Tandir
+                {
+                    "cat_idx": 2, "name": "Tandir Somsa (Go'shtli & Dumbasimon)", "price": 12000,
+                    "description": "Qarsildoq qatlama xamir, mayda to'g'ralgan lahm go'sht va piyoz.",
+                    "prep_time_minutes": 5, "calories": 290, "is_available": True, "is_featured": True,
                     "image_url": "https://images.unsplash.com/photo-1626700051175-6818013e1d4f?auto=format&fit=crop&w=600&q=80"
                 },
-                # Ichimliklar
                 {
-                    "cat_idx": 2, "name": "Yalpizli Limonad", "price": 22000,
-                    "description": "Yangi yalpiz, limon va laym sharbati bilan muzdek kokteyl.",
-                    "prep_time_minutes": 5, "calories": 110, "is_available": True,
+                    "cat_idx": 2, "name": "Tandir Non / Patir Non", "price": 6000,
+                    "description": "Yangi tandirdan uzilgan issiq qaymoqli patir non.",
+                    "prep_time_minutes": 3, "calories": 210, "is_available": True,
+                    "image_url": "https://images.unsplash.com/photo-1509440159596-0249088772ff?auto=format&fit=crop&w=600&q=80"
+                },
+                # Salatlar
+                {
+                    "cat_idx": 3, "name": "Achichuk Salati", "price": 16000,
+                    "description": "Yangi yupqa to'g'ralgan shirin pomidor, piyoz va rayhon.",
+                    "prep_time_minutes": 5, "calories": 90, "is_available": True, "is_featured": True,
+                    "image_url": "https://images.unsplash.com/photo-1540420773420-3366772f4999?auto=format&fit=crop&w=600&q=80"
+                },
+                {
+                    "cat_idx": 3, "name": "Suzma va Yangi Ko'katlar", "price": 14000,
+                    "description": "Nordon xonaki suzma, kashnich, arpabodiyon va yalpiz.",
+                    "prep_time_minutes": 3, "calories": 120, "is_available": True,
+                    "image_url": "https://images.unsplash.com/photo-1546793665-c74683f339c1?auto=format&fit=crop&w=600&q=80"
+                },
+                # Choylar
+                {
+                    "cat_idx": 4, "name": "Choyxona 95 Ko'k Choy (Limon & Novvot Bilan)", "price": 10000,
+                    "description": "Samovarda damlangan an'anaviy xushbo'y ko'k choy, limon va novvot bilan.",
+                    "prep_time_minutes": 5, "calories": 30, "is_available": True, "is_featured": True,
+                    "image_url": "https://images.unsplash.com/photo-1576092768241-dec231879fc3?auto=format&fit=crop&w=600&q=80"
+                },
+                {
+                    "cat_idx": 4, "name": "Maxsus Zanjabilli Asal Choy", "price": 18000,
+                    "description": "Tabiiy tog' asali, yangi zanjabil, limon va yalpizli darmondori choy.",
+                    "prep_time_minutes": 5, "calories": 95, "is_available": True,
                     "image_url": "https://images.unsplash.com/photo-1513558161293-cdaf765ed2fd?auto=format&fit=crop&w=600&q=80"
                 },
                 {
-                    "cat_idx": 2, "name": "Ko'k Choy (Choynakda)", "price": 8000,
-                    "description": "Limon va novvot bilan xushbo'y ko'k choy.",
-                    "prep_time_minutes": 3, "calories": 10, "is_available": True,
+                    "cat_idx": 4, "name": "Tog' Giyohlari Qora Choy", "price": 12000,
+                    "description": "Kiyiko't va tog' yalpizi qo'shilgan quyuq xushbo'y qora choy.",
+                    "prep_time_minutes": 5, "calories": 20, "is_available": True,
                     "image_url": "https://images.unsplash.com/photo-1576092768241-dec231879fc3?auto=format&fit=crop&w=600&q=80"
                 },
                 # Shirinliklar
                 {
-                    "cat_idx": 3, "name": "Chizkeyk Nyu-York", "price": 28000,
-                    "description": "Klassik qaymoqli pishloqli nozik shirinlik.",
-                    "prep_time_minutes": 5, "calories": 380, "is_available": True,
-                    "image_url": "https://images.unsplash.com/photo-1533134242443-d4fd215305ad?auto=format&fit=crop&w=600&q=80"
-                },
-                # Salatlar
-                {
-                    "cat_idx": 4, "name": "Tsezar Salati", "price": 36000,
-                    "description": "Tovuq filesi, aysberg barglari, parmezan pishlog'i va suxariklar.",
-                    "prep_time_minutes": 10, "calories": 310, "is_available": True,
-                    "image_url": "https://images.unsplash.com/photo-1546793665-c74683f339c1?auto=format&fit=crop&w=600&q=80"
+                    "cat_idx": 5, "name": "Asalli Chak-Chak", "price": 20000,
+                    "description": "Xonaki asal va bodom donalari bilan bezatilgan qarsildoq chak-chak.",
+                    "prep_time_minutes": 5, "calories": 410, "is_available": True,
+                    "image_url": "https://images.unsplash.com/photo-1579372786545-d24232daf58c?auto=format&fit=crop&w=600&q=80"
                 },
             ]
 
@@ -278,8 +336,8 @@ async def seed_initial_data():
                         db.add(MenuItem(category_id=cat.id, **item_copy))
 
             await db.commit()
-            print("[OK] Boshlang'ich demo ma'lumotlar to'liq bazaga yuklandi!")
-            return {"status": "success", "message": "Demo data initialized successfully"}
+            print("[OK] Dunyo Choyxonasi ma'lumotlari to'liq bazaga yuklandi!")
+            return {"status": "success", "message": "Dunyo Choyxonasi initialized successfully"}
         except Exception as e:
             await db.rollback()
             print(f"[ERROR] Init DB error: {e}")

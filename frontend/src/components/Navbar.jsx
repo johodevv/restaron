@@ -23,6 +23,7 @@ export const Navbar = ({
   onOpenBill,
   currentView,
   onNavigate,
+  onReturnToLanding,
   activeOrderId,
 }) => {
   const { user, logout } = useAuth();
@@ -36,20 +37,24 @@ export const Navbar = ({
         <div className="max-w-7xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between gap-4">
           {/* Logo & Brand */}
           <div
-            onClick={() => onNavigate && onNavigate('menu')}
+            onClick={() => {
+              if (tableInfo && onReturnToLanding) onReturnToLanding();
+              else if (onNavigate) onNavigate('menu');
+            }}
             className="flex items-center gap-3 cursor-pointer group"
           >
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-theme-primary to-theme-accent flex items-center justify-center text-white shadow-glow group-hover:scale-105 transition-transform">
+            <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-amber-500 to-amber-600 flex items-center justify-center text-black font-bold shadow-glow group-hover:scale-105 transition-transform">
               <UtensilsCrossed className="w-5 h-5" />
             </div>
             <div>
-              <span className="font-extrabold text-lg tracking-tight bg-gradient-to-r from-white via-white/90 to-theme-primary bg-clip-text text-transparent">
-                RestAron
+              <span className="font-extrabold text-base sm:text-lg tracking-tight bg-gradient-to-r from-white via-white/95 to-amber-400 bg-clip-text text-transparent">
+                Dunyo Choyxonasi
               </span>
               {tableInfo ? (
-                <div className="text-[11px] text-theme-primary font-medium flex items-center gap-1">
+                <div className="text-[11px] text-amber-400 font-bold flex items-center gap-1">
                   <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
                   Stol #{tableInfo.number} {tableInfo.room ? `(${tableInfo.room})` : ''}
+                  <span className="text-[9px] text-theme-muted font-normal underline ml-1">← Boshqa stol</span>
                 </div>
               ) : (
                 <div className="text-[11px] text-theme-muted font-medium flex items-center gap-1">
@@ -58,7 +63,7 @@ export const Navbar = ({
                       connected ? 'bg-emerald-400' : 'bg-red-400'
                     }`}
                   />
-                  {connected ? 'Jonli aloqa faol' : 'Aloqa qidirilmoqda'}
+                  {connected ? 'Tizim faol' : 'Aloqa...'}
                 </div>
               )}
             </div>

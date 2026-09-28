@@ -63,7 +63,11 @@ export const AdminDashboard = () => {
   // Network & Host Settings for QR codes
   const [lanInfo, setLanInfo] = useState(null);
   const [qrBaseUrl, setQrBaseUrl] = useState(() => {
-    return localStorage.getItem('restaron_qr_base_url') || window.location.origin;
+    const saved = localStorage.getItem('restaron_qr_base_url');
+    if (saved && !saved.includes('localhost') && !saved.includes('192.168.')) {
+      return saved;
+    }
+    return window.location.origin;
   });
   const [isEditingBaseUrl, setIsEditingBaseUrl] = useState(false);
   const [tempBaseUrl, setTempBaseUrl] = useState('');
@@ -919,12 +923,21 @@ export const AdminDashboard = () => {
                   {qrBaseUrl}
                 </span>
 
-                {lanInfo?.suggested_frontend_url && qrBaseUrl !== lanInfo.suggested_frontend_url && (
+                {qrBaseUrl !== window.location.origin && (
+                  <button
+                    onClick={() => handleResetToAutoIp(window.location.origin)}
+                    className="text-[11px] text-amber-400 underline font-semibold ml-2"
+                  >
+                    🌐 Vercel/Web domeniga o'rnatish ({window.location.origin})
+                  </button>
+                )}
+
+                {lanInfo?.suggested_frontend_url && qrBaseUrl !== lanInfo.suggested_frontend_url && window.location.hostname === 'localhost' && (
                   <button
                     onClick={() => handleResetToAutoIp(lanInfo.suggested_frontend_url)}
                     className="text-[11px] text-theme-primary underline ml-2"
                   >
-                    Avtomatik aniqlangan IP ga o'rnatish ({lanInfo.suggested_frontend_url})
+                    Lokal Wi-Fi IP ga o'rnatish ({lanInfo.suggested_frontend_url})
                   </button>
                 )}
               </div>

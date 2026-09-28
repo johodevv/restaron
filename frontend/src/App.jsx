@@ -22,6 +22,8 @@ import AdminDashboard from './pages/admin/AdminDashboard';
 import DeveloperDashboard from './pages/developer/DeveloperDashboard';
 import Login from './pages/auth/Login';
 
+import DunyoLanding from './pages/customer/DunyoLanding';
+
 export const App = () => {
   const { user, isWaiter, isChef, isAdmin, isDev, loading: authLoading } = useAuth();
   const [currentView, setCurrentView] = useState('menu'); // 'menu' | 'tracker' | 'login'
@@ -51,13 +53,12 @@ export const App = () => {
           currentTable = tableData;
           setTableInfo(tableData);
         } catch (e) {
-          console.warn('QR token topilmadi, demo stol ishlatiladi:', e);
-          currentTable = { id: 1, number: 1, room: 'Asosiy zal', restaurant_id: 1 };
-          setTableInfo(currentTable);
+          console.warn('QR token topilmadi:', e);
+          setTableInfo(null);
         }
       } else {
-        currentTable = { id: 1, number: 1, room: 'Asosiy zal', restaurant_id: 1 };
-        setTableInfo(currentTable);
+        // Stol skaner qilinmagan -> Asosiy Landing sahifaga kiradi
+        setTableInfo(null);
       }
 
       // Check active orders specifically for THIS table
@@ -81,6 +82,35 @@ export const App = () => {
     resolveTable();
   }, []);
 
+  const handleSelectTable = async (table) => {
+    setTableInfo(table);
+    const url = new URL(window.location);
+    url.searchParams.set('table', table.qr_token || table.number);
+    window.history.pushState({}, '', url);
+
+    if (table?.id) {
+      try {
+        const activeOrders = await api.get(`/orders/table/${table.id}/active`);
+        if (activeOrders && activeOrders.length > 0) {
+          setActiveOrderId(activeOrders[0].id);
+        } else {
+          setActiveOrderId(null);
+        }
+      } catch (err) {
+        setActiveOrderId(null);
+      }
+    }
+    setCurrentView('menu');
+  };
+
+  const handleReturnToLanding = () => {
+    setTableInfo(null);
+    const url = new URL(window.location);
+    url.searchParams.delete('table');
+    window.history.pushState({}, '', url);
+    setCurrentView('menu');
+  };
+
   const handleOrderCreated = (order) => {
     if (order && order.id) {
       setActiveOrderId(order.id);
@@ -99,9 +129,9 @@ export const App = () => {
     return (
       <div className="min-h-screen flex items-center justify-center bg-theme-bg text-theme-muted">
         <div className="text-center space-y-3">
-          <div className="w-10 h-10 border-4 border-theme-primary border-t-transparent rounded-full animate-spin mx-auto" />
+          <div className="w-10 h-10 border-4 border-amber-500 border-t-transparent rounded-full animate-spin mx-auto" />
           <p className="text-xs font-semibold tracking-wider uppercase text-theme-text">
-            RestAron Yuklanmoqda...
+            Dunyo Choyxonasi Yuklanmoqda...
           </p>
         </div>
       </div>
@@ -137,8 +167,18 @@ export const App = () => {
             </div>
           )}
 
-          {/* Customer View (Not logged in as staff) */}
-          {!user && currentView !== 'login' && (
+          {/* If Not Logged In and NO Table Selected -> Landing Page */}
+          {!user && currentView !== 'login' && !tableInfo && (
+            <div>
+              <DunyoLanding
+                onSelectTable={handleSelectTable}
+                onOpenLogin={() => setCurrentView('login')}
+              />
+            </div>
+          )}
+
+          {/* If Not Logged In and Table IS Selected -> Table Menu */}
+          {!user && currentView !== 'login' && tableInfo && (
             <div>
               <Navbar
                 tableInfo={tableInfo}
@@ -146,7 +186,11 @@ export const App = () => {
                 onOpenCallWaiter={() => setCallWaiterOpen(true)}
                 onOpenBill={() => setBillOpen(true)}
                 currentView={currentView}
-                onNavigate={setCurrentView}
+                onNavigate={(view) => {
+                  if (view === 'landing') handleReturnToLanding();
+                  else setCurrentView(view);
+                }}
+                onReturnToLanding={handleReturnToLanding}
                 activeOrderId={activeOrderId}
               />
 
@@ -165,6 +209,7 @@ export const App = () => {
                     onOpenCart={() => setCartOpen(true)}
                     onOpenCallWaiter={() => setCallWaiterOpen(true)}
                     onOpenBill={() => setBillOpen(true)}
+                    onReturnToLanding={handleReturnToLanding}
                   />
                 )}
               </main>
@@ -173,22 +218,22 @@ export const App = () => {
               <CartDrawer
                 isOpen={cartOpen}
                 onClose={() => setCartOpen(false)}
-                tableId={tableInfo?.id || 1}
+                tableId={tableInfo?.id}
                 onOrderCreated={handleOrderCreated}
               />
 
               <CallWaiterModal
                 isOpen={callWaiterOpen}
                 onClose={() => setCallWaiterOpen(false)}
-                tableId={tableInfo?.id || 1}
-                tableNumber={tableInfo?.number || 1}
+                tableId={tableInfo?.id}
+                tableNumber={tableInfo?.number}
               />
 
               <BillModal
                 isOpen={billOpen}
                 onClose={() => setBillOpen(false)}
-                tableId={tableInfo?.id || 1}
-                tableNumber={tableInfo?.number || 1}
+                tableId={tableInfo?.id}
+                tableNumber={tableInfo?.number}
                 isStaff={false}
               />
 
