@@ -2,48 +2,108 @@ import React, { useState, useEffect } from 'react';
 import api from '../../utils/api';
 import { useAuth } from '../../context/AuthContext';
 import { useWebSocket } from '../../context/WebSocketContext';
-import BillModal from '../../components/BillModal';
+import { ThermalReceiptModal } from '../../components/ThermalReceiptModal';
 import confetti from 'canvas-confetti';
 import {
-  Bike,
-  CheckCircle2,
-  Clock,
+  UtensilsCrossed,
+  ShoppingBag,
+  Truck,
+  Plus,
+  Minus,
+  Trash2,
+  Send,
+  CreditCard,
+  MessageSquare,
   BellRing,
-  ChefHat,
-  RefreshCw,
+  Clock,
+  CheckCircle2,
+  Printer,
+  Search,
+  User,
   Sparkles,
-  AlertCircle,
-  Table as TableIcon,
-  Receipt,
-  Lock
+  RefreshCw,
+  X,
+  Volume2,
+  VolumeX,
+  TrendingUp,
+  Image as ImageIcon,
+  Flame,
+  Check
 } from 'lucide-react';
 
 export const WaiterDashboard = () => {
   const { user } = useAuth();
   const { addEventListener, playChime } = useWebSocket();
-  const [activeTab, setActiveTab] = useState('ready'); // 'ready' | 'active' | 'calls' | 'tables'
-  const [orders, setOrders] = useState([]);
-  const [tables, setTables] = useState([]);
-  const [calls, setCalls] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [actionLoadingId, setActionLoadingId] = useState(null);
-
-  // Bill Modal
-  const [billModalOpen, setBillModalOpen] = useState(false);
-  const [selectedBillTable, setSelectedBillTable] = useState(null);
-
   const restaurantId = user?.restaurant_id || 1;
 
-  const loadData = async () => {
+  // View mode: 'pos' (Ali Poster stollar zakazi) | 'calls' (Chaqiruvlar) | 'ready' (Oshxonadan tayyor) | 'kpi' (Hisobotim)
+  const [activeTab, setActiveTab] = useState('pos');
+  const [orderType, setOrderType] = useState('table'); // 'table' | 'takeaway' | 'delivery'
+
+  // Data states
+  const [tables, setTables] = useState([]);
+  const [categories, setCategories] = useState([]);
+  const [selectedCatId, setSelectedCatId] = useState(null);
+  const [searchItemQuery, setSearchItemQuery] = useState('');
+  const [calls, setCalls] = useState([]);
+  const [readyOrders, setReadyOrders] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  // Active Table & Active Order (Left POS Panel)
+  const [selectedTable, setSelectedTable] = useState(null);
+  const [activeOrder, setActiveOrder] = useState(null);
+  const [orderLoading, setOrderLoading] = useState(false);
+
+  // POS Order items in local state (for fast reactive UI before sync)
+  const [kitchenNote, setKitchenNote] = useState('');
+  const [receiptNote, setReceiptNote] = useState('');
+  const [kitchenNoteModalOpen, setKitchenNoteModalOpen] = useState(false);
+  const [receiptNoteModalOpen, setReceiptNoteModalOpen] = useState(false);
+
+  // Checkout modal
+  const [checkoutModalOpen, setCheckoutModalOpen] = useState(false);
+  const [paymentMethod, setPaymentMethod] = useState('cash'); // 'cash' | 'card' | 'click' | 'debt'
+  const [debtCustomerName, setDebtCustomerName] = useState('');
+  const [debtCustomerPhone, setDebtCustomerPhone] = useState('');
+  const [debtNote, setDebtNote] = useState('');
+  const [debtDueDate, setDebtDueDate] = useState('');
+  const [checkoutLoading, setCheckoutLoading] = useState(false);
+
+  // Xprinter Thermal Receipt Modal
+  const [receiptModalOpen, setReceiptModalOpen] = useState(false);
+  const [thermalReceiptText, setThermalReceiptText] = useState('');
+  const [receiptModalTitle, setReceiptModalTitle] = useState('Chek (Xprinter)');
+
+  // Sound toggle
+  const [soundEnabled, setSoundEnabled] = useState(true);
+
+  // Waiter KPI today
+  const [waiterKpi, setWaiterKpi] = useState({ sales: 0, orders: 0, share: 0 });
+
+  // Load initial data
+  const loadInitialData = async () => {
     try {
-      const [ordersData, tablesData, callsData] = await Promise.all([
-        api.get(`/orders/?restaurant_id=${restaurantId}`).catch(() => []),
+      const [tablesData, menuData, callsData, ordersData] = await Promise.all([
         api.get(`/tables/?restaurant_id=${restaurantId}`).catch(() => []),
+        api.get(`/menu/full/${restaurantId}`).catch(() => []),
         api.get(`/orders/calls?restaurant_id=${restaurantId}`).catch(() => []),
+        api.get(`/orders/?restaurant_id=${restaurantId}`).catch(() => []),
       ]);
-      setOrders(ordersData || []);
+
       setTables(tablesData || []);
+      setCategories(menuData || []);
+      if (menuData && menuData.length > 0 && !selectedCatId) {
+        setSelectedCatId(menuData[0].id);
+      }
       setCalls(callsData || []);
+
+      const ready = (ordersData || []).filter((o) => o.status === 'ready');
+      setReadyOrders(ready);
+
+      // Select first table if none selected
+      if (!selectedTable && tablesData && tablesData.length > 0) {
+        setSelectedTable(tablesData[0]);
+      }
     } catch (err) {
       console.error('Waiter load error:', err);
     } finally {
@@ -52,543 +112,951 @@ export const WaiterDashboard = () => {
   };
 
   useEffect(() => {
-    loadData();
+    loadInitialData();
+  }, [restaurantId]);
 
-    // Real-time events
-    const unsubscribe = addEventListener('*', (event) => {
-      if (
-        event.type === 'new_order' ||
-        event.type === 'order_ready' ||
-        event.type === 'order_delivered' ||
-        event.type === 'call_waiter' ||
-        event.type === 'call_completed' ||
-        event.type === 'order_status_updated' ||
-        event.type === 'table_status_updated' ||
-        event.type === 'table_guest_arrived' ||
-        event.type === 'table_unlocked' ||
-        event.type === 'table_cleared' ||
-        event.type === 'bill_paid'
+  // Load active order for selected table
+  const fetchTableActiveOrder = async (tbl) => {
+    if (!tbl) return;
+    setOrderLoading(true);
+    try {
+      const activeOrders = await api.get(`/orders/table/${tbl.id}/active`).catch(() => []);
+      if (activeOrders && activeOrders.length > 0) {
+        const ord = activeOrders[0];
+        setActiveOrder(ord);
+        setKitchenNote(ord.kitchen_note || '');
+        setReceiptNote(ord.receipt_note || '');
+      } else {
+        setActiveOrder(null);
+        setKitchenNote('');
+        setReceiptNote('');
+      }
+    } catch (err) {
+      console.error('Fetch table order error:', err);
+      setActiveOrder(null);
+    } finally {
+      setOrderLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (selectedTable) {
+      fetchTableActiveOrder(selectedTable);
+    }
+  }, [selectedTable]);
+
+  // WebSocket real-time updates
+  useEffect(() => {
+    const unsub = addEventListener('*', (event) => {
+      if (event.type === 'call_waiter') {
+        if (soundEnabled && playChime) playChime('urgent');
+        loadInitialData();
+      } else if (event.type === 'order_ready') {
+        if (soundEnabled && playChime) playChime('success');
+        loadInitialData();
+      } else if (
+        event.type === 'order_updated' ||
+        event.type === 'order_paid' ||
+        event.type === 'table_status_updated'
       ) {
-        if (event.type === 'table_guest_arrived' && playChime) {
-          playChime('urgent');
+        loadInitialData();
+        if (selectedTable && event.table_id === selectedTable.id) {
+          fetchTableActiveOrder(selectedTable);
         }
-        loadData();
       }
     });
+    return () => unsub();
+  }, [addEventListener, selectedTable, soundEnabled, playChime]);
 
-    return () => unsubscribe();
-  }, [restaurantId, playChime]);
+  // Add Item to Table (Click on food card)
+  const handleAddItem = async (menuItem) => {
+    if (menuItem.is_stop_list || menuItem.is_available === false) {
+      alert(`"${menuItem.name}" hozirda stop-listda (tugagan)`);
+      return;
+    }
 
-  // "Ulanishni tasdiqlash" (Unlock table) handler!
-  const handleUnlockTable = async (tableId, tableNumber) => {
-    setActionLoadingId(`unlock_${tableId}`);
+    if (!selectedTable && orderType === 'table') {
+      alert('Iltimos, avval stolni tanlang');
+      return;
+    }
+
     try {
-      await api.post(`/tables/${tableId}/unlock`, {});
-      confetti({ particleCount: 80, spread: 70, origin: { y: 0.6 } });
-      playChime('success');
-      await loadData();
+      if (!activeOrder) {
+        // Yangi buyurtma ochish
+        const payload = {
+          restaurant_id: restaurantId,
+          table_id: selectedTable?.id,
+          order_type: orderType,
+          hall_name: selectedTable?.room || 'Zal',
+          items: [{ menu_item_id: menuItem.id, quantity: 1 }],
+        };
+        const newOrd = await api.post('/orders/waiter-create', payload);
+        setActiveOrder(newOrd);
+        // Refresh tables to show OCCUPIED
+        setTables((prev) =>
+          prev.map((t) => (t.id === selectedTable?.id ? { ...t, status: 'occupied' } : t))
+        );
+      } else {
+        // Mavjud buyurtmaga qo'shish
+        // Agar taom savatda allaqachon bo'lsa -> sonini +1 qilamiz
+        const existingItem = (activeOrder.items || []).find((i) => i.menu_item_id === menuItem.id);
+        if (existingItem) {
+          const updated = await api.patch(
+            `/orders/${activeOrder.id}/items/${existingItem.id}/quantity`,
+            { quantity: existingItem.quantity + 1 }
+          );
+          setActiveOrder(updated);
+        } else {
+          const updated = await api.post(`/orders/${activeOrder.id}/add-items`, {
+            items: [{ menu_item_id: menuItem.id, quantity: 1 }],
+            send_to_kitchen_immediately: false,
+          });
+          setActiveOrder(updated);
+        }
+      }
     } catch (err) {
-      alert(err.message || 'Stolni tasdiqlashda xatolik yuz berdi');
-    } finally {
-      setActionLoadingId(null);
+      alert(err.message || "Taom qo'shishda xatolik");
     }
   };
 
-  // "Qayta qulflash" (Lock table / New PIN) handler!
-  const handleLockTable = async (tableId) => {
-    setActionLoadingId(`lock_${tableId}`);
+  // Change quantity [- 1 +]
+  const handleQtyChange = async (item, delta) => {
+    const newQty = item.quantity + delta;
+    if (newQty <= 0) {
+      // O'chirish
+      handleDeleteItem(item.id);
+      return;
+    }
     try {
-      await api.post(`/tables/${tableId}/lock`, {});
-      await loadData();
+      const updated = await api.patch(`/orders/${activeOrder.id}/items/${item.id}/quantity`, {
+        quantity: newQty,
+      });
+      setActiveOrder(updated);
     } catch (err) {
-      alert(err.message || 'Stolni qulflashda xatolik yuz berdi');
-    } finally {
-      setActionLoadingId(null);
+      alert(err.message || 'Xatolik');
     }
   };
 
+  // Delete item from order
+  const handleDeleteItem = async (itemId) => {
+    try {
+      const updated = await api.delete(`/orders/${activeOrder.id}/items/${itemId}`);
+      setActiveOrder(updated);
+    } catch (err) {
+      alert(err.message || 'Xatolik');
+    }
+  };
 
-  // "Yetkazib berdim" (Delivered) handler!
-  const handleDeliver = async (orderId, tableNumber) => {
-    setActionLoadingId(orderId);
+  // Save notes
+  const handleSaveNotes = async () => {
+    if (!activeOrder) return;
+    try {
+      const updated = await api.patch(`/orders/${activeOrder.id}/notes`, {
+        kitchen_note: kitchenNote,
+        receipt_note: receiptNote,
+      });
+      setActiveOrder(updated);
+      setKitchenNoteModalOpen(false);
+      setReceiptNoteModalOpen(false);
+    } catch (err) {
+      alert(err.message || 'Xatolik');
+    }
+  };
+
+  // Action: "На кухню" (Send to kitchen -> print ticket)
+  const handleSendToKitchen = async () => {
+    if (!activeOrder || !activeOrder.items || activeOrder.items.length === 0) {
+      alert("Buyurtmada taomlar yo'q!");
+      return;
+    }
+    try {
+      const res = await api.post(`/orders/${activeOrder.id}/send-to-kitchen`, {});
+      if (res.raw_text) {
+        setThermalReceiptText(res.raw_text);
+        setReceiptModalTitle(`Oshxona Begunogi (${selectedTable?.room || 'Zal'} N#${selectedTable?.number || ''})`);
+        setReceiptModalOpen(true);
+      }
+      confetti({ particleCount: 60, spread: 60, origin: { y: 0.7 } });
+      if (soundEnabled && playChime) playChime('success');
+      fetchTableActiveOrder(selectedTable);
+    } catch (err) {
+      alert(err.message || 'Oshxonaga yuborishda xatolik');
+    }
+  };
+
+  // Action: "К оплате" (Checkout & Bill)
+  const handleCheckoutSubmit = async (e) => {
+    e.preventDefault();
+    if (!activeOrder) return;
+
+    setCheckoutLoading(true);
+    try {
+      const payload = {
+        payment_method: paymentMethod,
+        discount: 0.0,
+        debt_customer_name: debtCustomerName,
+        debt_customer_phone: debtCustomerPhone,
+        debt_due_date: debtDueDate || null,
+        debt_note: debtNote,
+        print_receipt: true,
+      };
+
+      const res = await api.post(`/orders/${activeOrder.id}/checkout`, payload);
+      setCheckoutModalOpen(false);
+
+      if (res.raw_text) {
+        setThermalReceiptText(res.raw_text);
+        setReceiptModalTitle(`Hisob Cheki (Stol #${selectedTable?.number || ''})`);
+        setReceiptModalOpen(true);
+      }
+
+      confetti({ particleCount: 100, spread: 70, origin: { y: 0.6 } });
+      if (soundEnabled && playChime) playChime('cash');
+
+      // Reset active order & clear debt inputs
+      setActiveOrder(null);
+      setDebtCustomerName('');
+      setDebtCustomerPhone('');
+      setDebtNote('');
+      setDebtDueDate('');
+
+      // Update table to available
+      setTables((prev) =>
+        prev.map((t) => (t.id === selectedTable?.id ? { ...t, status: 'available' } : t))
+      );
+      loadInitialData();
+    } catch (err) {
+      alert(err.message || "To'lovni qabul qilishda xatolik");
+    } finally {
+      setCheckoutLoading(false);
+    }
+  };
+
+  // Action: "Bordim" (Resolve waiter call)
+  const handleResolveCall = async (callId) => {
+    try {
+      await api.post(`/orders/calls/${callId}/resolve`, {});
+      setCalls((prev) => prev.filter((c) => c.id !== callId));
+    } catch (err) {
+      alert(err.message || 'Xatolik');
+    }
+  };
+
+  // Action: "Yetkazib berdim" (Delivered)
+  const handleDeliverOrder = async (orderId) => {
     try {
       await api.patch(`/orders/${orderId}/deliver`, {});
-      confetti({ particleCount: 80, spread: 60, origin: { y: 0.7 } });
-      playChime('success');
-      await loadData();
+      setReadyOrders((prev) => prev.filter((o) => o.id !== orderId));
+      confetti({ particleCount: 50, spread: 50 });
     } catch (err) {
-      alert(err.message || 'Xatolik yuz berdi');
-    } finally {
-      setActionLoadingId(null);
+      alert(err.message || 'Xatolik');
     }
   };
 
-  // Complete waiter call
-  const handleCompleteCall = async (callId) => {
-    try {
-      await api.post(`/orders/calls/${callId}/resolve`);
-      playChime('info');
-      setCalls((prev) => prev.filter((c) => c.id !== callId));
-      await loadData();
-    } catch (err) {
-      alert(err.message || 'Xatolik yuz berdi');
-    }
-  };
-
-  // Clear table
-  const handleClearTable = async (tableId) => {
-    try {
-      await api.post(`/tables/${tableId}/clear`);
-      playChime('info');
-      await loadData();
-    } catch (err) {
-      alert(err.message || 'Xatolik yuz berdi');
-    }
-  };
-
-  const handleOpenBill = (t) => {
-    setSelectedBillTable(t);
-    setBillModalOpen(true);
-  };
-
-  // Categorize orders & tables
-  const readyOrders = orders.filter((o) => o.status === 'ready');
-  const activeOrders = orders.filter((o) => ['pending', 'confirmed', 'preparing'].includes(o.status));
-  const pendingUnlockTables = tables.filter((t) => !t.is_unlocked && t.current_pin);
+  // Filter items in right panel
+  const activeCategory = categories.find((c) => c.id === selectedCatId);
+  const allItems = categories.flatMap((c) => c.items || []);
+  const displayedItems = searchItemQuery.trim()
+    ? allItems.filter((i) => i.name.toLowerCase().includes(searchItemQuery.toLowerCase()))
+    : activeCategory?.items || [];
 
   return (
-    <div className="max-w-7xl mx-auto px-4 py-6 space-y-6 animate-fade-in">
-      {/* Top Header */}
-      <div className="p-6 rounded-3xl glass-card border border-theme-border bg-gradient-to-r from-theme-surface via-theme-bg to-theme-surface flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-xl">
-        <div>
-          <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-xs font-bold mb-2">
-            <Sparkles className="w-3.5 h-3.5" />
-            <span>Ofitsiant Boshqaruv Markazi</span>
-          </div>
-          <h1 className="text-2xl sm:text-3xl font-extrabold text-white">
-            Salom, {user?.full_name || user?.username}! 👋
-          </h1>
-          <p className="text-xs text-theme-muted mt-1">
-            Yangi mijozlar ulanishini tasdiqlang, buyurtmalarni yetkazib bering va stollar hisobini boshqaring.
-          </p>
-        </div>
-
-        <button
-          onClick={loadData}
-          className="self-start sm:self-auto p-2.5 rounded-xl border border-theme-border hover:border-theme-primary bg-white/5 hover:bg-white/10 text-theme-muted hover:text-white transition-all flex items-center gap-2 text-xs font-semibold"
-        >
-          <RefreshCw className="w-4 h-4" />
-          <span>Yangilash</span>
-        </button>
-      </div>
-
-      {/* PENDING UNLOCK GUESTS ALERT (OFITSIANT TASDIQLASHI KERAK) */}
-      {pendingUnlockTables.length > 0 && (
-        <div className="p-5 rounded-3xl bg-amber-500/15 border-2 border-amber-500/50 shadow-xl shadow-amber-500/10 space-y-3 animate-fade-in">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2 text-amber-300 font-bold text-sm">
-              <Sparkles className="w-5 h-5 text-amber-400 animate-bounce-subtle" />
-              <span>Yangi mehmonlar ({pendingUnlockTables.length} ta stol tasdiqlashni kutmoqda!)</span>
-            </div>
-            <span className="text-[11px] uppercase font-extrabold px-2.5 py-0.5 rounded-full bg-amber-500 text-black">
-              Stolga borish lozim
+    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans select-none">
+      {/* ─── Top Bar (Ali Poster uslubida) ─────────────────────────── */}
+      <header className="h-14 bg-emerald-950/80 border-b border-emerald-800/60 px-4 flex items-center justify-between shadow-lg backdrop-blur-md">
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 font-black text-emerald-400 tracking-wider text-base">
+            <span className="p-1.5 rounded-lg bg-emerald-500/20 text-emerald-400">
+              <UtensilsCrossed className="w-5 h-5" />
             </span>
+            <span>Ali Poster POS</span>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 pt-1">
-            {pendingUnlockTables.map((t) => (
-              <div
-                key={t.id}
-                className="p-4 rounded-2xl bg-black/40 border border-amber-500/40 flex items-center justify-between gap-3 text-xs shadow-md"
-              >
-                <div>
-                  <div className="font-extrabold text-white text-sm flex items-center gap-1.5">
-                    <span>Stol #{t.number}</span>
-                    {t.room && <span className="text-[11px] font-normal text-amber-200/80">({t.room})</span>}
-                  </div>
-                  <div className="text-amber-300 font-mono font-black text-base mt-0.5">
-                    Kodi: <span className="underline">{t.current_pin}</span>
-                  </div>
-                </div>
-                <button
-                  onClick={() => handleUnlockTable(t.id, t.number)}
-                  disabled={actionLoadingId === `unlock_${t.id}`}
-                  className="px-3.5 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-black font-extrabold text-xs shadow-md active:scale-95 transition-all flex items-center gap-1.5 disabled:opacity-50"
-                >
-                  <CheckCircle2 className="w-4 h-4" />
-                  <span>{actionLoadingId === `unlock_${t.id}` ? 'Ochilmoqda...' : 'Tasdiqlash'}</span>
-                </button>
-              </div>
-            ))}
+          {/* Mode Switchers: Stollar | S soboy | Dostavka */}
+          <div className="hidden sm:flex items-center bg-black/40 p-1 rounded-xl border border-emerald-800/40 ml-4">
+            <button
+              onClick={() => {
+                setActiveTab('pos');
+                setOrderType('table');
+              }}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                activeTab === 'pos' && orderType === 'table'
+                  ? 'bg-emerald-600 text-white shadow-md'
+                  : 'text-slate-300 hover:text-white'
+              }`}
+            >
+              <span>Столы</span>
+            </button>
+            <button
+              onClick={() => {
+                setActiveTab('pos');
+                setOrderType('takeaway');
+              }}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                activeTab === 'pos' && orderType === 'takeaway'
+                  ? 'bg-emerald-600 text-white shadow-md'
+                  : 'text-slate-300 hover:text-white'
+              }`}
+            >
+              <ShoppingBag className="w-3.5 h-3.5" />
+              <span>С собой</span>
+            </button>
+            <button
+              onClick={() => {
+                setActiveTab('pos');
+                setOrderType('delivery');
+              }}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                activeTab === 'pos' && orderType === 'delivery'
+                  ? 'bg-emerald-600 text-white shadow-md'
+                  : 'text-slate-300 hover:text-white'
+              }`}
+            >
+              <Truck className="w-3.5 h-3.5" />
+              <span>Доставка</span>
+            </button>
           </div>
         </div>
-      )}
 
-      {/* Navigation Tabs with Counters */}
-      <div className="flex items-center gap-2 overflow-x-auto pb-2 scrollbar-none no-scrollbar">
-        <button
-          onClick={() => setActiveTab('ready')}
-          className={`flex items-center gap-2 px-4 py-3 rounded-2xl text-xs font-bold whitespace-nowrap transition-all ${
-            activeTab === 'ready'
-              ? 'bg-emerald-500 text-white shadow-lg shadow-emerald-500/20 scale-102'
-              : 'bg-theme-surface/60 border border-theme-border text-theme-muted hover:text-white'
-          }`}
-        >
-          <Bike className="w-4 h-4" />
-          <span>Tayyor (Yetkazish kerak)</span>
-          {readyOrders.length > 0 && (
-            <span className="w-5 h-5 rounded-full bg-white text-emerald-600 text-[11px] font-black flex items-center justify-center animate-bounce">
-              {readyOrders.length}
-            </span>
-          )}
-        </button>
-
-        <button
-          onClick={() => setActiveTab('active')}
-          className={`flex items-center gap-2 px-4 py-3 rounded-2xl text-xs font-bold whitespace-nowrap transition-all ${
-            activeTab === 'active'
-              ? 'bg-theme-primary text-white shadow-glow scale-102'
-              : 'bg-theme-surface/60 border border-theme-border text-theme-muted hover:text-white'
-          }`}
-        >
-          <Clock className="w-4 h-4" />
-          <span>Faol buyurtmalar</span>
-          <span className="text-[11px] opacity-80">({activeOrders.length})</span>
-        </button>
-
-        <button
-          onClick={() => setActiveTab('calls')}
-          className={`flex items-center gap-2 px-4 py-3 rounded-2xl text-xs font-bold whitespace-nowrap transition-all ${
-            activeTab === 'calls'
-              ? 'bg-amber-500 text-white shadow-lg shadow-amber-500/20 scale-102'
-              : 'bg-theme-surface/60 border border-theme-border text-theme-muted hover:text-white'
-          }`}
-        >
-          <BellRing className="w-4 h-4" />
-          <span>Chaqiruvlar</span>
-          {calls.length > 0 && (
-            <span className="w-5 h-5 rounded-full bg-red-500 text-white text-[11px] font-black flex items-center justify-center animate-pulse">
-              {calls.length}
-            </span>
-          )}
-        </button>
-
-        <button
-          onClick={() => setActiveTab('tables')}
-          className={`flex items-center gap-2 px-4 py-3 rounded-2xl text-xs font-bold whitespace-nowrap transition-all ${
-            activeTab === 'tables'
-              ? 'bg-indigo-500 text-white shadow-lg shadow-indigo-500/20 scale-102'
-              : 'bg-theme-surface/60 border border-theme-border text-theme-muted hover:text-white'
-          }`}
-        >
-          <TableIcon className="w-4 h-4" />
-          <span>Stollar & Cheklar ({tables.length})</span>
-        </button>
-      </div>
-
-      {/* TAB 1: READY ORDERS (YETKAZISH KERAK — 'YETKAZIB BERDIM' TUGMASI) */}
-      {activeTab === 'ready' && (
-        <div className="space-y-4">
-          <div className="flex items-center justify-between">
-            <h3 className="text-sm font-bold text-white uppercase tracking-wider flex items-center gap-2">
-              <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse" />
-              Oshxona tayyorlagan taomlar (Mijozga yetkazish lozim)
-            </h3>
-            <span className="text-xs text-theme-muted">
-              Jami: {readyOrders.length} ta
-            </span>
-          </div>
-
-          {readyOrders.length === 0 ? (
-            <div className="p-12 text-center rounded-3xl glass-card border border-theme-border text-theme-muted">
-              <CheckCircle2 className="w-12 h-12 mx-auto mb-3 text-emerald-400/50" />
-              <p className="text-base font-semibold text-white">
-                Barcha tayyor taomlar yetkazib berilgan!
-              </p>
-              <p className="text-xs mt-1">
-                Yangi taomlar tayyor bo'lishi bilan bu yerda paydo bo'ladi.
-              </p>
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {readyOrders.map((order) => (
-                <div
-                  key={order.id}
-                  className="p-5 rounded-2xl glass-card border-2 border-emerald-500/50 bg-emerald-950/20 shadow-xl shadow-emerald-500/10 flex flex-col justify-between space-y-4"
-                >
-                  <div>
-                    {/* Header */}
-                    <div className="flex items-center justify-between pb-3 border-b border-emerald-500/20">
-                      <div>
-                        <span className="text-2xl font-black text-white">
-                          Stol #{order.table_number || order.table_id}
-                        </span>
-                        <div className="text-xs text-emerald-400 font-semibold mt-0.5">
-                          {order.order_number}
-                        </div>
-                      </div>
-                      <span className="text-[11px] font-extrabold uppercase px-2.5 py-1 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 animate-pulse">
-                        🍳 Tayyor!
-                      </span>
-                    </div>
-
-                    {/* Meta info */}
-                    <div className="py-3 space-y-1.5 text-xs text-theme-muted">
-                      <div>
-                        Mijoz: <span className="text-white font-medium">{order.customer_name || 'Noma\'lum'}</span>
-                      </div>
-                      <div>
-                        Taomlar soni: <span className="text-white font-medium">{order.items_count} xil</span>
-                      </div>
-                      <div>
-                        Jami summa: <span className="text-white font-bold">{(order.total || 0).toLocaleString()} so'm</span>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* PROMINENT "YETKAZIB BERDIM" BUTTON */}
-                  <button
-                    onClick={() => handleDeliver(order.id, order.table_number)}
-                    disabled={actionLoadingId === order.id}
-                    className="w-full py-4 rounded-xl bg-gradient-to-r from-emerald-500 via-emerald-600 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white font-black text-sm uppercase tracking-wider shadow-lg shadow-emerald-500/30 flex items-center justify-center gap-2 active:scale-98 transition-all"
-                  >
-                    {actionLoadingId === order.id ? (
-                      <>
-                        <RefreshCw className="w-5 h-5 animate-spin" />
-                        <span>Belgilanmoqda...</span>
-                      </>
-                    ) : (
-                      <>
-                        <CheckCircle2 className="w-5 h-5" />
-                        <span>Yetkazib berdim</span>
-                      </>
-                    )}
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* TAB 2: ACTIVE ORDERS */}
-      {activeTab === 'active' && (
-        <div className="space-y-4">
-          <h3 className="text-sm font-bold text-white uppercase tracking-wider">
-            Tayyorlanayotgan va Kutilayotgan Buyurtmalar
-          </h3>
-
-          {activeOrders.length === 0 ? (
-            <div className="p-12 text-center rounded-3xl glass-card border border-theme-border text-theme-muted">
-              <Clock className="w-12 h-12 mx-auto mb-3 opacity-40" />
-              <p className="text-base font-semibold">Faol buyurtmalar yo'q</p>
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {activeOrders.map((order) => (
-                <div
-                  key={order.id}
-                  className="p-5 rounded-2xl glass-card border border-theme-border bg-theme-surface/70 space-y-3"
-                >
-                  <div className="flex items-center justify-between pb-3 border-b border-theme-border/60">
-                    <div>
-                      <span className="text-xl font-bold text-white">
-                        Stol #{order.table_number || order.table_id}
-                      </span>
-                      <div className="text-xs text-theme-muted">{order.order_number}</div>
-                    </div>
-                    <span className="text-[11px] font-bold uppercase px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300">
-                      {order.status === 'pending' ? 'Kutilmoqda' : 'Oshxonada'}
-                    </span>
-                  </div>
-
-                  <div className="text-xs space-y-1 text-theme-muted">
-                    <div>Jami summa: <span className="text-white font-bold">{(order.total || 0).toLocaleString()} so'm</span></div>
-                    <div>Taomlar: <span className="text-white">{order.items_count} xil</span></div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* TAB 3: WAITER CALLS */}
-      {activeTab === 'calls' && (
-        <div className="space-y-4">
-          <div className="flex items-center justify-between">
-            <h3 className="text-sm font-bold text-white uppercase tracking-wider flex items-center gap-2">
-              <BellRing className="w-4 h-4 text-amber-400" />
-              <span>Mijozlarning Chaqiruvlari ({calls.length})</span>
-            </h3>
+        {/* Right Info: Chaqiruvlar badgi, Waiter Name, Sound toggle */}
+        <div className="flex items-center gap-3">
+          {/* Chaqiruvlar Tab Button */}
+          <button
+            onClick={() => setActiveTab('calls')}
+            className={`relative flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
+              activeTab === 'calls'
+                ? 'bg-amber-500 text-slate-950'
+                : 'bg-slate-900 border border-slate-800 text-slate-300 hover:bg-slate-850'
+            }`}
+          >
+            <BellRing className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">Chaqiruvlar</span>
             {calls.length > 0 && (
-              <span className="text-xs text-amber-400 font-bold animate-pulse">
-                🔔 {calls.length} ta stol chaqirmoqda!
+              <span className="w-5 h-5 rounded-full bg-red-600 text-white text-[10px] font-black flex items-center justify-center animate-pulse">
+                {calls.length}
               </span>
             )}
+          </button>
+
+          {/* Tayyor taomlar Tab Button */}
+          <button
+            onClick={() => setActiveTab('ready')}
+            className={`relative flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
+              activeTab === 'ready'
+                ? 'bg-emerald-500 text-slate-950'
+                : 'bg-slate-900 border border-slate-800 text-slate-300 hover:bg-slate-850'
+            }`}
+          >
+            <CheckCircle2 className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">Tayyor</span>
+            {readyOrders.length > 0 && (
+              <span className="w-5 h-5 rounded-full bg-emerald-600 text-white text-[10px] font-black flex items-center justify-center">
+                {readyOrders.length}
+              </span>
+            )}
+          </button>
+
+          {/* Sound toggle */}
+          <button
+            onClick={() => setSoundEnabled(!soundEnabled)}
+            className="p-2 rounded-xl bg-black/30 border border-slate-800 text-slate-400 hover:text-white"
+            title="Ovozli signallar"
+          >
+            {soundEnabled ? <Volume2 className="w-4 h-4 text-emerald-400" /> : <VolumeX className="w-4 h-4" />}
+          </button>
+
+          {/* Waiter Info */}
+          <div className="flex items-center gap-2 pl-2 border-l border-emerald-800/60">
+            <div className="w-7 h-7 rounded-lg bg-emerald-500/20 text-emerald-400 flex items-center justify-center text-xs font-bold">
+              <User className="w-4 h-4" />
+            </div>
+            <div className="hidden md:block text-left">
+              <p className="text-xs font-bold text-white leading-tight">
+                {user?.full_name || user?.username || 'Ofitsiant'}
+              </p>
+              <p className="text-[10px] text-emerald-400/80">Faol xodim</p>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      {/* ─── Main Content Tabs ───────────────────────────────────────── */}
+      {activeTab === 'calls' ? (
+        /* ── Chaqiruvlar Royxati ── */
+        <div className="max-w-4xl mx-auto p-6 flex-1 w-full">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-lg font-bold text-white flex items-center gap-2">
+              <BellRing className="w-5 h-5 text-amber-400" />
+              <span>Mijozlardan faol chaqiruvlar ({calls.length})</span>
+            </h2>
+            <button
+              onClick={() => setActiveTab('pos')}
+              className="text-xs text-slate-400 hover:text-white underline"
+            >
+              ← POS Ekraniga qaytish
+            </button>
           </div>
 
           {calls.length === 0 ? (
-            <div className="p-12 text-center rounded-3xl glass-card border border-theme-border text-theme-muted">
-              <BellRing className="w-12 h-12 mx-auto mb-3 opacity-40 text-amber-400" />
-              <p className="text-base font-semibold text-white">Hech qaysi stol chaqirmayapti</p>
-              <p className="text-xs mt-1">Mijoz chaqirganda darhol ovozli xabar keladi va shu yerda ko'rinadi.</p>
+            <div className="p-12 text-center bg-slate-900/60 rounded-3xl border border-slate-800 text-slate-400">
+              <CheckCircle2 className="w-12 h-12 text-emerald-500 mx-auto mb-3" />
+              <p className="font-bold text-white text-base">Hozircha yangi chaqiruvlar yo'q</p>
+              <p className="text-xs mt-1">Barcha stollarga xizmat ko'rsatilgan</p>
             </div>
           ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {calls.map((call) => (
+            <div className="grid gap-3">
+              {calls.map((c) => (
                 <div
-                  key={call.id}
-                  className="p-5 rounded-2xl glass-card border-2 border-amber-500/60 bg-amber-950/25 shadow-xl shadow-amber-500/10 flex flex-col sm:flex-row sm:items-center justify-between gap-4 animate-fade-in"
+                  key={c.id}
+                  className="p-4 rounded-2xl bg-slate-900 border border-amber-500/30 flex items-center justify-between shadow-lg animate-in slide-in-from-top-2"
                 >
-                  <div className="space-y-1">
-                    <div className="flex items-center gap-2">
-                      <span className="text-2xl font-black text-white">
-                        Stol #{call.table_number || call.table_id}
-                      </span>
-                      {call.room && (
-                        <span className="text-xs px-2 py-0.5 rounded-md bg-white/10 text-theme-muted">
-                          {call.room}
-                        </span>
-                      )}
+                  <div className="flex items-center gap-3">
+                    <div className="w-11 h-11 rounded-xl bg-amber-500/20 text-amber-400 flex items-center justify-center font-black text-sm">
+                      #{c.table_number}
                     </div>
-                    <p className="text-xs text-amber-300 font-medium">
-                      Sabab: <span className="text-white font-bold">"{call.note || 'Ofitsiant yordami kerak'}"</span>
-                    </p>
-                    <div className="text-[11px] text-theme-muted flex items-center gap-1 pt-1">
-                      <Clock className="w-3 h-3" />
-                      <span>{new Date(call.created_at).toLocaleTimeString('uz-UZ')}</span>
+                    <div>
+                      <h4 className="font-bold text-white text-sm">
+                        Stol #{c.table_number} {c.room ? `(${c.room})` : ''}
+                      </h4>
+                      <p className="text-xs text-amber-300/90 mt-0.5 font-medium">
+                        💬 {c.note || 'Ofitsiant yordami so\'ralmoqda'}
+                      </p>
                     </div>
                   </div>
 
                   <button
-                    onClick={() => handleCompleteCall(call.id)}
-                    className="px-5 py-3 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white font-bold text-xs shadow-lg shadow-orange-500/20 active:scale-95 transition-all whitespace-nowrap flex items-center justify-center gap-1.5"
+                    onClick={() => handleResolveCall(c.id)}
+                    className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-md transition-all active:scale-95"
                   >
-                    <CheckCircle2 className="w-4 h-4" />
-                    <span>Bordim (Yakunlash)</span>
+                    Bordim (Yakunlash)
                   </button>
                 </div>
               ))}
             </div>
           )}
         </div>
-      )}
+      ) : activeTab === 'ready' ? (
+        /* ── Oshxonadan tayyor taomlar ── */
+        <div className="max-w-4xl mx-auto p-6 flex-1 w-full">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-lg font-bold text-white flex items-center gap-2">
+              <CheckCircle2 className="w-5 h-5 text-emerald-400" />
+              <span>Oshxonadan tayyor bo'lgan buyurtmalar ({readyOrders.length})</span>
+            </h2>
+            <button
+              onClick={() => setActiveTab('pos')}
+              className="text-xs text-slate-400 hover:text-white underline"
+            >
+              ← POS Ekraniga qaytish
+            </button>
+          </div>
 
-      {/* TAB 4: TABLES STATUS & BILLS */}
-      {activeTab === 'tables' && (
-        <div className="space-y-4">
-          <h3 className="text-sm font-bold text-white uppercase tracking-wider">
-            Stollar Holati va Hisob-Kitob
-          </h3>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-            {tables.map((t) => {
-              const statusStr = (t.status || '').toLowerCase();
-              const isOccupied = statusStr === 'occupied';
-              const isReserved = statusStr === 'reserved';
-
-              return (
+          {readyOrders.length === 0 ? (
+            <div className="p-12 text-center bg-slate-900/60 rounded-3xl border border-slate-800 text-slate-400">
+              <p className="font-bold text-white text-base">Hozirda oshxonada tayyor buyurtma yo'q</p>
+            </div>
+          ) : (
+            <div className="grid gap-3">
+              {readyOrders.map((ord) => (
                 <div
-                  key={t.id}
-                  className={`p-5 rounded-3xl border flex flex-col justify-between gap-3 transition-all ${
-                    isOccupied
-                      ? 'border-red-500/40 bg-red-950/15 shadow-md'
-                      : isReserved
-                      ? 'border-amber-500/40 bg-amber-950/15'
-                      : 'border-theme-border bg-theme-surface/70'
-                  }`}
+                  key={ord.id}
+                  className="p-5 rounded-2xl bg-slate-900 border border-emerald-500/40 flex items-center justify-between shadow-xl"
                 >
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <div className="text-2xl font-black text-white">
-                        #{t.number}
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="px-2.5 py-1 rounded-lg bg-emerald-500/20 text-emerald-400 font-mono text-xs font-black">
+                        {ord.order_number}
+                      </span>
+                      <span className="text-sm font-extrabold text-white">
+                        Stol #{ord.table_number || ord.table_id} {ord.room ? `(${ord.room})` : ''}
+                      </span>
+                    </div>
+                    <div className="mt-2 text-xs text-slate-300">
+                      {(ord.items || []).map((it) => (
+                        <span key={it.id} className="mr-3 font-medium">
+                          {it.menu_item_name || 'Taom'} x{it.quantity}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+
+                  <button
+                    onClick={() => handleDeliverOrder(ord.id)}
+                    className="px-5 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-xs shadow-lg shadow-emerald-500/30 transition-all active:scale-95 flex items-center gap-2"
+                  >
+                    <Check className="w-4 h-4 stroke-[3]" />
+                    <span>Yetkazib berdim</span>
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      ) : (
+        /* ── POS EKRANI (Ali Poster 1- va 2-rasmlar analogi) ───────── */
+        <div className="flex-1 flex flex-col lg:flex-row overflow-hidden">
+          {/* ── Chap Panel: Tanlangan Stol va Zakaz (Photo 1) ─────────── */}
+          <div className="w-full lg:w-[460px] bg-slate-900/90 border-r border-slate-800 flex flex-col justify-between shrink-0">
+            {/* Table Header Bar */}
+            <div className="p-3.5 bg-slate-950/70 border-b border-slate-800 flex items-center justify-between">
+              <div>
+                <span className="text-[10px] text-slate-400 uppercase tracking-wider font-semibold">
+                  Joriy stol:
+                </span>
+                <div className="flex items-center gap-2">
+                  <h2 className="text-base font-black text-white">
+                    {selectedTable?.room ? `${selectedTable.room} - ` : ''}
+                    {selectedTable?.name || `Stol #${selectedTable?.number || 1}`}
+                  </h2>
+                  <span
+                    className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${
+                      selectedTable?.status === 'occupied'
+                        ? 'bg-red-500/20 text-red-400 border border-red-500/30'
+                        : 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                    }`}
+                  >
+                    {selectedTable?.status === 'occupied' ? 'Band' : "Bo'sh"}
+                  </span>
+                </div>
+              </div>
+
+              {/* Table Switcher Quick Selector */}
+              <select
+                value={selectedTable?.id || ''}
+                onChange={(e) => {
+                  const t = tables.find((x) => x.id === parseInt(e.target.value));
+                  if (t) setSelectedTable(t);
+                }}
+                className="bg-slate-800 border border-slate-700 text-xs text-white rounded-xl px-2.5 py-1.5 focus:outline-none focus:border-emerald-500 font-medium"
+              >
+                {tables.map((tbl) => (
+                  <option key={tbl.id} value={tbl.id}>
+                    {tbl.room ? `${tbl.room} ` : ''}#{tbl.number} (
+                    {tbl.status === 'occupied' ? 'Band' : 'Bo\'sh'})
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Active Items Table (Photo 1 format: Блюда, Цена, Кол., Итого) */}
+            <div className="flex-1 overflow-y-auto">
+              <div className="grid grid-cols-12 text-[11px] font-bold text-slate-400 bg-slate-950/40 px-3 py-2 border-b border-slate-800/80">
+                <span className="col-span-5">Блюда (Taom)</span>
+                <span className="col-span-3 text-right">Цена</span>
+                <span className="col-span-2 text-center">Кол.</span>
+                <span className="col-span-2 text-right">Итого</span>
+              </div>
+
+              {orderLoading ? (
+                <div className="p-8 text-center text-xs text-slate-500">Yuklanmoqda...</div>
+              ) : !activeOrder || !activeOrder.items || activeOrder.items.length === 0 ? (
+                <div className="p-8 text-center text-slate-500 text-xs">
+                  <p className="font-semibold text-slate-400">Ushbu stolda hali zakaz yo'q</p>
+                  <p className="mt-1 text-[11px]">O'ng tomondan taomlarni tanlang</p>
+                </div>
+              ) : (
+                <div className="divide-y divide-slate-800/50">
+                  {activeOrder.items.map((it) => (
+                    <div
+                      key={it.id}
+                      className="grid grid-cols-12 items-center px-3 py-2.5 hover:bg-slate-800/40 transition-colors text-xs"
+                    >
+                      {/* Name & time */}
+                      <div className="col-span-5 pr-1">
+                        <p className="font-bold text-white text-xs truncate">
+                          {it.menu_item_name || 'Taom'}
+                        </p>
+                        <p className="text-[10px] text-slate-400 font-mono mt-0.5">
+                          {it.quantity}x • {it.item_time || '19:36'} •{' '}
+                          {it.sent_to_kitchen ? 'Oshxonada' : 'Yangi'}
+                        </p>
                       </div>
-                      <div className="text-xs text-theme-muted">
-                        {t.room || 'Asosiy zal'}
+
+                      {/* Unit Price */}
+                      <div className="col-span-3 text-right font-medium text-slate-300 text-xs">
+                        {it.unit_price.toLocaleString('uz-UZ')}
+                      </div>
+
+                      {/* Quantity Controls [- 1 +] */}
+                      <div className="col-span-2 flex items-center justify-center gap-1">
+                        <button
+                          onClick={() => handleQtyChange(it, -1)}
+                          className="w-5 h-5 rounded bg-emerald-700/80 hover:bg-emerald-600 text-white flex items-center justify-center font-bold text-xs transition-colors"
+                        >
+                          -
+                        </button>
+                        <span className="text-xs font-bold text-white w-4 text-center">
+                          {it.quantity}
+                        </span>
+                        <button
+                          onClick={() => handleQtyChange(it, 1)}
+                          className="w-5 h-5 rounded bg-emerald-700/80 hover:bg-emerald-600 text-white flex items-center justify-center font-bold text-xs transition-colors"
+                        >
+                          +
+                        </button>
+                      </div>
+
+                      {/* Line Total */}
+                      <div className="col-span-2 text-right font-black text-emerald-400 text-xs">
+                        {it.total_price.toLocaleString('uz-UZ')}
                       </div>
                     </div>
+                  ))}
+                </div>
+              )}
+            </div>
 
-                    <span
-                      className={`px-2.5 py-1 rounded-lg font-bold text-[10px] uppercase ${
-                        !t.is_unlocked && t.current_pin
-                          ? 'bg-amber-500/30 text-amber-300 border border-amber-500/50 animate-pulse'
-                          : isOccupied
-                          ? 'bg-red-500/20 text-red-300 border border-red-500/30'
-                          : isReserved
-                          ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
-                          : 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+            {/* Bottom Total and Actions (Photo 1 exact layout) */}
+            <div className="p-3.5 bg-slate-950 border-t border-slate-800">
+              {/* Subtotal & Service fee summary */}
+              <div className="space-y-1 mb-3 text-xs">
+                <div className="flex justify-between text-slate-400">
+                  <span>Taomlar jami:</span>
+                  <span className="font-semibold text-slate-200">
+                    {(activeOrder?.subtotal || 0).toLocaleString('uz-UZ')} so'm
+                  </span>
+                </div>
+                <div className="flex justify-between text-slate-400">
+                  <span>Xizmat haqi ({activeOrder?.service_fee_percent || 12}%):</span>
+                  <span className="font-semibold text-slate-200">
+                    {(activeOrder?.service_fee_amount || 0).toLocaleString('uz-UZ')} so'm
+                  </span>
+                </div>
+                <div className="flex justify-between text-sm font-black text-white pt-1 border-t border-slate-800">
+                  <span>Итого (Jami):</span>
+                  <span className="text-emerald-400 text-base">
+                    {(activeOrder?.total || 0).toLocaleString('uz-UZ')} so'm
+                  </span>
+                </div>
+              </div>
+
+              {/* Action Buttons: Comments */}
+              <div className="grid grid-cols-2 gap-2 mb-2">
+                <button
+                  onClick={() => setKitchenNoteModalOpen(true)}
+                  className="py-2 px-3 rounded-xl bg-teal-600/20 hover:bg-teal-600/30 border border-teal-500/40 text-teal-300 font-bold text-xs transition-colors truncate"
+                >
+                  Комент. к кухне {kitchenNote ? '✓' : ''}
+                </button>
+                <button
+                  onClick={() => setReceiptNoteModalOpen(true)}
+                  className="py-2 px-3 rounded-xl bg-cyan-600/20 hover:bg-cyan-600/30 border border-cyan-500/40 text-cyan-300 font-bold text-xs transition-colors truncate"
+                >
+                  Комент. к чеку {receiptNote ? '✓' : ''}
+                </button>
+              </div>
+
+              {/* Main POS Actions: "На кухню" (Orange) | "К оплате" (Green) */}
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  onClick={handleSendToKitchen}
+                  disabled={!activeOrder}
+                  className="py-3 px-3 rounded-xl bg-amber-600 hover:bg-amber-500 disabled:opacity-40 text-white font-extrabold text-xs shadow-lg shadow-amber-600/20 transition-all active:scale-95 flex items-center justify-center gap-1.5"
+                >
+                  <Printer className="w-4 h-4" />
+                  <span>На кухню (Begunok)</span>
+                </button>
+
+                <button
+                  onClick={() => setCheckoutModalOpen(true)}
+                  disabled={!activeOrder}
+                  className="py-3 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white font-extrabold text-xs shadow-lg shadow-emerald-600/20 transition-all active:scale-95 flex items-center justify-center gap-1.5"
+                >
+                  <CreditCard className="w-4 h-4" />
+                  <span>К оплате (Hisob)</span>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* ── O'ng Panel: Kategoriyalar va Taomlar Gridi (Photo 2) ───── */}
+          <div className="flex-1 flex flex-col bg-slate-950 overflow-hidden">
+            {/* Top Categories Strip (Photo 2 categories buttons) */}
+            <div className="p-3 bg-slate-900/60 border-b border-slate-800">
+              {/* Search bar */}
+              <div className="mb-2.5 relative">
+                <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
+                <input
+                  type="text"
+                  value={searchItemQuery}
+                  onChange={(e) => setSearchItemQuery(e.target.value)}
+                  placeholder="Menyudan taom qidirish..."
+                  className="w-full pl-9 pr-3 py-1.5 rounded-xl bg-slate-900 border border-slate-700/80 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500 font-medium"
+                />
+              </div>
+
+              {/* Category buttons list */}
+              <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-1">
+                {categories.map((cat) => {
+                  const active = cat.id === selectedCatId;
+                  return (
+                    <button
+                      key={cat.id}
+                      onClick={() => {
+                        setSelectedCatId(cat.id);
+                        setSearchItemQuery('');
+                      }}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold shrink-0 transition-all ${
+                        active
+                          ? 'bg-emerald-600 text-white shadow-md'
+                          : 'bg-slate-850 hover:bg-slate-800 text-slate-300 border border-slate-700/60'
                       }`}
                     >
-                      {!t.is_unlocked && t.current_pin ? '🔒 Kod Kutilmoqda' : (isOccupied ? 'Band' : isReserved ? 'Bron' : "Bo'sh")}
-                    </span>
-                  </div>
-
-                  {/* If table is locked with pin */}
-                  {!t.is_unlocked && t.current_pin && (
-                    <div className="p-3 rounded-2xl bg-amber-500/15 border border-amber-500/40 text-center space-y-1.5">
-                      <span className="text-[10px] uppercase text-amber-300 font-bold block">Mijoz Kirdi (Kodi):</span>
-                      <span className="text-xl font-mono font-black text-amber-300 block">{t.current_pin}</span>
-                      <button
-                        onClick={() => handleUnlockTable(t.id, t.number)}
-                        disabled={actionLoadingId === `unlock_${t.id}`}
-                        className="w-full py-2 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-black font-extrabold text-xs shadow-md active:scale-95 transition-all flex items-center justify-center gap-1.5 disabled:opacity-50"
-                      >
-                        <CheckCircle2 className="w-3.5 h-3.5" />
-                        <span>{actionLoadingId === `unlock_${t.id}` ? 'Ochilmoqda...' : 'Ulanishni Tasdiqlash'}</span>
-                      </button>
-                    </div>
-                  )}
-
-                  <div className="space-y-2 pt-2 border-t border-theme-border/50">
-                    <button
-                      onClick={() => handleOpenBill(t)}
-                      className="w-full py-2.5 rounded-xl bg-theme-primary/15 hover:bg-theme-primary/25 border border-theme-primary/30 text-theme-primary text-xs font-bold flex items-center justify-center gap-1.5 transition-all shadow-sm"
-                    >
-                      <Receipt className="w-3.5 h-3.5" />
-                      <span>Chek / Hisobni ko'rish</span>
+                      {cat.name}
                     </button>
+                  );
+                })}
+              </div>
+            </div>
 
-                    {t.is_unlocked && (
-                      <button
-                        onClick={() => handleLockTable(t.id)}
-                        disabled={actionLoadingId === `lock_${t.id}`}
-                        className="w-full py-2 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30 text-amber-300 font-bold text-xs flex items-center justify-center gap-1.5 transition-all disabled:opacity-50"
-                      >
-                        <Lock className="w-3.5 h-3.5" />
-                        <span>Qayta qulflash (PIN)</span>
-                      </button>
-                    )}
+            {/* Dishes Grid (Photo 2 Cards with green price badges) */}
+            <div className="flex-1 overflow-y-auto p-4">
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 gap-3">
+                {displayedItems.map((item) => {
+                  const isStop = item.is_stop_list || item.is_available === false;
+                  return (
+                    <div
+                      key={item.id}
+                      onClick={() => handleAddItem(item)}
+                      className={`group relative rounded-2xl bg-slate-900 border border-slate-800 p-2.5 flex flex-col justify-between hover:border-emerald-500/80 hover:bg-slate-850 transition-all shadow-md cursor-pointer select-none active:scale-95 ${
+                        isStop ? 'opacity-50 grayscale' : ''
+                      }`}
+                    >
+                      {/* Image / Thumbnail */}
+                      <div className="h-28 w-full rounded-xl bg-slate-950 overflow-hidden relative mb-2 flex items-center justify-center">
+                        {item.image_url ? (
+                          <img
+                            src={item.image_url}
+                            alt={item.name}
+                            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                            loading="lazy"
+                          />
+                        ) : (
+                          <div className="text-slate-600 flex flex-col items-center">
+                            <ImageIcon className="w-6 h-6 mb-1" />
+                            <span className="text-[10px]">Taom</span>
+                          </div>
+                        )}
 
-                    {isOccupied && (
-                      <button
-                        onClick={() => handleClearTable(t.id)}
-                        className="w-full py-2 rounded-xl bg-white/5 hover:bg-white/10 border border-theme-border text-white text-xs font-semibold flex items-center justify-center gap-1.5 transition-all"
-                      >
-                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-                        <span>Stolni bo'shatish</span>
-                      </button>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
+                        {isStop && (
+                          <span className="absolute inset-x-1 bottom-1 text-center bg-red-600/90 text-white font-extrabold text-[9px] py-0.5 rounded">
+                            Tugagan (Stop)
+                          </span>
+                        )}
+                      </div>
+
+                      {/* Title */}
+                      <h4 className="text-xs font-bold text-white group-hover:text-emerald-300 transition-colors line-clamp-2 leading-tight">
+                        {item.name}
+                      </h4>
+
+                      {/* Price Badge (Photo 2 green badge bottom left) */}
+                      <div className="mt-2.5 flex items-center justify-between">
+                        <span className="px-2 py-0.5 rounded-lg bg-emerald-600 text-white font-black text-xs shadow-sm">
+                          {item.price.toLocaleString('uz-UZ')}
+                        </span>
+                        <span className="w-5 h-5 rounded-full bg-emerald-500/20 text-emerald-400 flex items-center justify-center text-xs font-bold group-hover:bg-emerald-500 group-hover:text-slate-950 transition-colors">
+                          +
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
           </div>
         </div>
       )}
 
-      {/* Table Bill Modal */}
-      <BillModal
-        isOpen={billModalOpen}
-        onClose={() => setBillModalOpen(false)}
-        tableId={selectedBillTable?.id}
-        tableNumber={selectedBillTable?.number}
-        isStaff={true}
-        onTableCleared={loadData}
+      {/* ─── Kitchen Note Modal (Комент. к кухне) ───────────────────── */}
+      {kitchenNoteModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm animate-in fade-in">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-sm w-full p-5 shadow-2xl">
+            <h3 className="text-sm font-bold text-white mb-2">Oshxonaga izoh (Комент. к кухне)</h3>
+            <textarea
+              rows={3}
+              value={kitchenNote}
+              onChange={(e) => setKitchenNote(e.target.value)}
+              placeholder="Masalan: Achchiq bo'lmasin, piyozsiz..."
+              className="w-full p-3 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white focus:outline-none focus:border-teal-500 resize-none mb-4"
+            />
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => setKitchenNoteModalOpen(false)}
+                className="px-3 py-1.5 text-xs text-slate-400 hover:text-white"
+              >
+                Bekor qilish
+              </button>
+              <button
+                onClick={handleSaveNotes}
+                className="px-4 py-1.5 rounded-xl bg-teal-600 text-white font-bold text-xs hover:bg-teal-500"
+              >
+                Saqlash
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ─── Receipt Note Modal (Комент. к чеку) ────────────────────── */}
+      {receiptNoteModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm animate-in fade-in">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-sm w-full p-5 shadow-2xl">
+            <h3 className="text-sm font-bold text-white mb-2">Chekka izoh (Комент. к чеку)</h3>
+            <textarea
+              rows={3}
+              value={receiptNote}
+              onChange={(e) => setReceiptNote(e.target.value)}
+              placeholder="Masalan: VIP mijoz, chegirma..."
+              className="w-full p-3 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white focus:outline-none focus:border-cyan-500 resize-none mb-4"
+            />
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => setReceiptNoteModalOpen(false)}
+                className="px-3 py-1.5 text-xs text-slate-400 hover:text-white"
+              >
+                Bekor qilish
+              </button>
+              <button
+                onClick={handleSaveNotes}
+                className="px-4 py-1.5 rounded-xl bg-cyan-600 text-white font-bold text-xs hover:bg-cyan-500"
+              >
+                Saqlash
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ─── Checkout & Close Table Modal (К оплате — Kassa) ────────── */}
+      {checkoutModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in">
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl max-w-md w-full p-6 shadow-2xl">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-800 mb-4">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-lg bg-emerald-500/20 text-emerald-400 flex items-center justify-center">
+                  <CreditCard className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-white font-extrabold text-sm">To'lovni qabul qilish</h3>
+                  <p className="text-[11px] text-slate-400">
+                    Stol #{selectedTable?.number} • Jami:{' '}
+                    <span className="text-emerald-400 font-bold">
+                      {(activeOrder?.total || 0).toLocaleString('uz-UZ')} so'm
+                    </span>
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setCheckoutModalOpen(false)}
+                className="text-slate-400 hover:text-white p-1"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleCheckoutSubmit}>
+              {/* To'lov usuli tanlash (Naqd, Karta, Click, Nasiya) */}
+              <label className="block text-xs font-bold text-slate-400 uppercase mb-2">
+                To'lov turi:
+              </label>
+              <div className="grid grid-cols-2 gap-2 mb-4">
+                {[
+                  { id: 'cash', label: '💵 Naqd (Наличные)' },
+                  { id: 'card', label: '💳 Karta (Uzcard/Humo)' },
+                  { id: 'click', label: '📲 Click / Payme' },
+                  { id: 'debt', label: '📝 Nasiya / Qarz' },
+                ].map((m) => (
+                  <button
+                    key={m.id}
+                    type="button"
+                    onClick={() => setPaymentMethod(m.id)}
+                    className={`py-2.5 px-3 rounded-xl border text-xs font-bold transition-all text-left ${
+                      paymentMethod === m.id
+                        ? 'bg-emerald-600 text-white border-emerald-500 shadow-md'
+                        : 'bg-slate-800/80 border-slate-700/80 text-slate-300 hover:bg-slate-750'
+                    }`}
+                  >
+                    {m.label}
+                  </button>
+                ))}
+              </div>
+
+              {/* Nasiya (Qarz) form fields */}
+              {paymentMethod === 'debt' && (
+                <div className="p-3.5 rounded-2xl bg-amber-500/10 border border-amber-500/30 mb-4 space-y-2.5 animate-in fade-in">
+                  <p className="text-xs font-bold text-amber-300">Qarzdor ma'lumotlari:</p>
+                  <div>
+                    <label className="text-[11px] text-slate-400 block mb-1">Mijoz F.I.Sh:</label>
+                    <input
+                      type="text"
+                      required
+                      value={debtCustomerName}
+                      onChange={(e) => setDebtCustomerName(e.target.value)}
+                      placeholder="Masalan: Sardor Rahimov"
+                      className="w-full px-3 py-1.5 rounded-xl bg-slate-900 border border-slate-700 text-xs text-white focus:outline-none focus:border-amber-400"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-[11px] text-slate-400 block mb-1">Telefon raqami:</label>
+                    <input
+                      type="text"
+                      required
+                      value={debtCustomerPhone}
+                      onChange={(e) => setDebtCustomerPhone(e.target.value)}
+                      placeholder="+998 90 123 45 67"
+                      className="w-full px-3 py-1.5 rounded-xl bg-slate-900 border border-slate-700 text-xs text-white focus:outline-none focus:border-amber-400"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-[11px] text-slate-400 block mb-1">Qaytarish muddati:</label>
+                    <input
+                      type="date"
+                      value={debtDueDate}
+                      onChange={(e) => setDebtDueDate(e.target.value)}
+                      className="w-full px-3 py-1.5 rounded-xl bg-slate-900 border border-slate-700 text-xs text-white focus:outline-none focus:border-amber-400"
+                    />
+                  </div>
+                </div>
+              )}
+
+              {/* Submit */}
+              <div className="flex items-center justify-between gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setCheckoutModalOpen(false)}
+                  className="px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-slate-300"
+                >
+                  Bekor qilish
+                </button>
+                <button
+                  type="submit"
+                  disabled={checkoutLoading}
+                  className="flex-1 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 font-extrabold text-xs text-white shadow-lg shadow-emerald-600/30 flex items-center justify-center gap-2 transition-all active:scale-95"
+                >
+                  <Printer className="w-4 h-4" />
+                  <span>
+                    {checkoutLoading ? 'Yopilmoqda...' : 'To\'lov va Chek chiqarish (Xprinter)'}
+                  </span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ─── Xprinter Thermal Receipt Modal ─────────────────────────── */}
+      <ThermalReceiptModal
+        isOpen={receiptModalOpen}
+        onClose={() => setReceiptModalOpen(false)}
+        title={receiptModalTitle}
+        rawText={thermalReceiptText}
+        paperWidth={80}
       />
     </div>
   );
 };
 
 export default WaiterDashboard;
-

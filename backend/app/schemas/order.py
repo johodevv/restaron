@@ -21,7 +21,10 @@ class OrderItemResponse(BaseModel):
     unit_price: float
     total_price: float
     special_note: Optional[str] = None
-    is_prepared: bool
+    item_time: Optional[str] = None
+    sent_to_kitchen: bool = False
+    sent_to_kitchen_at: Optional[datetime] = None
+    is_prepared: bool = False
     prepared_at: Optional[datetime] = None
 
     # Nested menu item info
@@ -37,6 +40,52 @@ class OrderCreate(BaseModel):
     customer_name: Optional[str] = None
     customer_note: Optional[str] = None
     items: List[OrderItemCreate] = Field(..., min_length=1)
+
+
+class WaiterOrderCreate(BaseModel):
+    """Ofitsiant yoki kassir yangi zakaz yaratishi (Ali Poster uslubida)"""
+    restaurant_id: int
+    table_id: Optional[int] = None
+    order_type: str = "table"               # "table" (Столы), "takeaway" (С собой), "delivery" (Доставка)
+    hall_name: Optional[str] = None         # "Балкон", "Хона", "Тераса"
+    customer_name: Optional[str] = None
+    kitchen_note: Optional[str] = None      # Комент. к кухне
+    receipt_note: Optional[str] = None      # Комент. к чеку
+    items: List[OrderItemCreate] = []
+
+
+class WaiterAddItemsRequest(BaseModel):
+    """Ochiq stolga qo'shimcha taomlar qo'shish (Dozakaz)"""
+    items: List[OrderItemCreate] = Field(..., min_length=1)
+    send_to_kitchen_immediately: bool = False
+
+
+class UpdateItemQtyRequest(BaseModel):
+    """Taom sonini o'zgartirish [- 1 +]"""
+    quantity: int = Field(..., gt=0)
+
+
+class OrderNoteUpdate(BaseModel):
+    """Oshxona yoki chek izohini yangilash"""
+    kitchen_note: Optional[str] = None
+    receipt_note: Optional[str] = None
+
+
+class OrderCheckoutRequest(BaseModel):
+    """Kassada to'lovni qabul qilish va hisobni yopish"""
+    payment_method: str = "cash"            # cash, card, click, debt, mixed
+    cash_amount: float = 0.0
+    card_amount: float = 0.0
+    click_amount: float = 0.0
+    debt_amount: float = 0.0
+    discount: float = 0.0
+    service_fee_percent: Optional[float] = None
+    # Qarz (Nasiya) uchun ma'lumotlar
+    debt_customer_name: Optional[str] = None
+    debt_customer_phone: Optional[str] = None
+    debt_due_date: Optional[datetime] = None
+    debt_note: Optional[str] = None
+    print_receipt: bool = True
 
 
 class CallWaiterRequest(BaseModel):
@@ -60,16 +109,29 @@ class OrderResponse(BaseModel):
     restaurant_id: int
     table_id: int
     table_number: Optional[int] = None
+    room: Optional[str] = None
     waiter_id: Optional[int] = None
     waiter_name: Optional[str] = None
     customer_name: Optional[str] = None
     customer_note: Optional[str] = None
+    order_type: str = "table"
+    hall_name: Optional[str] = None
+    kitchen_note: Optional[str] = None
+    receipt_note: Optional[str] = None
     status: OrderStatus
     subtotal: float
-    discount: float
+    service_fee_percent: float = 12.0
+    service_fee_amount: float = 0.0
+    discount: float = 0.0
     total: float
     is_paid: bool
-    call_waiter: bool
+    payment_method: Optional[str] = "cash"
+    cash_amount: float = 0.0
+    card_amount: float = 0.0
+    click_amount: float = 0.0
+    debt_amount: float = 0.0
+    waiter_share_amount: float = 0.0
+    call_waiter: bool = False
     call_status: Optional[CallStatus] = None
     call_note: Optional[str] = None
     items: List[OrderItemResponse] = []
@@ -77,6 +139,7 @@ class OrderResponse(BaseModel):
     preparing_at: Optional[datetime] = None
     ready_at: Optional[datetime] = None
     served_at: Optional[datetime] = None
+    closed_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 
     model_config = {"from_attributes": True}

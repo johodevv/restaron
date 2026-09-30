@@ -145,22 +145,34 @@
   body * {
     visibility: hidden;
   }
-  #printable-bill, #printable-bill * {
+  #printable-bill, #printable-bill *,
+  #thermal-receipt-print-area, #thermal-receipt-print-area * {
     visibility: visible;
   }
-  #printable-bill {
+  #printable-bill,
+  #thermal-receipt-print-area {
     position: absolute;
     left: 0;
     top: 0;
-    width: 100%;
-    color: #000 !important;
-    background: #fff !important;
-    padding: 10px;
+    width: 80mm;
+    max-width: 100%;
+    color: #000000 !important;
+    background: #ffffff !important;
+    padding: 0;
+    margin: 0;
+    font-family: 'Courier New', Courier, monospace !important;
+    font-size: 13px !important;
+    line-height: 1.25 !important;
   }
-  #printable-bill * {
-    color: #000 !important;
+  #printable-bill *,
+  #thermal-receipt-print-area * {
+    color: #000000 !important;
     background: transparent !important;
-    border-color: #ccc !important;
+    border-color: #000000 !important;
+  }
+  @page {
+    size: 80mm auto;
+    margin: 0mm;
   }
 }
 

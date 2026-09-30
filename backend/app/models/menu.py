@@ -53,6 +53,7 @@ class MenuItem(Base):
 
     # Sozlamalar
     is_available = Column(Boolean, default=True)      # Mavjudmi
+    is_stop_list = Column(Boolean, default=False)     # Stop-List (1 bosish bilan to'xtatish)
     is_featured = Column(Boolean, default=False)      # Eng mashhur
     show_price = Column(Boolean, default=True)        # Narxni ko'rsatish (admin sozlamasi)
 

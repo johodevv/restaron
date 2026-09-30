@@ -1,11 +1,23 @@
-# 🍽️ RestAron — Zamonaviy Restoran Boshqaruv Tizimi
+# 🍽️ RestAron — Professional Restoran Boshqaruv va POS Tizimi (Ali Poster Ekvivalenti)
 
-**RestAron** — Restoranlar uchun to'liq avtomatlashtirilgan aqlli platforma:
-- **Mijozlar**: Stol ustidagi QR kodni skanerlab, ovqat buyurtma qilishadi, ofitsiantni chaqirishadi, buyurtma holatini jonli kuzatishadi va baho qo'yishadi.
-- **Ofitsiantlar**: Real-time bildirishnomalar, yangi buyurtmalar, chaqiruvlar va **"Yetkazib berdim"** tugmasi orqali tezkor xizmat.
-- **Oshpazlar**: KDS (Kitchen Display System) monitori, taomlarni tayyorlash va "Tayyor" deb belgilash.
-- **Admin**: Menyu, stollar va QR kodlar, xodimlar akkauntlari va 6 ta temadan 2 tasini tanlash.
-- **Dasturchi (Developer / Superadmin)**: Barcha ulangan restoranlar aylanmasi va komissiya daromadlari monitoringi.
+**RestAron** — Restoran va kafelar uchun to'liq avtomatlashtirilgan aqlli bulutli platforma:
+- **Mijozlar (QR Menyu)**: Stol ustidagi QR kod orqali kirib, chiroyli dizayndagi menyuni, narxlar, taom rasmlari va tavsiflarini ko'radi, 1 bosish bilan **"Ofitsiantni chaqirish"** yoki **"Hisob (Chek) so'rash"** tugmasini bosadi (saytdan mustaqil zakaz berish o'chirilgan, faqat zal nazorati uchun).
+- **Ofitsiantlar (Ali Poster POS Paneli)**: Ali Poster standartidagi qulay sensorli ekran: Zallar, Stollar tanlash, Menyudan taomlarni 1 bosishda qo'shish, oshxonaga begunok chiqarish (**"На кухню"**), mijozga hisob chiqarish (**"К оплате"**), to'lov turlarini belgilash.
+- **Xprinter Termal Chek Tizimi**: 58mm va 80mm Xprinter termal printerlarida oshxona begunogi (Kitchen runner), mijoz pre-cheki va kassa smena hisobotlari (X/Z-Report) chop etiladi.
+- **Admin Paneli (11 ta bo'lim)**:
+  1. *Xulosa (Dashboard)* — Jonli statistika va yangi chaqiruvlar
+  2. *Menyu & Taomlar* — Taomlar, narxlar, rasmlar va **Tezkor Stop-List (1 bosishda Tugadi/Mavjud)**
+  3. *Stollar & QR Kodlar* — Har bir stol uchun unikal QR generatsiya
+  4. *Xodimlar* — Ofitsiant, oshpaz, kassir boshqaruvi
+  5. *Qarzlar (Nasiya Kitobi)* — Mijozlar qarzlari, to'lovlar va **1-bosishda SMS eslatma**
+  6. *Cheklar Arxivi* — Barcha chiqarilgan cheklarni **3 yilgacha saqlash** va istalgan payt qayta chop etish (Reprint)
+  7. *Kassa Hisoboti (Отчет по оплатам)* — Naqd, Uzcard/Humo, Click/Payme, Nasiya bo'yicha to'liq tahlil, **X-Hisobot** va smena yopish **Z-Hisobot**
+  8. *Ofitsiantlar KPI* — Savdo hajmi, xizmat haqi ulushi va ofitsiantlar reytingi
+  9. *Dizayn & Temalar* — 6 xil zamonaviy restoran ranglar palitrasi
+  10. *Sozlamalar* — Xizmat haqi foizi (12% ➔ 13%), Xprinter qog'oz eni (58/80mm), chek matnlari, SMS va Telegram Bot integratsiyasi
+  11. *Baholar & Fikrlar* — Mijozlar qoldirgan izohlar
+- **Dasturchi (Superadmin)**: Barcha ulangan restoranlar aylanmasi va oylik/haftalik platforma komissiyasi monitoringi.
+
 
 ---
 

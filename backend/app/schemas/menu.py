@@ -52,6 +52,7 @@ class MenuItemBase(BaseModel):
     price: float = Field(..., gt=0)
     image_url: Optional[str] = None
     is_available: bool = True
+    is_stop_list: bool = False
     is_featured: bool = False
     show_price: bool = True
     prep_time_minutes: int = 15
@@ -72,6 +73,7 @@ class MenuItemUpdate(BaseModel):
     price: Optional[float] = None
     image_url: Optional[str] = None
     is_available: Optional[bool] = None
+    is_stop_list: Optional[bool] = None
     is_featured: Optional[bool] = None
     show_price: Optional[bool] = None
     prep_time_minutes: Optional[int] = None

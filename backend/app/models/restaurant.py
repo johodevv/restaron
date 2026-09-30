@@ -40,6 +40,9 @@ class Restaurant(Base):
                            cascade="all, delete-orphan")
     themes = relationship("RestaurantTheme", back_populates="restaurant", cascade="all, delete-orphan")
     commission_logs = relationship("CommissionLog", back_populates="restaurant")
+    debts = relationship("Debt", back_populates="restaurant", cascade="all, delete-orphan")
+    receipt_archives = relationship("ReceiptArchive", back_populates="restaurant", cascade="all, delete-orphan")
+    shift_reports = relationship("ShiftReport", back_populates="restaurant", cascade="all, delete-orphan")
 
     def __repr__(self):
         return f"<Restaurant {self.name}>"
@@ -55,14 +58,42 @@ class RestaurantSettings(Base):
     # Narxlarni ko'rsatish/yashirish
     show_prices = Column(Boolean, default=True)
 
-    # Buyurtma berish imkoni
-    allow_orders = Column(Boolean, default=True)
+    # Buyurtma berish imkoni (QR menyudan mijoz buyurtma bera oladimi)
+    allow_orders = Column(Boolean, default=False)
+    allow_orders_from_qr = Column(Boolean, default=False)
 
     # Ofitsiant chaqirish imkoni
     allow_call_waiter = Column(Boolean, default=True)
 
     # Izoh qoldirish imkoni
     allow_reviews = Column(Boolean, default=True)
+
+    # Xizmat haqi foizi (Admin paneldan o'zgartiriladi: masalan 12%, 13%)
+    service_fee_percent = Column(Float, default=12.0)
+
+    # Chek sozlamalari (Xprinter uchun)
+    receipt_header = Column(String(200), default="RestAron")
+    receipt_footer = Column(String(500), default="Tashrifingiz uchun rahmat!")
+    receipt_address = Column(String(500), nullable=True)
+    receipt_phone = Column(String(50), nullable=True)
+    receipt_wifi_pass = Column(String(100), nullable=True)
+    printer_paper_width = Column(Integer, default=80)  # 58 yoki 80 mm
+
+    # Cheklar arxivini saqlash muddati (yillarda, default: 3 yil)
+    archive_retention_years = Column(Integer, default=3)
+
+    # Qarz (Nasiya) tizimini yoqish/o'chirish
+    allow_debt_payment = Column(Boolean, default=True)
+
+    # Telegram bot orqali bildirishnomalar (Ofitsiant chaqiruvlari & buyurtmalar)
+    enable_telegram_notifications = Column(Boolean, default=False)
+    telegram_bot_token = Column(String(255), nullable=True)
+    telegram_chat_id = Column(String(100), nullable=True)
+
+    # SMS eslatma tizimi (Qarzdorlarga SMS yuborish)
+    enable_sms_reminders = Column(Boolean, default=False)
+    sms_provider_api_key = Column(String(255), nullable=True)
+    sms_template = Column(Text, default="Hurmatli {name}, {restaurant} restoranidagi {amount} so'm qarzingizni to'lashingizni so'raymiz.")
 
     # Til sozlamasi
     language = Column(String(10), default="uz")

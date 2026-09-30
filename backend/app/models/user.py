@@ -5,7 +5,7 @@ Rollar: developer, admin, waiter, chef
 import enum
 from datetime import datetime
 from sqlalchemy import (
-    Column, Integer, String, Boolean, DateTime,
+    Column, Integer, String, Boolean, Float, DateTime,
     Enum as SAEnum, ForeignKey, func
 )
 from sqlalchemy.orm import relationship
@@ -30,6 +30,8 @@ class User(Base):
     role = Column(SAEnum(UserRole), nullable=False, default=UserRole.WAITER)
     is_active = Column(Boolean, default=True)
     avatar_url = Column(String(500), nullable=True)
+    # Ofitsiant xizmat haqi ulushi / komissiya foizi (masalan: 3.0%)
+    commission_percent = Column(Float, default=0.0)
 
     # Admin va xodimlar bitta restoranga tegishli
     restaurant_id = Column(Integer, ForeignKey("restaurants.id"), nullable=True)

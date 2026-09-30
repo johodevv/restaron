@@ -4,6 +4,11 @@ import { useAuth } from '../../context/AuthContext';
 import { useTheme } from '../../context/ThemeContext';
 import { useWebSocket } from '../../context/WebSocketContext';
 import BillModal from '../../components/BillModal';
+import { DebtsTab } from './DebtsTab';
+import { ReceiptsArchiveTab } from './ReceiptsArchiveTab';
+import { PaymentsReportTab } from './PaymentsReportTab';
+import { WaiterKpiTab } from './WaiterKpiTab';
+import { RestaurantSettingsTab } from './RestaurantSettingsTab';
 import {
   LayoutDashboard,
   UtensilsCrossed,
@@ -37,7 +42,12 @@ import {
   BellRing,
   Power,
   ShieldCheck,
-  Lock
+  Lock,
+  Wallet,
+  Archive,
+  FileSpreadsheet,
+  Trophy,
+  Palette
 } from 'lucide-react';
 
 export const AdminDashboard = () => {
@@ -477,9 +487,7 @@ export const AdminDashboard = () => {
 
   const handleToggleDishAvailability = async (dish) => {
     try {
-      await api.patch(`/menu/items/${dish.id}`, {
-        is_available: !dish.is_available,
-      });
+      await api.patch(`/menu/items/${dish.id}/toggle-stop-list`);
       loadAll();
     } catch (err) {
       alert(err.message || 'Xatolik');
@@ -550,14 +558,19 @@ export const AdminDashboard = () => {
         </button>
       </div>
 
-      {/* Tabs */}
+      {/* Tabs — Full Navigation Bar */}
       <div className="flex items-center gap-2 overflow-x-auto pb-2 scrollbar-none no-scrollbar">
         {[
-          { key: 'overview', label: 'Xulosa va Statistika', icon: LayoutDashboard },
+          { key: 'overview', label: 'Xulosa', icon: LayoutDashboard },
           { key: 'menu', label: 'Menyu & Taomlar', icon: UtensilsCrossed },
-          { key: 'tables', label: 'Stollar & QR Kodlar', icon: TableIcon },
+          { key: 'tables', label: 'Stollar & QR', icon: TableIcon },
           { key: 'staff', label: 'Xodimlar', icon: Users },
-          { key: 'settings', label: 'Dizayn & Temalar', icon: Settings },
+          { key: 'debts', label: 'Qarzlar (Nasiya)', icon: Wallet },
+          { key: 'receipts', label: 'Cheklar Arxivi', icon: Archive },
+          { key: 'payments', label: 'Kassa Hisoboti', icon: FileSpreadsheet },
+          { key: 'waiter_kpi', label: 'Ofitsiantlar KPI', icon: Trophy },
+          { key: 'themes', label: 'Dizayn & Temalar', icon: Palette },
+          { key: 'settings', label: 'Sozlamalar', icon: Settings },
           { key: 'reviews', label: 'Baholar', icon: Star },
         ].map((t) => {
           const Icon = t.icon;
@@ -889,13 +902,14 @@ export const AdminDashboard = () => {
                             <div className="flex items-center justify-between pt-2.5 border-t border-theme-border/50 text-xs">
                               <button
                                 onClick={() => handleToggleDishAvailability(item)}
-                                className={`px-2 py-1 rounded-lg text-[10px] font-bold transition-all ${
-                                  item.is_available
+                                className={`px-2.5 py-1 rounded-lg text-[10px] font-bold transition-all flex items-center gap-1 ${
+                                  !item.is_stop_list && item.is_available
                                     ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 hover:bg-emerald-500/25'
-                                    : 'bg-red-500/15 text-red-400 border border-red-500/30 hover:bg-red-500/25'
+                                    : 'bg-red-500/20 text-red-300 border border-red-500/40 hover:bg-red-500/30 shadow-sm'
                                 }`}
+                                title="1 bosishda Stop-Listga kiritish yoki chiqarish"
                               >
-                                {item.is_available ? '✅ Mavjud' : '❌ Tugagan'}
+                                <span>{!item.is_stop_list && item.is_available ? '✅ Mavjud' : '⛔ Stop-List (Tugagan)'}</span>
                               </button>
 
                               <div className="flex items-center gap-1.5">
@@ -1320,8 +1334,8 @@ export const AdminDashboard = () => {
         </div>
       )}
 
-      {/* TAB 5: SETTINGS & THEMES */}
-      {tab === 'settings' && (
+      {/* TAB: THEMES (old 'settings' renamed to 'themes') */}
+      {tab === 'themes' && (
         <div className="space-y-6">
           <div className="p-6 rounded-3xl glass-card border border-theme-border bg-theme-surface/75 space-y-4 shadow-lg">
             <div>
@@ -1374,6 +1388,31 @@ export const AdminDashboard = () => {
             </div>
           </div>
         </div>
+      )}
+
+      {/* TAB: RESTAURANT SETTINGS (Kassa, Xprinter, SMS, Telegram) */}
+      {tab === 'settings' && (
+        <RestaurantSettingsTab restaurantId={restaurantId} />
+      )}
+
+      {/* TAB: DEBTS / NASIYA DAFTARI */}
+      {tab === 'debts' && (
+        <DebtsTab restaurantId={restaurantId} />
+      )}
+
+      {/* TAB: RECEIPTS ARCHIVE */}
+      {tab === 'receipts' && (
+        <ReceiptsArchiveTab restaurantId={restaurantId} />
+      )}
+
+      {/* TAB: PAYMENTS REPORT (Отчет по оплатам) */}
+      {tab === 'payments' && (
+        <PaymentsReportTab restaurantId={restaurantId} />
+      )}
+
+      {/* TAB: WAITER KPI */}
+      {tab === 'waiter_kpi' && (
+        <WaiterKpiTab restaurantId={restaurantId} />
       )}
 
       {/* TAB 6: REVIEWS */}

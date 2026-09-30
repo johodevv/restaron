@@ -7,6 +7,8 @@ from app.models.order import Order, OrderItem
 from app.models.review import Review
 from app.models.notification import Notification
 from app.models.commission import CommissionLog
+from app.models.debt import Debt
+from app.models.receipt import ReceiptArchive, ShiftReport
 
 __all__ = [
     "Base",
@@ -22,4 +24,8 @@ __all__ = [
     "Review",
     "Notification",
     "CommissionLog",
+    "Debt",
+    "ReceiptArchive",
+    "ShiftReport",
 ]
+

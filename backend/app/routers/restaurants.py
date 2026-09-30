@@ -41,9 +41,26 @@ class RestaurantUpdate(BaseModel):
 class SettingsUpdate(BaseModel):
     show_prices: Optional[bool] = None
     allow_orders: Optional[bool] = None
+    allow_orders_from_qr: Optional[bool] = None
     allow_call_waiter: Optional[bool] = None
     allow_reviews: Optional[bool] = None
     language: Optional[str] = None
+    service_fee_percent: Optional[float] = None
+    receipt_header: Optional[str] = None
+    receipt_footer: Optional[str] = None
+    receipt_address: Optional[str] = None
+    receipt_phone: Optional[str] = None
+    receipt_wifi_pass: Optional[str] = None
+    printer_paper_width: Optional[int] = None
+    archive_retention_years: Optional[int] = None
+    allow_debt_payment: Optional[bool] = None
+    enable_telegram_notifications: Optional[bool] = None
+    telegram_bot_token: Optional[str] = None
+    telegram_chat_id: Optional[str] = None
+    enable_sms_reminders: Optional[bool] = None
+    sms_provider_api_key: Optional[str] = None
+    sms_template: Optional[str] = None
+
 
 
 class ThemeSelect(BaseModel):

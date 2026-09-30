@@ -19,7 +19,7 @@ from app.core.config import settings
 from app.core.database import create_tables
 
 # Routerlar
-from app.routers import auth, users, restaurants, tables, menu, orders, stats, notifications, reviews, ws
+from app.routers import auth, users, restaurants, tables, menu, orders, stats, notifications, reviews, ws, debts, receipts
 
 # Upload papkalarini yaratish (import vaqtida kerak)
 os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
@@ -96,6 +96,8 @@ app.include_router(stats, prefix="/api/v1")
 app.include_router(notifications, prefix="/api/v1")
 app.include_router(reviews, prefix="/api/v1")
 app.include_router(ws, prefix="/api/v1")
+app.include_router(debts, prefix="/api/v1")
+app.include_router(receipts, prefix="/api/v1")
 
 
 @app.get("/", tags=["🏠 Asosiy"])

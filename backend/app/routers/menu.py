@@ -198,3 +198,44 @@ async def delete_menu_item(
     if not item:
         raise HTTPException(status_code=404, detail="Taom topilmadi")
     await db.delete(item)
+
+
+@router.patch("/items/{item_id}/toggle-stop-list", response_model=MenuItemResponse, summary="Stop-List (Tugadi / Mavjud) 1 bosishda")
+async def toggle_stop_list(
+    item_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role("admin", "waiter", "chef", "developer")),
+):
+    """Admin, Ofitsiant yoki Oshpaz taomni 1 bosish bilan Stop-listga kiritadi yoki chiqaradi"""
+    result = await db.execute(
+        select(MenuItem).options(selectinload(MenuItem.category)).where(MenuItem.id == item_id)
+    )
+    item = result.scalar_one_or_none()
+    if not item:
+        raise HTTPException(status_code=404, detail="Taom topilmadi")
+
+    # Holatni teskarisiga o'zgartirish
+    new_stop_state = not bool(item.is_stop_list)
+    item.is_stop_list = new_stop_state
+    item.is_available = not new_stop_state
+
+    await db.flush()
+    await db.refresh(item)
+
+    # Real-time WebSocket orqali barcha ulanganlarga tarqatish
+    if item.category:
+        from app.websockets.manager import manager
+        await manager.broadcast_to_restaurant(
+            item.category.restaurant_id,
+            {
+                "type": "stop_list_updated",
+                "item_id": item.id,
+                "item_name": item.name,
+                "is_stop_list": item.is_stop_list,
+                "is_available": item.is_available,
+                "message": f"Taom '{item.name}' {'stop-listga kiritildi (tugadi)' if item.is_stop_list else 'stop-listdan chiqarildi'}",
+            }
+        )
+
+    return MenuItemResponse.model_validate(item)
+

@@ -45,8 +45,75 @@ async def get_db() -> AsyncSession:
             await session.close()
 
 
+def _sync_sqlite_migrations(sync_conn):
+    """SQLite jadvallariga yangi ustunlarni avtomatik qo'shish"""
+    from sqlalchemy import text
+    migrations = {
+        "restaurant_settings": [
+            ("service_fee_percent", "FLOAT DEFAULT 12.0"),
+            ("receipt_header", "VARCHAR(200) DEFAULT 'RestAron'"),
+            ("receipt_footer", "VARCHAR(500) DEFAULT 'Tashrifingiz uchun rahmat!'"),
+            ("receipt_address", "VARCHAR(500)"),
+            ("receipt_phone", "VARCHAR(50)"),
+            ("receipt_wifi_pass", "VARCHAR(100)"),
+            ("printer_paper_width", "INTEGER DEFAULT 80"),
+            ("archive_retention_years", "INTEGER DEFAULT 3"),
+            ("allow_debt_payment", "BOOLEAN DEFAULT 1"),
+            ("allow_orders_from_qr", "BOOLEAN DEFAULT 0"),
+            ("enable_telegram_notifications", "BOOLEAN DEFAULT 0"),
+            ("telegram_bot_token", "VARCHAR(255)"),
+            ("telegram_chat_id", "VARCHAR(100)"),
+            ("enable_sms_reminders", "BOOLEAN DEFAULT 0"),
+            ("sms_provider_api_key", "VARCHAR(255)"),
+            ("sms_template", "TEXT"),
+        ],
+        "orders": [
+            ("order_type", "VARCHAR(50) DEFAULT 'table'"),
+            ("hall_name", "VARCHAR(100)"),
+            ("kitchen_note", "TEXT"),
+            ("receipt_note", "TEXT"),
+            ("service_fee_percent", "FLOAT DEFAULT 12.0"),
+            ("service_fee_amount", "FLOAT DEFAULT 0.0"),
+            ("payment_method", "VARCHAR(50) DEFAULT 'cash'"),
+            ("cash_amount", "FLOAT DEFAULT 0.0"),
+            ("card_amount", "FLOAT DEFAULT 0.0"),
+            ("click_amount", "FLOAT DEFAULT 0.0"),
+            ("debt_amount", "FLOAT DEFAULT 0.0"),
+            ("waiter_share_percent", "FLOAT DEFAULT 0.0"),
+            ("waiter_share_amount", "FLOAT DEFAULT 0.0"),
+            ("closed_at", "TIMESTAMP"),
+        ],
+        "order_items": [
+            ("item_time", "VARCHAR(20)"),
+            ("sent_to_kitchen", "BOOLEAN DEFAULT 0"),
+            ("sent_to_kitchen_at", "TIMESTAMP"),
+        ],
+        "menu_items": [
+            ("is_stop_list", "BOOLEAN DEFAULT 0"),
+        ],
+        "users": [
+            ("commission_percent", "FLOAT DEFAULT 0.0"),
+        ],
+    }
+
+    for table_name, cols in migrations.items():
+        try:
+            res = sync_conn.execute(text(f"PRAGMA table_info({table_name})"))
+            existing_cols = {row[1] for row in res.fetchall()}
+            if not existing_cols:
+                continue
+            for col_name, col_def in cols:
+                if col_name not in existing_cols:
+                    sync_conn.execute(text(f"ALTER TABLE {table_name} ADD COLUMN {col_name} {col_def}"))
+        except Exception as e:
+            pass
+
+
 async def create_tables():
-    """Barcha jadvallarni yaratish (development uchun)"""
+    """Barcha jadvallarni yaratish va mavjud jadvallarni yangilash"""
     import app.models  # noqa: F401
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        if is_sqlite:
+            await conn.run_sync(_sync_sqlite_migrations)
+

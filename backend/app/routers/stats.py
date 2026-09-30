@@ -3,6 +3,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 from datetime import datetime, timedelta, timezone
+from typing import Optional, List, Dict, Any
 
 from app.core.database import get_db
 from app.core.security import require_role
@@ -219,3 +220,166 @@ async def get_waiter_performance(
         }
         for row in result.all()
     ]
+
+
+@router.get("/payments-report", summary="To'lovlar bo'yicha hisobot (Ali Poster uslubida)")
+async def get_payments_report(
+    restaurant_id: int,
+    start_date: Optional[str] = Query(None, description="YYYY-MM-DD"),
+    end_date: Optional[str] = Query(None, description="YYYY-MM-DD"),
+    waiter_id: Optional[int] = Query(None),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role("admin", "developer", "waiter")),
+):
+    """
+    Kassa to'lovlar hisoboti (Ali Poster 'Отчет по оплатам' oynasining to'liq analogi):
+    Stol, Chek #, Naqd, Karta, Click, Nasiya, Sana, Ofitsiant, Ulush va Jami.
+    """
+    from sqlalchemy.orm import selectinload
+
+    if start_date:
+        try:
+            dt_start = datetime.strptime(start_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+        except ValueError:
+            dt_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    else:
+        dt_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+
+    if end_date:
+        try:
+            dt_end = datetime.strptime(end_date, "%Y-%m-%d").replace(hour=23, minute=59, second=59, tzinfo=timezone.utc)
+        except ValueError:
+            dt_end = dt_start + timedelta(days=1)
+    else:
+        dt_end = dt_start + timedelta(days=1)
+
+    query = (
+        select(Order)
+        .options(selectinload(Order.table), selectinload(Order.waiter))
+        .where(
+            Order.restaurant_id == restaurant_id,
+            Order.created_at >= dt_start,
+            Order.created_at <= dt_end,
+            Order.status != OrderStatus.CANCELLED,
+        )
+    )
+
+    if waiter_id:
+        query = query.where(Order.waiter_id == waiter_id)
+
+    query = query.order_by(Order.created_at.desc())
+    res = await db.execute(query)
+    orders = res.scalars().all()
+
+    rows = []
+    total_sales = 0.0
+    total_cash = 0.0
+    total_card = 0.0
+    total_click = 0.0
+    total_debt = 0.0
+    total_waiter_earnings = 0.0
+
+    for o in orders:
+        tot = float(o.total or 0.0)
+        c_cash = float(o.cash_amount or 0.0)
+        c_card = float(o.card_amount or 0.0)
+        c_click = float(o.click_amount or 0.0)
+        c_debt = float(o.debt_amount or 0.0)
+        w_earn = float(o.waiter_share_amount or 0.0)
+
+        total_sales += tot
+        total_cash += c_cash
+        total_card += c_card
+        total_click += c_click
+        total_debt += c_debt
+        total_waiter_earnings += w_earn
+
+        t_name = o.hall_name or ""
+        if o.table:
+            t_room = o.table.room or ""
+            t_num = o.table.number
+            t_name = f"{t_name or t_room} #{t_num}".strip()
+        else:
+            t_name = o.order_type or "Olib ketish"
+
+        w_name = (o.waiter.full_name or o.waiter.username) if o.waiter else "—"
+
+        rows.append({
+            "order_id": o.id,
+            "order_number": o.order_number,
+            "table_name": t_name,
+            "cash_amount": c_cash,
+            "card_amount": c_card,
+            "click_amount": c_click,
+            "debt_amount": c_debt,
+            "created_at": o.created_at.strftime("%d.%m.%Y %H:%M") if o.created_at else "—",
+            "closed_at": o.closed_at.strftime("%d.%m.%Y %H:%M") if o.closed_at else "Еще не завершен",
+            "total": tot,
+            "waiter_name": w_name,
+            "waiter_id": o.waiter_id,
+            "waiter_earning": w_earn,
+            "status": o.status.value if hasattr(o.status, "value") else str(o.status),
+            "is_paid": bool(o.is_paid),
+        })
+
+    return {
+        "start_date": dt_start.strftime("%Y-%m-%d"),
+        "end_date": dt_end.strftime("%Y-%m-%d"),
+        "orders_count": len(rows),
+        "total_revenue": round(total_sales, 2),
+        "total_cash": round(total_cash, 2),
+        "total_card": round(total_card, 2),
+        "total_click": round(total_click, 2),
+        "total_debt": round(total_debt, 2),
+        "total_waiter_earnings": round(total_waiter_earnings, 2),
+        "rows": rows,
+    }
+
+
+@router.get("/waiter-kpi-detail", summary="Ofitsiantlar KPI va foiz daromadi batafsil")
+async def get_waiter_kpi_detail(
+    restaurant_id: int,
+    start_date: Optional[str] = Query(None),
+    end_date: Optional[str] = Query(None),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role("admin", "developer")),
+):
+    """Ofitsiantlarning aniq savdosi, xizmat haqi va daromadlari tahlili"""
+    dt_start = datetime.strptime(start_date, "%Y-%m-%d").replace(tzinfo=timezone.utc) if start_date else datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    dt_end = datetime.strptime(end_date, "%Y-%m-%d").replace(hour=23, minute=59, second=59, tzinfo=timezone.utc) if end_date else dt_start + timedelta(days=1)
+
+    waiters_res = await db.execute(
+        select(User).where(User.restaurant_id == restaurant_id, User.role == UserRole.WAITER)
+    )
+    waiters = waiters_res.scalars().all()
+
+    kpi_list = []
+    for w in waiters:
+        orders_res = await db.execute(
+            select(
+                func.count(Order.id),
+                func.coalesce(func.sum(Order.total), 0.0),
+                func.coalesce(func.sum(Order.service_fee_amount), 0.0),
+                func.coalesce(func.sum(Order.waiter_share_amount), 0.0),
+            ).where(
+                Order.waiter_id == w.id,
+                Order.created_at >= dt_start,
+                Order.created_at <= dt_end,
+                Order.status.in_([OrderStatus.PAID, OrderStatus.SERVED]),
+            )
+        )
+        count, rev, s_fee, w_share = orders_res.one()
+
+        kpi_list.append({
+            "waiter_id": w.id,
+            "username": w.username,
+            "full_name": w.full_name,
+            "commission_percent": w.commission_percent or 0.0,
+            "orders_count": int(count or 0),
+            "total_sales": float(rev or 0.0),
+            "total_service_fee": float(s_fee or 0.0),
+            "earned_share": float(w_share or 0.0),
+        })
+
+    return kpi_list
+

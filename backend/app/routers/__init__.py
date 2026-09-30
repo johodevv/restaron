@@ -8,9 +8,13 @@ from app.routers.stats import router as stats
 from app.routers.notifications import router as notifications
 from app.routers.reviews import router as reviews
 from app.routers.ws import router as ws
+from app.routers.debts import router as debts
+from app.routers.receipts import router as receipts
 
 __all__ = [
     "auth", "users", "restaurants", "tables",
-    "menu", "orders", "stats", "notifications", "reviews", "ws"
+    "menu", "orders", "stats", "notifications", "reviews", "ws",
+    "debts", "receipts"
 ]
+
 

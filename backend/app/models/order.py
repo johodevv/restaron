@@ -43,11 +43,30 @@ class Order(Base):
 
     status = Column(SAEnum(OrderStatus), default=OrderStatus.PENDING, nullable=False)
 
-    # Moliyaviy
-    subtotal = Column(Float, default=0.0)       # Jami (chegirmasiz)
-    discount = Column(Float, default=0.0)       # Chegirma
-    total = Column(Float, default=0.0)          # Jami to'lov
+    # Zakaz turi va joy (Ali Poster uslubida)
+    order_type = Column(String(50), default="table")     # "table" (Столы), "takeaway" (С собой), "delivery" (Доставка)
+    hall_name = Column(String(100), nullable=True)       # "Балкон", "Хона", "Тераса", "Куча", "Зал"
+    kitchen_note = Column(Text, nullable=True)           # Комент. к кухне
+    receipt_note = Column(Text, nullable=True)           # Комент. к чеку
+
+    # Moliyaviy va To'lovlar
+    subtotal = Column(Float, default=0.0)                # Taomlar yig'indisi (chegirmasiz)
+    service_fee_percent = Column(Float, default=12.0)    # Xizmat haqi foizi (masalan 12%, 13%)
+    service_fee_amount = Column(Float, default=0.0)     # Xizmat haqi summasi
+    discount = Column(Float, default=0.0)                # Chegirma
+    total = Column(Float, default=0.0)                   # Jami to'lov (subtotal + service_fee - discount)
     is_paid = Column(Boolean, default=False)
+
+    # To'lov turlari (Kassa: Naqd, Karta, Click, Nasiya)
+    payment_method = Column(String(50), default="cash")  # "cash", "card", "click", "debt", "mixed"
+    cash_amount = Column(Float, default=0.0)            # Наличные
+    card_amount = Column(Float, default=0.0)            # Карта
+    click_amount = Column(Float, default=0.0)           # Click/Payme
+    debt_amount = Column(Float, default=0.0)            # Nasiya / Qarz
+
+    # Ofitsiant ulushi (KPI / Заработок)
+    waiter_share_percent = Column(Float, default=0.0)
+    waiter_share_amount = Column(Float, default=0.0)
 
     # Ofitsiant chaqirish
     call_waiter = Column(Boolean, default=False)
@@ -60,6 +79,7 @@ class Order(Base):
     preparing_at = Column(DateTime(timezone=True), nullable=True)
     ready_at = Column(DateTime(timezone=True), nullable=True)
     served_at = Column(DateTime(timezone=True), nullable=True)
+    closed_at = Column(DateTime(timezone=True), nullable=True)   # Smena/Stol yopilgan vaqt
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
     # Relationships
@@ -85,6 +105,11 @@ class OrderItem(Base):
     total_price = Column(Float, nullable=False)         # quantity * unit_price
 
     special_note = Column(Text, nullable=True)          # Maxsus talab (masalan: "qalampir kam")
+    item_time = Column(String(20), nullable=True)       # Urilgan vaqti (masalan: "19:36")
+
+    # Oshxona yuborilganlik holati (Oshxona begunogi)
+    sent_to_kitchen = Column(Boolean, default=False)
+    sent_to_kitchen_at = Column(DateTime(timezone=True), nullable=True)
 
     # Oshpaz paneli uchun
     is_prepared = Column(Boolean, default=False)        # Tayyorlandimi
