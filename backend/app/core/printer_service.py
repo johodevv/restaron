@@ -239,3 +239,88 @@ def format_shift_report(
         lines.append(sep)
 
     return "\n".join(lines) + "\n\n\n"
+
+
+# ─── Windows USB / Spooler To'g'ridan-to'g'ri Chop Etish ─────
+import platform
+import logging
+
+logger = logging.getLogger("printer_service")
+
+
+def get_installed_printers() -> List[str]:
+    """Tizimga o'rnatilgan printerlar ro'yxatini olish (USB / Network / Virtual)"""
+    if platform.system() != "Windows":
+        return []
+    try:
+        import win32print
+        printers = win32print.EnumPrinters(win32print.PRINTER_ENUM_LOCAL | win32print.PRINTER_ENUM_CONNECTIONS)
+        return [p[2] for p in printers]
+    except Exception as e:
+        logger.warning(f"Printerlarni aniqlashda xatolik: {e}")
+        return []
+
+
+def print_to_windows_printer(
+    raw_text: str,
+    printer_name: Optional[str] = None,
+    cut_paper: bool = True
+) -> Dict[str, Any]:
+    """
+    USB yoki Windows spooler orqali ulangan Xprinter termal printeriga
+    to'g'ridan-to'g'ri chop etish
+    """
+    if platform.system() != "Windows":
+        return {"success": False, "error": "Faqat Windows tizimida USB to'g'ridan-to'g'ri chop etish qo'llab-quvvatlanadi"}
+
+    try:
+        import win32print
+
+        target = printer_name
+        installed = get_installed_printers()
+
+        if not target:
+            # Xprinter yoki thermal printerni avtomatik qidirish
+            for p in installed:
+                p_lower = p.lower()
+                if any(k in p_lower for k in ["xprinter", "xp-", "pos", "thermal", "58", "80", "receipt", "printer"]):
+                    target = p
+                    break
+
+        if not target and installed:
+            # Standart printerni olish
+            try:
+                target = win32print.GetDefaultPrinter()
+            except Exception:
+                target = installed[0]
+
+        if not target:
+            return {"success": False, "error": "Hech qanday printer topilmadi. Xprinter drayverini o'rnating."}
+
+        # Matnni kodlash (Uzbek / Rus harflari uchun CP866 yoki UTF-8)
+        try:
+            payload = raw_text.encode("cp866", errors="replace")
+        except Exception:
+            payload = raw_text.encode("utf-8", errors="replace")
+
+        if cut_paper:
+            # 4 qator bo'sh joy + ESC/POS pichoq kesish buyrug'i
+            payload += b"\n\n\n\n\x1d\x56\x42\x00"
+
+        hPrinter = win32print.OpenPrinter(target)
+        try:
+            hJob = win32print.StartDocPrinter(hPrinter, 1, ("RestAron_Receipt", None, "RAW"))
+            try:
+                win32print.StartPagePrinter(hPrinter)
+                win32print.WritePrinter(hPrinter, payload)
+                win32print.EndPagePrinter(hPrinter)
+            finally:
+                win32print.EndDocPrinter(hPrinter)
+        finally:
+            win32print.ClosePrinter(hPrinter)
+
+        return {"success": True, "printer": target, "message": f"Chek '{target}' printeriga muvaffaqiyatli yuborildi"}
+    except Exception as e:
+        logger.error(f"Xprinter USB chop etishda xatolik: {e}")
+        return {"success": False, "error": str(e)}
+

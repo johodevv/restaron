@@ -1,5 +1,6 @@
-import React from 'react';
-import { Printer, X, Copy, Check, FileText } from 'lucide-react';
+import React, { useState } from 'react';
+import { Printer, X, Copy, Check, Zap, AlertCircle, CheckCircle } from 'lucide-react';
+import api from '../utils/api';
 
 export const ThermalReceiptModal = ({
   isOpen,
@@ -8,11 +9,13 @@ export const ThermalReceiptModal = ({
   rawText = "",
   paperWidth = 80,
 }) => {
-  const [copied, setCopied] = React.useState(false);
+  const [copied, setCopied] = useState(false);
+  const [usbPrinting, setUsbPrinting] = useState(false);
+  const [usbStatus, setUsbStatus] = useState(null); // { success: boolean, message: string }
 
   if (!isOpen || !rawText) return null;
 
-  const handlePrint = () => {
+  const handleBrowserPrint = () => {
     window.print();
   };
 
@@ -22,33 +25,81 @@ export const ThermalReceiptModal = ({
     setTimeout(() => setCopied(false), 2000);
   };
 
+  const handleUsbDirectPrint = async () => {
+    setUsbPrinting(true);
+    setUsbStatus(null);
+    try {
+      const res = await api.post('/receipts/print-raw-usb', {
+        text: rawText,
+        cut_paper: true,
+      });
+      if (res && res.success) {
+        setUsbStatus({
+          success: true,
+          message: res.message || 'Xprinterga chop etishga yuborildi!',
+        });
+      } else {
+        setUsbStatus({
+          success: false,
+          message: res?.error || "Printerga yuborib bo'lmadi",
+        });
+      }
+    } catch (err) {
+      setUsbStatus({
+        success: false,
+        message: err.message || "USB printer bilan aloqa yo'q",
+      });
+    } finally {
+      setUsbPrinting(false);
+      setTimeout(() => setUsbStatus(null), 4000);
+    }
+  };
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm p-4 animate-in fade-in duration-200">
-      <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-md w-full max-h-[90vh] flex flex-col shadow-2xl overflow-hidden">
+      <div className="bg-slate-900 border border-slate-800 rounded-3xl max-w-md w-full max-h-[90vh] flex flex-col shadow-2xl overflow-hidden">
         {/* Header */}
         <div className="px-5 py-4 bg-slate-800/80 border-b border-slate-700/60 flex items-center justify-between">
           <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-lg bg-emerald-500/20 text-emerald-400 flex items-center justify-center font-mono">
+            <div className="w-8 h-8 rounded-xl bg-emerald-500/20 text-emerald-400 flex items-center justify-center font-mono">
               <Printer className="w-4 h-4" />
             </div>
             <div>
-              <h3 className="text-white font-semibold text-sm leading-tight">{title}</h3>
-              <p className="text-xs text-slate-400">Xprinter ({paperWidth}mm format)</p>
+              <h3 className="text-white font-bold text-sm leading-tight">{title}</h3>
+              <p className="text-[11px] text-slate-400">Xprinter ({paperWidth}mm termal qog'oz)</p>
             </div>
           </div>
           <button
             onClick={onClose}
-            className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-700/50 transition-colors"
+            className="text-slate-400 hover:text-white p-1.5 rounded-xl hover:bg-slate-700/50 transition-colors"
           >
             <X className="w-5 h-5" />
           </button>
         </div>
 
+        {/* Status notification toast */}
+        {usbStatus && (
+          <div
+            className={`px-4 py-2.5 text-xs font-semibold flex items-center gap-2 border-b ${
+              usbStatus.success
+                ? 'bg-emerald-950/80 text-emerald-300 border-emerald-800'
+                : 'bg-red-950/80 text-red-300 border-red-800'
+            }`}
+          >
+            {usbStatus.success ? (
+              <CheckCircle className="w-4 h-4 text-emerald-400 shrink-0" />
+            ) : (
+              <AlertCircle className="w-4 h-4 text-red-400 shrink-0" />
+            )}
+            <span>{usbStatus.message}</span>
+          </div>
+        )}
+
         {/* Thermal Receipt Paper Preview */}
-        <div className="p-4 overflow-y-auto flex-1 bg-slate-950/60 flex justify-center">
+        <div className="p-4 overflow-y-auto flex-1 bg-slate-950/70 flex justify-center">
           <div
             id="thermal-receipt-print-area"
-            className="w-full bg-white text-black p-5 rounded-sm shadow-md font-mono text-[12.5px] leading-tight select-text whitespace-pre overflow-x-auto border-t-4 border-dashed border-slate-300"
+            className="w-full bg-white text-black p-5 rounded shadow-lg font-mono text-[12px] leading-tight select-text whitespace-pre overflow-x-auto border-t-4 border-dashed border-slate-300"
             style={{ maxWidth: paperWidth >= 80 ? '340px' : '260px' }}
           >
             {rawText}
@@ -56,28 +107,34 @@ export const ThermalReceiptModal = ({
         </div>
 
         {/* Footer Actions */}
-        <div className="p-4 bg-slate-800/80 border-t border-slate-700/60 flex items-center justify-between gap-3">
+        <div className="p-4 bg-slate-800/80 border-t border-slate-700/60 flex flex-wrap items-center justify-between gap-2.5">
           <button
             onClick={handleCopy}
-            className="flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-slate-300 bg-slate-700/60 hover:bg-slate-700 rounded-xl transition-colors"
+            className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-slate-300 bg-slate-700/60 hover:bg-slate-700 rounded-xl transition-colors"
           >
             {copied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
-            {copied ? "Nusxalandi" : "Nusxa olish"}
+            <span>{copied ? 'Nusxalandi' : 'Nusxa'}</span>
           </button>
 
           <div className="flex items-center gap-2">
+            {/* Direct USB Print (No dialog) */}
             <button
-              onClick={onClose}
-              className="px-4 py-2 text-xs font-medium text-slate-400 hover:text-white hover:bg-slate-700/50 rounded-xl transition-colors"
+              onClick={handleUsbDirectPrint}
+              disabled={usbPrinting}
+              className="flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold text-white bg-blue-600 hover:bg-blue-500 disabled:opacity-50 rounded-xl shadow-md transition-all active:scale-95"
+              title="USB orqali ulangan Xprinterga to'g'ridan-to'g'ri chop etish"
             >
-              Yopish
+              <Zap className="w-3.5 h-3.5 text-amber-300" />
+              <span>{usbPrinting ? 'Yuborilmoqda...' : 'USB Xprinter'}</span>
             </button>
+
+            {/* Standard Browser Print */}
             <button
-              onClick={handlePrint}
-              className="flex items-center gap-2 px-5 py-2 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-500 rounded-xl shadow-lg shadow-emerald-600/30 transition-all hover:scale-[1.02] active:scale-[0.98]"
+              onClick={handleBrowserPrint}
+              className="flex items-center gap-1.5 px-4 py-2 text-xs font-bold text-slate-950 bg-emerald-400 hover:bg-emerald-300 rounded-xl shadow-lg shadow-emerald-500/20 transition-all active:scale-95"
             >
-              <Printer className="w-4 h-4" />
-              Chop etish (Print)
+              <Printer className="w-3.5 h-3.5" />
+              <span>Chop etish</span>
             </button>
           </div>
         </div>
@@ -85,4 +142,5 @@ export const ThermalReceiptModal = ({
     </div>
   );
 };
+
 export default ThermalReceiptModal;

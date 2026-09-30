@@ -6,6 +6,7 @@ from datetime import datetime, timezone, timedelta
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, and_, or_
+from pydantic import BaseModel
 from typing import List, Optional
 
 from app.core.database import get_db
@@ -18,10 +19,18 @@ from app.schemas.receipt import (
     ReceiptArchiveResponse, ShiftReportCreate, ShiftReportResponse
 )
 from app.core.printer_service import (
-    format_kitchen_ticket, format_pre_check, format_shift_report
+    format_kitchen_ticket, format_pre_check, format_shift_report,
+    get_installed_printers, print_to_windows_printer
 )
 
 router = APIRouter(prefix="/receipts", tags=["🖨️ Cheklar Arxivi va Kassa Hisobotlari"])
+
+
+class DirectPrintRequest(BaseModel):
+    text: str
+    printer_name: Optional[str] = None
+    cut_paper: bool = True
+
 
 
 @router.get("/", response_model=List[ReceiptArchiveResponse], summary="Cheklar arxivi ro'yxati (3 yil)")
@@ -104,6 +113,44 @@ async def reprint_receipt(
         "total": r.total_amount,
         "created_at": r.created_at,
     }
+
+
+@router.get("/printers/installed", summary="Kompyuterga ulangan Xprinter/USB printerlar ro'yxati")
+async def list_installed_printers(
+    current_user: User = Depends(require_role("admin", "waiter", "developer")),
+):
+    """Kompyuterdagi barcha drayveri o'rnatilgan printerlar"""
+    printers = get_installed_printers()
+    return {"printers": printers, "count": len(printers)}
+
+
+@router.post("/{receipt_id}/print-usb", summary="Arxivdagi chekni to'g'ridan-to'g'ri USB Xprinter'ga yuborish")
+async def print_receipt_usb(
+    receipt_id: int,
+    printer_name: Optional[str] = Query(None, description="Printer nomi (masalan: Xprinter)"),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role("admin", "waiter", "developer")),
+):
+    result = await db.execute(select(ReceiptArchive).where(ReceiptArchive.id == receipt_id))
+    r = result.scalar_one_or_none()
+    if not r or not r.raw_text:
+        raise HTTPException(status_code=404, detail="Chek matni topilmadi")
+
+    res = print_to_windows_printer(r.raw_text, printer_name=printer_name)
+    if not res.get("success"):
+        raise HTTPException(status_code=500, detail=res.get("error", "Chop etishda xatolik"))
+    return res
+
+
+@router.post("/print-raw-usb", summary="Ixtiyoriy chek matnini to'g'ridan-to'g'ri USB Xprinter'ga chop etish")
+async def print_raw_usb(
+    payload: DirectPrintRequest,
+    current_user: User = Depends(require_role("admin", "waiter", "developer")),
+):
+    res = print_to_windows_printer(payload.text, printer_name=payload.printer_name, cut_paper=payload.cut_paper)
+    if not res.get("success"):
+        raise HTTPException(status_code=500, detail=res.get("error", "Chop etishda xatolik"))
+    return res
 
 
 # ─── Smena hisoboti (X-Report va Z-Report) ──────────────────────
