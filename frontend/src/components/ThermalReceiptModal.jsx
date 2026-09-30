@@ -36,22 +36,26 @@ export const ThermalReceiptModal = ({
       if (res && res.success) {
         setUsbStatus({
           success: true,
-          message: res.message || 'Xprinterga chop etishga yuborildi!',
+          message: res.message || 'Xprinterga to\'g\'ridan-to\'g\'ri yuborildi!',
         });
       } else {
+        // Bulutli server (Render/Linux) bo'lsa, brauzer orqali chiqarish
         setUsbStatus({
-          success: false,
-          message: res?.error || "Printerga yuborib bo'lmadi",
+          success: true,
+          message: "Brauzer orqali Xprinter'ga yuborilmoqda...",
         });
+        setTimeout(() => window.print(), 300);
       }
     } catch (err) {
+      // Bulutli server (Render Linux)
       setUsbStatus({
-        success: false,
-        message: err.message || "USB printer bilan aloqa yo'q",
+        success: true,
+        message: "Brauzer orqali Xprinter'ga yuborilmoqda...",
       });
+      setTimeout(() => window.print(), 300);
     } finally {
       setUsbPrinting(false);
-      setTimeout(() => setUsbStatus(null), 4000);
+      setTimeout(() => setUsbStatus(null), 3000);
     }
   };
 

@@ -85,10 +85,11 @@ export const PaymentsReportTab = ({ restaurantId }) => {
         report_type: reportType === 'X' ? 'x_report' : 'z_report',
       });
       setThermalRawText(res.raw_text);
+      const shiftNum = res.shift_number || 1;
       setThermalModalTitle(
         reportType === 'X'
-          ? `X-Hisobot (Smena #${res.report_number})`
-          : `Z-Hisobot (Kunlik kassa yopilishi #${res.report_number})`
+          ? `X-Hisobot (Smena #${shiftNum})`
+          : `Z-Hisobot (Kunlik kassa yopilishi #${shiftNum})`
       );
       setThermalModalOpen(true);
       if (reportType === 'Z') {
