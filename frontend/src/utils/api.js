@@ -3,6 +3,78 @@ export const BASE_URL = rawApiUrl
   ? (rawApiUrl.endsWith('/api/v1') ? rawApiUrl : `${rawApiUrl.replace(/\/+$/, '')}/api/v1`)
   : '/api/v1';
 
+// Maydon nomlarini o'zbekchaga o'girish (xato xabarlari uchun)
+const FIELD_LABELS = {
+  username: 'Login',
+  password: 'Parol',
+  full_name: 'To\'liq ism',
+  phone: 'Telefon',
+  customer_phone: 'Mijoz telefoni',
+  customer_name: 'Mijoz ismi',
+  name: 'Nomi',
+  price: 'Narxi',
+  quantity: 'Soni',
+  amount: 'Summa',
+  payment_amount: "To'lov summasi",
+  email: 'Email',
+  number: 'Raqami',
+  capacity: 'Sig\'imi',
+};
+
+// Pydantic xato turlarini tushunarli matnga aylantirish
+function describeValidationError(item) {
+  const field = Array.isArray(item.loc)
+    ? item.loc.filter((x) => x !== 'body' && x !== 'query' && typeof x === 'string').pop()
+    : null;
+  const label = (field && FIELD_LABELS[field]) || field || 'Maydon';
+  const ctx = item.ctx || {};
+
+  switch (item.type) {
+    case 'string_too_short':
+      return `${label}: kamida ${ctx.min_length} ta belgi bo'lishi kerak`;
+    case 'string_too_long':
+      return `${label}: ko'pi bilan ${ctx.max_length} ta belgi bo'lishi mumkin`;
+    case 'missing':
+      return `${label}: to'ldirilishi shart`;
+    case 'greater_than':
+      return `${label}: ${ctx.gt} dan katta bo'lishi kerak`;
+    case 'greater_than_equal':
+      return `${label}: kamida ${ctx.ge} bo'lishi kerak`;
+    case 'less_than_equal':
+      return `${label}: ko'pi bilan ${ctx.le} bo'lishi mumkin`;
+    case 'int_parsing':
+    case 'float_parsing':
+      return `${label}: raqam kiritilishi kerak`;
+    case 'value_error':
+      return `${label}: ${item.msg || "noto'g'ri qiymat"}`;
+    default:
+      return `${label}: ${item.msg || "noto'g'ri qiymat"}`;
+  }
+}
+
+/**
+ * FastAPI xato javobini O'QILADIGAN matnga aylantiradi.
+ *
+ * Muhim: tekshiruv (422) xatolarida `detail` MASSIV bo'ladi. Ilgari u
+ * to'g'ridan-to'g'ri `new Error()` ga berilardi va foydalanuvchi
+ * "[object Object]" degan ma'nosiz xabar ko'rardi — shuning uchun
+ * formalar "ishlamayapti" bo'lib tuyulardi.
+ */
+export function formatApiError(errorData) {
+  if (!errorData) return null;
+  const detail = errorData.detail ?? errorData.message;
+  if (!detail) return null;
+  if (typeof detail === 'string') return detail;
+  if (Array.isArray(detail)) {
+    const msgs = detail
+      .map((d) => (typeof d === 'string' ? d : describeValidationError(d)))
+      .filter(Boolean);
+    return msgs.length ? msgs.join('\n') : null;
+  }
+  if (typeof detail === 'object') return detail.msg || JSON.stringify(detail);
+  return String(detail);
+}
+
 async function request(endpoint, options = {}) {
   const token = localStorage.getItem('restaron_token');
   const headers = {
@@ -69,9 +141,13 @@ async function request(endpoint, options = {}) {
     let errorDetail = 'Xatolik yuz berdi';
     try {
       const errorData = await response.json();
-      errorDetail = errorData.detail || errorData.message || errorDetail;
+      errorDetail = formatApiError(errorData) || errorDetail;
     } catch (e) {
-      // not JSON
+      // JSON emas — status bo'yicha tushunarli xabar
+      if (response.status === 401) errorDetail = "Sessiya tugadi. Qaytadan kiring.";
+      else if (response.status === 403) errorDetail = "Bu amal uchun ruxsatingiz yo'q.";
+      else if (response.status === 404) errorDetail = "Ma'lumot topilmadi.";
+      else if (response.status >= 500) errorDetail = `Server xatosi (${response.status}). Qaytadan urinib ko'ring.`;
     }
     throw new Error(errorDetail);
   }

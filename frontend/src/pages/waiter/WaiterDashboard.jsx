@@ -33,7 +33,7 @@ import {
 
 export const WaiterDashboard = () => {
   const { user } = useAuth();
-  const { addEventListener, playChime } = useWebSocket();
+  const { addEventListener, playChime, connected } = useWebSocket();
   const restaurantId = user?.restaurant_id || 1;
 
   // View mode: 'pos' (Ali Poster stollar zakazi) | 'calls' (Chaqiruvlar) | 'ready' (Oshxonadan tayyor) | 'kpi' (Hisobotim)
@@ -56,20 +56,11 @@ export const WaiterDashboard = () => {
 
   // POS Order items in local state (for fast reactive UI before sync)
   const [kitchenNote, setKitchenNote] = useState('');
-  const [receiptNote, setReceiptNote] = useState('');
   const [kitchenNoteModalOpen, setKitchenNoteModalOpen] = useState(false);
-  const [receiptNoteModalOpen, setReceiptNoteModalOpen] = useState(false);
   const [kitchenSendSuccess, setKitchenSendSuccess] = useState(false);
   const [sendingToKitchen, setSendingToKitchen] = useState(false);
 
   // Checkout modal
-  const [checkoutModalOpen, setCheckoutModalOpen] = useState(false);
-  const [paymentMethod, setPaymentMethod] = useState('cash'); // 'cash' | 'card' | 'click' | 'debt'
-  const [debtCustomerName, setDebtCustomerName] = useState('');
-  const [debtCustomerPhone, setDebtCustomerPhone] = useState('');
-  const [debtNote, setDebtNote] = useState('');
-  const [debtDueDate, setDebtDueDate] = useState('');
-  const [checkoutLoading, setCheckoutLoading] = useState(false);
 
   // Xprinter Thermal Receipt Modal
   const [receiptModalOpen, setReceiptModalOpen] = useState(false);
@@ -255,7 +246,6 @@ export const WaiterDashboard = () => {
     try {
       const updated = await api.patch(`/orders/${activeOrder.id}/notes`, {
         kitchen_note: kitchenNote,
-        receipt_note: receiptNote,
       });
       setActiveOrder(updated);
       setKitchenNoteModalOpen(false);
@@ -290,53 +280,6 @@ export const WaiterDashboard = () => {
     }
   };
 
-  // Action: "К оплате" (Checkout & Bill)
-  const handleCheckoutSubmit = async (e) => {
-    e.preventDefault();
-    if (!activeOrder) return;
-
-    setCheckoutLoading(true);
-    try {
-      const payload = {
-        payment_method: paymentMethod,
-        discount: 0.0,
-        debt_customer_name: debtCustomerName,
-        debt_customer_phone: debtCustomerPhone,
-        debt_due_date: debtDueDate || null,
-        debt_note: debtNote,
-        print_receipt: true,
-      };
-
-      const res = await api.post(`/orders/${activeOrder.id}/checkout`, payload);
-      setCheckoutModalOpen(false);
-
-      if (res.raw_text) {
-        setThermalReceiptText(res.raw_text);
-        setReceiptModalTitle(`Hisob Cheki (Stol #${selectedTable?.number || ''})`);
-        setReceiptModalOpen(true);
-      }
-
-      confetti({ particleCount: 100, spread: 70, origin: { y: 0.6 } });
-      if (soundEnabled && playChime) playChime('cash');
-
-      // Reset active order & clear debt inputs
-      setActiveOrder(null);
-      setDebtCustomerName('');
-      setDebtCustomerPhone('');
-      setDebtNote('');
-      setDebtDueDate('');
-
-      // Update table to available
-      setTables((prev) =>
-        prev.map((t) => (t.id === selectedTable?.id ? { ...t, status: 'available' } : t))
-      );
-      loadInitialData();
-    } catch (err) {
-      alert(err.message || "To'lovni qabul qilishda xatolik");
-    } finally {
-      setCheckoutLoading(false);
-    }
-  };
 
   // Action: "Bordim" (Resolve waiter call)
   const handleResolveCall = async (callId) => {
@@ -480,7 +423,10 @@ export const WaiterDashboard = () => {
               <p className="text-xs font-bold text-white leading-tight">
                 {user?.full_name || user?.username || 'Ofitsiant'}
               </p>
-              <p className="text-[10px] text-emerald-400/80">Faol xodim</p>
+              {/* Haqiqiy holat: WebSocket ulanishi bor bo'lsa "Faol" */}
+              <p className={`text-[10px] font-semibold ${connected ? 'text-emerald-400/90' : 'text-red-400/90'}`}>
+                {connected ? '● Faol' : '○ Nofaol (aloqa yo\'q)'}
+              </p>
             </div>
           </div>
         </div>
@@ -748,24 +694,20 @@ export const WaiterDashboard = () => {
                 </div>
               </div>
 
-              {/* Action Buttons: Izohlar */}
-              <div className="grid grid-cols-2 gap-2 mb-2.5">
+              {/* Oshxonaga izoh. "Chek izohi" olib tashlandi — chek
+                  kassada (admin panelda) chiqariladi. */}
+              <div className="mb-2.5">
                 <button
                   onClick={() => setKitchenNoteModalOpen(true)}
-                  className="py-2.5 px-3 rounded-xl bg-teal-600/20 hover:bg-teal-600/30 border border-teal-500/40 text-teal-300 font-bold text-xs sm:text-sm transition-all truncate"
+                  className="w-full py-2.5 px-3 rounded-xl bg-teal-600/20 hover:bg-teal-600/30 border border-teal-500/40 text-teal-300 font-bold text-xs sm:text-sm transition-all truncate"
                 >
                   💬 Oshxona izohi {kitchenNote ? '✓' : ''}
                 </button>
-                <button
-                  onClick={() => setReceiptNoteModalOpen(true)}
-                  className="py-2.5 px-3 rounded-xl bg-cyan-600/20 hover:bg-cyan-600/30 border border-cyan-500/40 text-cyan-300 font-bold text-xs sm:text-sm transition-all truncate"
-                >
-                  🧾 Chek izohi {receiptNote ? '✓' : ''}
-                </button>
               </div>
 
-              {/* Main POS Actions: "🔥 Buyurtmani tasdiqlash" | "💳 To'lov / Hisob" */}
-              <div className="grid grid-cols-2 gap-2.5">
+              {/* Asosiy POS amali. "To'lov / Hisob" olib tashlandi —
+                  to'lovni kassada o'tirgan xodim admin panelda qabul qiladi. */}
+              <div className="grid grid-cols-1 gap-2.5">
                 <button
                   onClick={handleSendToKitchen}
                   disabled={!activeOrder || sendingToKitchen}
@@ -773,15 +715,6 @@ export const WaiterDashboard = () => {
                 >
                   <Printer className="w-5 h-5 shrink-0" />
                   <span>{sendingToKitchen ? 'Chop etilmoqda...' : '🔥 Buyurtmani tasdiqlash'}</span>
-                </button>
-
-                <button
-                  onClick={() => setCheckoutModalOpen(true)}
-                  disabled={!activeOrder}
-                  className="py-4 px-3 rounded-2xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 disabled:opacity-40 text-white font-black text-xs sm:text-sm shadow-xl shadow-emerald-600/25 transition-all active:scale-95 flex items-center justify-center gap-1.5"
-                >
-                  <CreditCard className="w-5 h-5 shrink-0" />
-                  <span>💳 To'lov / Hisob</span>
                 </button>
               </div>
             </div>
@@ -912,155 +845,6 @@ export const WaiterDashboard = () => {
                 Saqlash
               </button>
             </div>
-          </div>
-        </div>
-      )}
-
-      {/* ─── Receipt Note Modal (Комент. к чеку) ────────────────────── */}
-      {receiptNoteModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm animate-in fade-in">
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-sm w-full p-5 shadow-2xl">
-            <h3 className="text-sm font-bold text-white mb-2">Chekka izoh (Комент. к чеку)</h3>
-            <textarea
-              rows={3}
-              value={receiptNote}
-              onChange={(e) => setReceiptNote(e.target.value)}
-              placeholder="Masalan: VIP mijoz, chegirma..."
-              className="w-full p-3 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white focus:outline-none focus:border-cyan-500 resize-none mb-4"
-            />
-            <div className="flex justify-end gap-2">
-              <button
-                onClick={() => setReceiptNoteModalOpen(false)}
-                className="px-3 py-1.5 text-xs text-slate-400 hover:text-white"
-              >
-                Bekor qilish
-              </button>
-              <button
-                onClick={handleSaveNotes}
-                className="px-4 py-1.5 rounded-xl bg-cyan-600 text-white font-bold text-xs hover:bg-cyan-500"
-              >
-                Saqlash
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ─── Checkout & Close Table Modal (К оплате — Kassa) ────────── */}
-      {checkoutModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in">
-          <div className="bg-slate-900 border border-slate-800 rounded-3xl max-w-md w-full p-6 shadow-2xl">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-800 mb-4">
-              <div className="flex items-center gap-2">
-                <div className="w-8 h-8 rounded-lg bg-emerald-500/20 text-emerald-400 flex items-center justify-center">
-                  <CreditCard className="w-4 h-4" />
-                </div>
-                <div>
-                  <h3 className="text-white font-extrabold text-sm">To'lovni qabul qilish</h3>
-                  <p className="text-[11px] text-slate-400">
-                    Stol #{selectedTable?.number} • Jami:{' '}
-                    <span className="text-emerald-400 font-bold">
-                      {(activeOrder?.total || 0).toLocaleString('uz-UZ')} so'm
-                    </span>
-                  </p>
-                </div>
-              </div>
-              <button
-                onClick={() => setCheckoutModalOpen(false)}
-                className="text-slate-400 hover:text-white p-1"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <form onSubmit={handleCheckoutSubmit}>
-              {/* To'lov usuli tanlash (Naqd, Karta, Click, Nasiya) */}
-              <label className="block text-xs font-bold text-slate-400 uppercase mb-2">
-                To'lov turi:
-              </label>
-              <div className="grid grid-cols-2 gap-2 mb-4">
-                {[
-                  { id: 'cash', label: '💵 Naqd (Наличные)' },
-                  { id: 'card', label: '💳 Karta (Uzcard/Humo)' },
-                  { id: 'click', label: '📲 Click / Payme' },
-                  { id: 'debt', label: '📝 Nasiya / Qarz' },
-                ].map((m) => (
-                  <button
-                    key={m.id}
-                    type="button"
-                    onClick={() => setPaymentMethod(m.id)}
-                    className={`py-2.5 px-3 rounded-xl border text-xs font-bold transition-all text-left ${
-                      paymentMethod === m.id
-                        ? 'bg-emerald-600 text-white border-emerald-500 shadow-md'
-                        : 'bg-slate-800/80 border-slate-700/80 text-slate-300 hover:bg-slate-750'
-                    }`}
-                  >
-                    {m.label}
-                  </button>
-                ))}
-              </div>
-
-              {/* Nasiya (Qarz) form fields */}
-              {paymentMethod === 'debt' && (
-                <div className="p-3.5 rounded-2xl bg-amber-500/10 border border-amber-500/30 mb-4 space-y-2.5 animate-in fade-in">
-                  <p className="text-xs font-bold text-amber-300">Qarzdor ma'lumotlari:</p>
-                  <div>
-                    <label className="text-[11px] text-slate-400 block mb-1">Mijoz F.I.Sh:</label>
-                    <input
-                      type="text"
-                      required
-                      value={debtCustomerName}
-                      onChange={(e) => setDebtCustomerName(e.target.value)}
-                      placeholder="Masalan: Sardor Rahimov"
-                      className="w-full px-3 py-1.5 rounded-xl bg-slate-900 border border-slate-700 text-xs text-white focus:outline-none focus:border-amber-400"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="text-[11px] text-slate-400 block mb-1">Telefon raqami:</label>
-                    <input
-                      type="text"
-                      required
-                      value={debtCustomerPhone}
-                      onChange={(e) => setDebtCustomerPhone(e.target.value)}
-                      placeholder="+998 90 123 45 67"
-                      className="w-full px-3 py-1.5 rounded-xl bg-slate-900 border border-slate-700 text-xs text-white focus:outline-none focus:border-amber-400"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="text-[11px] text-slate-400 block mb-1">Qaytarish muddati:</label>
-                    <input
-                      type="date"
-                      value={debtDueDate}
-                      onChange={(e) => setDebtDueDate(e.target.value)}
-                      className="w-full px-3 py-1.5 rounded-xl bg-slate-900 border border-slate-700 text-xs text-white focus:outline-none focus:border-amber-400"
-                    />
-                  </div>
-                </div>
-              )}
-
-              {/* Submit */}
-              <div className="flex items-center justify-between gap-3 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setCheckoutModalOpen(false)}
-                  className="px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-slate-300"
-                >
-                  Bekor qilish
-                </button>
-                <button
-                  type="submit"
-                  disabled={checkoutLoading}
-                  className="flex-1 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 font-extrabold text-xs text-white shadow-lg shadow-emerald-600/30 flex items-center justify-center gap-2 transition-all active:scale-95"
-                >
-                  <Printer className="w-4 h-4" />
-                  <span>
-                    {checkoutLoading ? 'Yopilmoqda...' : 'To\'lov va Chek chiqarish (Xprinter)'}
-                  </span>
-                </button>
-              </div>
-            </form>
           </div>
         </div>
       )}

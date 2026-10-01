@@ -504,7 +504,7 @@ async def print_table_bill(
         select(RestaurantSettings).where(RestaurantSettings.restaurant_id == table.restaurant_id)
     )
     settings = s_res.scalar_one_or_none()
-    cust_printer = getattr(settings, "printer_customer_name", None) or "XP-Q80A"
+    cust_printer = getattr(settings, "printer_customer_name", None) or "X-Q80A"
     paper_width = getattr(settings, "printer_paper_width", 80) or 80
 
     # Buyurtmalarni olish

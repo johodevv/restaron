@@ -17,7 +17,6 @@ import CallWaiterModal from './pages/customer/CallWaiterModal';
 import OrderTracker from './pages/customer/OrderTracker';
 import ReviewModal from './pages/customer/ReviewModal';
 import WaiterDashboard from './pages/waiter/WaiterDashboard';
-import ChefDashboard from './pages/chef/ChefDashboard';
 import AdminDashboard from './pages/admin/AdminDashboard';
 import DeveloperDashboard from './pages/developer/DeveloperDashboard';
 import Login from './pages/auth/Login';
@@ -26,7 +25,7 @@ import DunyoLanding from './pages/customer/DunyoLanding';
 import TableWaitingVerification from './pages/customer/TableWaitingVerification';
 
 export const App = () => {
-  const { user, isWaiter, isChef, isAdmin, isDev, loading: authLoading } = useAuth();
+  const { user, isWaiter, isAdmin, isDev, loading: authLoading } = useAuth();
   const [currentView, setCurrentView] = useState('menu'); // 'menu' | 'tracker' | 'login'
   const [activeOrderId, setActiveOrderId] = useState(null);
   const [reviewOrder, setReviewOrder] = useState(null);
@@ -187,9 +186,19 @@ export const App = () => {
                 onNavigate={setCurrentView}
               />
               <main>
+                {/* Oshpaz paneli (KDS) olib tashlandi — buyurtma
+                    to'g'ridan-to'g'ri oshxona printeriga chiqadi. */}
                 {isWaiter && <WaiterDashboard />}
-                {isChef && <ChefDashboard />}
                 {isDev ? <DeveloperDashboard /> : (isAdmin && <AdminDashboard />)}
+                {!isWaiter && !isAdmin && !isDev && (
+                  <div className="max-w-md mx-auto mt-20 p-6 rounded-2xl bg-theme-card border border-theme-border text-center space-y-2">
+                    <p className="text-lg font-bold text-theme-text">Bu hisob uchun panel yo'q</p>
+                    <p className="text-sm text-theme-muted">
+                      Oshpaz paneli olib tashlangan — buyurtmalar to'g'ridan-to'g'ri
+                      oshxona printeriga chiqadi. Admin bilan bog'laning.
+                    </p>
+                  </div>
+                )}
               </main>
             </div>
           )}

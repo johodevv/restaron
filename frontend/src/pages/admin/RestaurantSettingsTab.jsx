@@ -107,9 +107,9 @@ export const RestaurantSettingsTab = ({ restaurantId }) => {
   const [enableSmsReminders, setEnableSmsReminders] = useState(false);
 
   // 3-Printer Configuration
-  const [printerCustomerName, setPrinterCustomerName] = useState('XP-Q80A');
-  const [printerKitchen1Name, setPrinterKitchen1Name] = useState('XP-Q80A');
-  const [printerKitchen2Name, setPrinterKitchen2Name] = useState('XP-Q80A');
+  const [printerCustomerName, setPrinterCustomerName] = useState('X-Q80A');
+  const [printerKitchen1Name, setPrinterKitchen1Name] = useState('192.168.1.201');
+  const [printerKitchen2Name, setPrinterKitchen2Name] = useState('192.168.1.202');
   const [kitchen1Title, setKitchen1Title] = useState('1-Oshxona (Qozon taomlari)');
   const [kitchen2Title, setKitchen2Title] = useState('2-Oshxona (Baliq / Somsa)');
   const [autoPrintKitchen, setAutoPrintKitchen] = useState(true);
@@ -201,9 +201,9 @@ export const RestaurantSettingsTab = ({ restaurantId }) => {
         setSmsTemplate(s.sms_template || smsTemplate);
 
         // 3-Printer settings
-        setPrinterCustomerName(s.printer_customer_name || 'XP-Q80A');
-        setPrinterKitchen1Name(s.printer_kitchen1_name || 'XP-Q80A');
-        setPrinterKitchen2Name(s.printer_kitchen2_name || 'XP-Q80A');
+        setPrinterCustomerName(s.printer_customer_name || 'X-Q80A');
+        setPrinterKitchen1Name(s.printer_kitchen1_name || '192.168.1.201');
+        setPrinterKitchen2Name(s.printer_kitchen2_name || '192.168.1.202');
         setKitchen1Title(s.kitchen1_title || '1-Oshxona (Qozon taomlari)');
         setKitchen2Title(s.kitchen2_title || '2-Oshxona (Baliq / Somsa)');
         setAutoPrintKitchen(s.auto_print_kitchen ?? true);
@@ -877,7 +877,7 @@ export const RestaurantSettingsTab = ({ restaurantId }) => {
                   <label className="block text-[11px] font-semibold text-theme-muted mb-1">Printer nomi (Windows):</label>
                   <input
                     type="text"
-                    placeholder="Masalan: XP-Q80A yoki Xprinter"
+                    placeholder="Masalan: X-Q80A (USB) yoki 192.168.1.201 (LAN)"
                     value={printerCustomerName}
                     onChange={(e) => setPrinterCustomerName(e.target.value)}
                     className="w-full px-3 py-2 rounded-xl bg-slate-900 border border-emerald-500/40 text-xs text-white font-mono focus:outline-none focus:border-emerald-400"

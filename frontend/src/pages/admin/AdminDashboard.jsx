@@ -4,6 +4,8 @@ import { useAuth } from '../../context/AuthContext';
 import { useTheme } from '../../context/ThemeContext';
 import { useWebSocket } from '../../context/WebSocketContext';
 import BillModal from '../../components/BillModal';
+import CheckoutModal from '../../components/CheckoutModal';
+import ThermalReceiptModal from '../../components/ThermalReceiptModal';
 import { DebtsTab } from './DebtsTab';
 import { ReceiptsArchiveTab } from './ReceiptsArchiveTab';
 import { PaymentsReportTab } from './PaymentsReportTab';
@@ -70,6 +72,12 @@ export const AdminDashboard = () => {
 
   // Bill Modal state
   const [billModalOpen, setBillModalOpen] = useState(false);
+  // Kassa: to'lovni admin panelda qabul qilamiz (kassada o'tirgan xodim shu yerda ishlaydi)
+  const [checkoutOrder, setCheckoutOrder] = useState(null);
+  const [checkoutTableLabel, setCheckoutTableLabel] = useState('');
+  const [thermalOpen, setThermalOpen] = useState(false);
+  const [thermalRawText, setThermalRawText] = useState('');
+  const [thermalTitle, setThermalTitle] = useState('Chek');
   const [selectedBillTable, setSelectedBillTable] = useState(null);
   const [staffActionLoading, setStaffActionLoading] = useState(null);
 
@@ -251,6 +259,22 @@ export const AdminDashboard = () => {
     }
   };
 
+  // Kassa: stolning ochiq buyurtmasini topib, to'lov oynasini ochadi
+  const handleOpenCheckout = async (t) => {
+    try {
+      const orders = await api.get(`/orders/table/${t.id}/active`);
+      const open = (orders || []).find((o) => !o.is_paid);
+      if (!open) {
+        alert(`Stol #${t.number} da to'lanmagan buyurtma yo'q.`);
+        return;
+      }
+      setCheckoutTableLabel(`Stol #${t.number}`);
+      setCheckoutOrder(open);
+    } catch (err) {
+      alert(err.message || 'Buyurtmani olishda xatolik');
+    }
+  };
+
   const handleOpenBill = (t) => {
     setSelectedBillTable(t);
     setBillModalOpen(true);
@@ -260,9 +284,18 @@ export const AdminDashboard = () => {
   const handleDirectPrintBill = async (tableId, tableNumber) => {
     try {
       const res = await api.post(`/tables/${tableId}/print-bill`);
-      alert(`✅ Stol #${tableNumber} hisob cheki ${res.printer_name || 'Printer 1'} ga muvaffaqiyatli yuborildi!`);
+      // Printerga yuborilmagan bo'lsa ham chek matnini ko'rsatamiz —
+      // kassir uni brauzerdan chiqara oladi.
+      if (res?.raw_text) {
+        setThermalRawText(res.raw_text);
+        setThermalTitle(`Hisob Cheki — Stol #${tableNumber}`);
+        setThermalOpen(true);
+      }
+      if (!res?.success) {
+        alert(res?.message || `Printerga yuborib bo'lmadi. Chek ekranda ko'rsatildi.`);
+      }
     } catch (err) {
-      alert(`❌ Chek chiqarishda xatolik: ` + (err.message || ''));
+      alert(`Chek chiqarishda xatolik: ` + (err.message || ''));
     }
   };
 
@@ -1376,6 +1409,16 @@ export const AdminDashboard = () => {
                       </button>
                     </div>
 
+                    {/* Kassa — to'lovni qabul qilish (ofitsiant panelidan ko'chirildi) */}
+                    <button
+                      onClick={() => handleOpenCheckout(t)}
+                      className="w-full py-3 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white text-xs font-black flex items-center justify-center gap-1.5 transition-all shadow-lg shadow-emerald-600/25 active:scale-95"
+                      title="To'lovni qabul qilish va hisobni yopish"
+                    >
+                      <CreditCard className="w-4 h-4" />
+                      <span>To'lov / Hisob (Kassa)</span>
+                    </button>
+
                     {t.is_unlocked && (
                       <button
                         onClick={() => handleLockTable(t.id)}
@@ -2103,6 +2146,31 @@ export const AdminDashboard = () => {
           </div>
         </div>
       )}
+
+      <ThermalReceiptModal
+        isOpen={thermalOpen}
+        onClose={() => setThermalOpen(false)}
+        title={thermalTitle}
+        rawText={thermalRawText}
+        paperWidth={80}
+      />
+
+      {/* Kassa oynasi — to'lov turi, naqd qaytimi, nasiya */}
+      <CheckoutModal
+        isOpen={!!checkoutOrder}
+        onClose={() => setCheckoutOrder(null)}
+        order={checkoutOrder}
+        tableLabel={checkoutTableLabel}
+        onPaid={(res) => {
+          setCheckoutOrder(null);
+          if (res?.raw_text) {
+            setThermalRawText(res.raw_text);
+            setThermalTitle(`Hisob Cheki — ${checkoutTableLabel}`);
+            setThermalOpen(true);
+          }
+          loadAll();
+        }}
+      />
 
       {/* Table Bill & Checkout Modal */}
       <BillModal

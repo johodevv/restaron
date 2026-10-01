@@ -109,6 +109,11 @@ THEMES = [
 ]
 
 
+# Restoran egasining asosiy admin akkaunti
+ADMIN_USERNAME = "maqsad"
+ADMIN_PASSWORD = "01020307m"
+
+
 async def seed():
     async with AsyncSessionLocal() as db:
         print("🌱 Boshlang'ich ma'lumotlar yuklanmoqda...")
@@ -178,13 +183,11 @@ async def seed():
             db.add(settings_obj)
 
             # Demo xodimlar ro'yxati
+            # Oshpaz paneli olib tashlandi — buyurtma to'g'ridan-to'g'ri
+            # oshxona printeriga chiqadi, shuning uchun oshpaz akkaunti kerak emas.
             demo_users = [
-                {"username": "admin", "full_name": "Restoran Admin", "role": UserRole.ADMIN, "pass": "admin123"},
-                {"username": "waiter", "full_name": "Asosiy Ofitsiant", "role": UserRole.WAITER, "pass": "waiter123"},
+                {"username": ADMIN_USERNAME, "full_name": "Restoran Admin", "role": UserRole.ADMIN, "pass": ADMIN_PASSWORD},
                 {"username": "ofitsiant1", "full_name": "Akbar Ofitsiant", "role": UserRole.WAITER, "pass": "waiter123"},
-                {"username": "cook", "full_name": "Bosh Oshpaz", "role": UserRole.CHEF, "pass": "cook123"},
-                {"username": "chef", "full_name": "Chef Oshpaz", "role": UserRole.CHEF, "pass": "chef123"},
-                {"username": "oshpaz1", "full_name": "Zafar Oshpaz", "role": UserRole.CHEF, "pass": "chef123"},
             ]
             for u in demo_users:
                 user_res = await db.execute(select(User).where(User.username == u["username"]))
@@ -342,17 +345,42 @@ async def seed():
                     db.add(item)
 
             print("✅ Demo restoran yaratildi:")
-            print("   Admin:     admin / admin123")
+            print("   Admin:     maqsad / 01020307m")
             print("   Ofitsiant: ofitsiant1 / waiter123")
-            print("   Oshpaz:    oshpaz1 / chef123")
+
+        # ─── 4. Admin akkauntini KAFOLATLASH ──────────────────
+        # MUHIM: yuqoridagi blok faqat restoran YANGI yaratilganda ishlaydi.
+        # Mavjud o'rnatmalarda (restoran allaqachon bor) admin akkaunti
+        # yaratilmay qolar edi va egasi tizimga kira olmasdi.
+        # Shuning uchun uni har safar alohida tekshiramiz.
+        rest_res = await db.execute(select(Restaurant).order_by(Restaurant.id))
+        first_restaurant = rest_res.scalars().first()
+        if first_restaurant:
+            admin_res = await db.execute(select(User).where(User.username == ADMIN_USERNAME))
+            admin_user = admin_res.scalar_one_or_none()
+            if not admin_user:
+                db.add(User(
+                    username=ADMIN_USERNAME,
+                    full_name="Restoran Admin",
+                    hashed_password=get_password_hash(ADMIN_PASSWORD),
+                    role=UserRole.ADMIN,
+                    restaurant_id=first_restaurant.id,
+                    is_active=True,
+                ))
+                print(f"✅ Admin akkaunti yaratildi: {ADMIN_USERNAME}")
+            else:
+                # Akkaunt o'chirilgan bo'lsa qayta yoqamiz va restoranga bog'laymiz
+                admin_user.is_active = True
+                admin_user.role = UserRole.ADMIN
+                if not admin_user.restaurant_id:
+                    admin_user.restaurant_id = first_restaurant.id
 
         await db.commit()
         print("\n🎉 Boshlang'ich ma'lumotlar muvaffaqiyatli yuklandi!")
         print("\n📋 Kirish ma'lumotlari:")
         print("   Developer: developer / dev123456")
-        print("   Admin:     admin / admin123")
+        print("   Admin:     maqsad / 01020307m")
         print("   Ofitsiant: ofitsiant1 / waiter123")
-        print("   Oshpaz:    oshpaz1 / chef123")
 
 
 if __name__ == "__main__":

@@ -743,8 +743,8 @@ async def send_to_kitchen(
 
     k1_title = getattr(settings, "kitchen1_title", "1-Oshxona (Qozon taomlari)") or "1-Oshxona (Qozon taomlari)"
     k2_title = getattr(settings, "kitchen2_title", "2-Oshxona (Baliq / Somsa)") or "2-Oshxona (Baliq / Somsa)"
-    k1_printer = getattr(settings, "printer_kitchen1_name", None) or "XP-Q80A"
-    k2_printer = getattr(settings, "printer_kitchen2_name", None) or "XP-Q80A"
+    k1_printer = getattr(settings, "printer_kitchen1_name", None) or "192.168.1.201"
+    k2_printer = getattr(settings, "printer_kitchen2_name", None) or "192.168.1.202"
     auto_print = getattr(settings, "auto_print_kitchen", True)
 
     generated_tickets = []
@@ -1068,7 +1068,7 @@ async def checkout_order(
 
     # Avtomatik 1-Printer (Mijoz kassa cheki) ga chop etish
     if getattr(settings, "auto_print_customer_bill", True):
-        cust_printer = getattr(settings, "printer_customer_name", None) or "XP-Q80A"
+        cust_printer = getattr(settings, "printer_customer_name", None) or "X-Q80A"
         try:
             print_to_windows_printer(bill_text, printer_name=cust_printer)
         except Exception:
