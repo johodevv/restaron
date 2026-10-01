@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Printer, X, Copy, Check, Zap, AlertCircle, CheckCircle } from 'lucide-react';
 import api from '../utils/api';
 
@@ -15,8 +16,39 @@ export const ThermalReceiptModal = ({
 
   if (!isOpen || !rawText) return null;
 
+  /**
+   * Chop etishdan oldin @page o'lchamini chekning HAQIQIY uzunligiga
+   * moslaydi.
+   *
+   * CSS da `size: 80mm auto` yozib bo'lmaydi — bu yaroqsiz qiymat va
+   * brauzer qoidani butunlay tashlab yuboradi (natijada chek A4 varaqqa
+   * kichkina bo'lib bosiladi). Shuning uchun balandlikni shu yerda
+   * o'lchab, aniq mm qiymat bilan beramiz. Shunda:
+   *   - chek aynan bitta "bet" bo'ladi,
+   *   - printer ortiqcha bo'sh qog'oz chiqarmaydi.
+   */
+  const applyPageSize = () => {
+    const el = document.getElementById('thermal-receipt-print-area');
+    if (!el) return;
+    const widthMm = paperWidth >= 80 ? 80 : 58;
+    // CSS px -> mm (brauzerda 1in = 96px)
+    const measuredMm = el.scrollHeight / 96 * 25.4;
+    // Pastdan ozgina bo'sh joy: printer chekni kesishi uchun
+    const heightMm = Math.max(40, Math.ceil(measuredMm) + 8);
+
+    let tag = document.getElementById('thermal-page-size');
+    if (!tag) {
+      tag = document.createElement('style');
+      tag.id = 'thermal-page-size';
+      document.head.appendChild(tag);
+    }
+    tag.textContent = `@media print { @page { size: ${widthMm}mm ${heightMm}mm; margin: 0; } }`;
+  };
+
   const handleBrowserPrint = () => {
-    window.print();
+    applyPageSize();
+    // Uslub qo'llanishi uchun bir kadr kutamiz
+    requestAnimationFrame(() => window.print());
   };
 
   const handleCopy = () => {
@@ -44,6 +76,7 @@ export const ThermalReceiptModal = ({
           success: true,
           message: "Brauzer orqali Xprinter'ga yuborilmoqda...",
         });
+        applyPageSize();
         setTimeout(() => window.print(), 300);
       }
     } catch (err) {
@@ -52,14 +85,31 @@ export const ThermalReceiptModal = ({
         success: true,
         message: "Brauzer orqali Xprinter'ga yuborilmoqda...",
       });
-      setTimeout(() => window.print(), 300);
+      applyPageSize();
+        setTimeout(() => window.print(), 300);
     } finally {
       setUsbPrinting(false);
       setTimeout(() => setUsbStatus(null), 3000);
     }
   };
 
+  const printRoot = typeof document !== 'undefined' ? document.getElementById('print-root') : null;
+
   return (
+    <>
+      {/* Chop etiladigan nusxa — #root dan tashqarida, shuning uchun
+          @media print da butun ilovani yashirib, faqat shuni chiqaramiz.
+          Bu ortiqcha bo'sh betlar muammosini hal qiladi. */}
+      {printRoot && createPortal(
+        <div
+          id="thermal-receipt-print-area"
+          className="receipt-print"
+          data-paper={paperWidth >= 80 ? '80' : '58'}
+        >
+          {rawText}
+        </div>,
+        printRoot
+      )}
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm p-4 animate-in fade-in duration-200">
       <div className="bg-slate-900 border border-slate-800 rounded-3xl max-w-md w-full max-h-[90vh] flex flex-col shadow-2xl overflow-hidden">
         {/* Header */}
@@ -102,7 +152,6 @@ export const ThermalReceiptModal = ({
         {/* Thermal Receipt Paper Preview */}
         <div className="p-4 overflow-y-auto flex-1 bg-slate-950/70 flex justify-center">
           <div
-            id="thermal-receipt-print-area"
             className="w-full bg-white text-black p-5 rounded shadow-lg font-mono text-[12px] leading-tight select-text whitespace-pre overflow-x-auto border-t-4 border-dashed border-slate-300"
             style={{ maxWidth: paperWidth >= 80 ? '340px' : '260px' }}
           >
@@ -144,6 +193,7 @@ export const ThermalReceiptModal = ({
         </div>
       </div>
     </div>
+    </>
   );
 };
 

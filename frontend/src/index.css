@@ -141,38 +141,93 @@
 }
 
 /* Print layout for receipts */
-@media print {
-  body * {
-    visibility: hidden;
-  }
-  #printable-bill, #printable-bill *,
-  #thermal-receipt-print-area, #thermal-receipt-print-area * {
-    visibility: visible;
-  }
-  #printable-bill,
-  #thermal-receipt-print-area {
-    position: absolute;
-    left: 0;
-    top: 0;
-    width: 80mm;
-    max-width: 100%;
-    color: #000000 !important;
-    background: #ffffff !important;
-    padding: 0;
-    margin: 0;
-    font-family: 'Courier New', Courier, monospace !important;
-    font-size: 13px !important;
-    line-height: 1.25 !important;
-  }
-  #printable-bill *,
-  #thermal-receipt-print-area * {
-    color: #000000 !important;
-    background: transparent !important;
-    border-color: #000000 !important;
-  }
-  @page {
-    size: 80mm auto;
-    margin: 0mm;
-  }
+/* ─── Chop etish (Xprinter termal chek) ─────────────────────────────
+   Ikkita jiddiy xato tuzatildi:
+
+   1) Ilgari `body * { visibility: hidden }` ishlatilgan edi. U elementni
+      faqat KO'RINMAS qiladi, joyi esa qoladi — shuning uchun printer
+      chekdan keyin yana bir nechta BO'SH BET chiqarardi. Endi chek
+      #print-root ichiga portal orqali chiqariladi va chop etishda butun
+      ilova (#root) display:none bilan olib tashlanadi.
+
+   2) `@page { size: 80mm auto }` — bu YAROQSIZ CSS (o'lchamlardan biri
+      `auto` bo'la olmaydi), shuning uchun brauzer butun qoidani tashlab
+      yuborardi va chek A4 varaqqa kichkina bo'lib bosilardi. Endi
+      balandlik chekning haqiqiy uzunligidan JS da hisoblanib,
+      `@page` ga aniq qiymat sifatida beriladi (ThermalReceiptModal).
+
+   O'lchamlar: 203 dpi ESC/POS printerda Font A kengligi 1.5mm.
+   80mm qog'oz -> 72mm bosiladigan maydon -> 48 belgi
+   58mm qog'oz -> 48mm bosiladigan maydon -> 32 belgi
+   Courier New da belgi kengligi 0.6em => 1.5mm / 0.6 = 2.5mm shrift.
+   ------------------------------------------------------------------ */
+
+/* Chek ekranda ko'rinmaydi, lekin RENDER qilinadi — balandligini
+   o'lchash uchun kerak (display:none bo'lsa scrollHeight = 0). */
+#print-root {
+  position: fixed;
+  left: -10000px;
+  top: 0;
+  opacity: 0;
+  pointer-events: none;
+  z-index: -1;
 }
 
+/* Bu uslublar ekranda ham, bosmada ham bir xil bo'lishi shart —
+   aks holda o'lchangan balandlik haqiqiydan farq qiladi. */
+.receipt-print {
+  display: block;
+  width: 72mm;
+  margin: 0;
+  padding: 0 0 4mm 0;
+  color: #000;
+  background: #fff;
+  font-family: 'Courier New', Courier, monospace;
+  font-size: 2.5mm;
+  line-height: 1.18;
+  font-weight: 700;          /* termal bosmada aniqroq chiqadi */
+  white-space: pre;
+  word-break: normal;
+  overflow: visible;
+}
+
+.receipt-print[data-paper='58'] {
+  width: 48mm;
+}
+
+@media print {
+  html,
+  body {
+    height: auto !important;
+    min-height: 0 !important;
+    max-height: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    overflow: visible !important;
+    background: #fff !important;
+  }
+
+  /* Butun ilovani chop etishdan chiqaramiz */
+  #root {
+    display: none !important;
+  }
+
+  #print-root {
+    position: static !important;
+    left: auto !important;
+    top: auto !important;
+    opacity: 1 !important;
+    z-index: auto !important;
+  }
+
+  .receipt-print {
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+
+  /* Zaxira qiymat — JS aniq balandlikni o'rnatmagan holat uchun */
+  @page {
+    size: 80mm 297mm;
+    margin: 0;
+  }
+}

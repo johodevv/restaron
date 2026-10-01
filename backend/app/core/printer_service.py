@@ -97,6 +97,21 @@ def clean_for_cp866(text: str) -> str:
     return t
 
 
+def receipt_columns(paper_width: int) -> int:
+    """
+    Termal printer uchun bir qatordagi belgilar soni.
+
+    203 dpi li ESC/POS printerlarda standart Font A kengligi 12 nuqta =
+    1.5 mm. Shunga ko'ra:
+      - 80mm qog'oz -> bosiladigan maydon ~72mm -> 72 / 1.5 = 48 belgi
+      - 58mm qog'oz -> bosiladigan maydon ~48mm -> 48 / 1.5 = 32 belgi
+
+    Ilgari 80mm uchun 42 qo'yilgan edi: chek qog'ozning faqat ~87% ini
+    egallab, tor va kichik bo'lib chiqardi.
+    """
+    return 48 if paper_width >= 80 else 32
+
+
 def format_kitchen_ticket(
     hall_name: Optional[str],
     room_name: Optional[str],
@@ -111,7 +126,7 @@ def format_kitchen_ticket(
     """
     Oshxona / Bar begunogi (Runner ticket) — To'liq Kirill alifbosida
     """
-    col_width = 42 if paper_width >= 80 else 32
+    col_width = receipt_columns(paper_width)
     sep = "-" * col_width
     dt = order_time or datetime.now()
     dt_str = dt.strftime("%d.%m.%Y | %H:%M")
@@ -177,7 +192,7 @@ def format_pre_check(
     """
     Mijoz hisob cheki (Pre-check / Bill) — To'liq Kirill alifbosida
     """
-    col_width = 42 if paper_width >= 80 else 32
+    col_width = receipt_columns(paper_width)
     sep = "-" * col_width
     double_sep = "=" * col_width
     dt = created_at or datetime.now()
@@ -266,7 +281,7 @@ def format_shift_report(
     """
     X-Report (oraliq hisobot) yoki Z-Report (kassani yopish) — To'liq Kirill alifbosida
     """
-    col_width = 42 if paper_width >= 80 else 32
+    col_width = receipt_columns(paper_width)
     sep = "-" * col_width
     double_sep = "=" * col_width
 

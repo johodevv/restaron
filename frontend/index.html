@@ -15,6 +15,10 @@
   </head>
   <body class="bg-theme-bg text-theme-text font-sans antialiased selection:bg-theme-primary selection:text-white">
     <div id="root"></div>
+    <!-- Chop etish uchun alohida ildiz: chek shu yerga portal orqali
+         chiqariladi. Shunda @media print da #root ni butunlay yashirib,
+         ortiqcha bo'sh betlar chiqishining oldi olinadi. -->
+    <div id="print-root"></div>
     <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>

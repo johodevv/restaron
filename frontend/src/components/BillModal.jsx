@@ -71,8 +71,42 @@ export const BillModal = ({
 
   if (!isOpen) return null;
 
+  // "Ekran / PDF" — oddiy A4 varaqqa chop etish.
+  // window.print() ishlatilmaydi, chunki asosiy hujjatning @page sozlamasi
+  // 80mm termal chek uchun. Shuning uchun hisobni alohida oynada,
+  // o'zining A4 uslubi bilan chop etamiz.
   const handlePrint = () => {
-    window.print();
+    const node = document.getElementById('printable-bill');
+    if (!node) return;
+    const win = window.open('', '_blank', 'width=820,height=900');
+    if (!win) {
+      alert("Chop etish oynasi ochilmadi. Brauzerda pop-up oynalarga ruxsat bering.");
+      return;
+    }
+    win.document.write(`<!doctype html><html lang="uz"><head><meta charset="utf-8">
+<title>Hisob — Stol #${bill?.table_number ?? ''}</title>
+<style>
+  @page { size: A4; margin: 14mm; }
+  * { box-sizing: border-box; }
+  body { font-family: Arial, Helvetica, sans-serif; color:#000; background:#fff;
+         margin:0; font-size:12pt; line-height:1.45; }
+  h1 { font-size:16pt; margin:0 0 10px; }
+  .row { display:flex; justify-content:space-between; gap:12px; padding:3px 0; }
+  .muted { color:#444; }
+  .total { font-size:14pt; font-weight:bold; border-top:2px solid #000;
+           margin-top:10px; padding-top:8px; }
+  svg { display:none; }
+</style></head><body>
+<h1>Hisob — Stol #${bill?.table_number ?? ''}</h1>
+${node.innerHTML}
+</body></html>`);
+    win.document.close();
+    win.focus();
+    // Kontent to'liq yuklangach chop etamiz
+    setTimeout(() => {
+      win.print();
+      win.close();
+    }, 350);
   };
 
   const handlePrintThermal = async () => {
