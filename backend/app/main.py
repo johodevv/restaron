@@ -109,7 +109,14 @@ if os.path.exists(frontend_dist) and os.path.exists(os.path.join(frontend_dist, 
 
     @app.get("/{full_path:path}", include_in_schema=False)
     async def serve_spa(full_path: str):
-        if full_path.startswith("api/") or full_path.startswith("uploads/") or full_path in ["health", "docs", "redoc", "openapi.json"]:
+        # Pass through all backend routes — only serve SPA for non-API paths
+        BACKEND_PREFIXES = (
+            "api/", "uploads/", "docs", "redoc", "openapi.json",
+            "health", "auth/", "users/", "stats/", "tables/",
+            "menu/", "orders/", "notifications/", "reviews/", "ws/",
+            "debts/", "receipts/",
+        )
+        if any(full_path.startswith(p) for p in BACKEND_PREFIXES) or full_path in ["health", "docs", "redoc", "openapi.json"]:
             raise HTTPException(status_code=404, detail="Not found")
         file_path = os.path.join(frontend_dist, full_path)
         if os.path.exists(file_path) and os.path.isfile(file_path):

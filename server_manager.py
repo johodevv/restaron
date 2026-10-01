@@ -1,4 +1,4 @@
-﻿"""
+"""
 RestAron Server Manager
 =======================
 Bu skript:
@@ -170,7 +170,7 @@ def start_server():
 
     cf_flags = 0
     if sys.platform == "win32":
-        cf_flags = subprocess.CREATE_NO_WINDOW
+        cf_flags = 0x08000000  # CREATE_NO_WINDOW
 
     uvicorn_proc = subprocess.Popen(
         uvicorn_cmd,
@@ -178,6 +178,7 @@ def start_server():
         env=env,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
+        stdin=subprocess.DEVNULL,
         creationflags=cf_flags,
     )
 
@@ -204,6 +205,9 @@ def start_server():
             "--no-autoupdate",
         ]
 
+        # cloudflared for URL capture — start with PIPE (not detached) first
+        # so we can read its stdout/stderr to find the tunnel URL.
+        # cloudflared will keep running independently; it doesn't die when we close PIPE.
         cf_proc = subprocess.Popen(
             cf_cmd,
             cwd=str(BASE_DIR),
@@ -212,7 +216,8 @@ def start_server():
             text=True,
             encoding="utf-8",
             errors="replace",
-            creationflags=cf_flags,
+            stdin=subprocess.DEVNULL,
+            creationflags=0x08000000,  # CREATE_NO_WINDOW only (no DETACHED so PIPE works)
         )
 
         cf_pid = cf_proc.pid

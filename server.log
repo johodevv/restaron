@@ -1,0 +1,52 @@
+[13:12:29] RestAron Server ishga tushmoqda...
+[13:12:29]   Backend: C:\Users\johodev\Desktop\restaron\backend
+[13:12:29]   Python:  C:\Users\johodev\Desktop\restaron\backend\.venv\Scripts\python.exe
+[13:12:29]   Lokal IP: 10.156.72.36
+[13:12:29] FastAPI serveri ishga tushmoqda (port 8000)...
+[13:12:29]   uvicorn PID: 13232
+[13:12:29]   Backend tayyor bolishi kutilmoqda...
+[13:12:32]   Backend tayyor: http://localhost:8000
+[13:12:32] Cloudflare Tunnel ishga tushmoqda...
+[13:12:32]   cloudflared PID: 20140
+[13:12:39]   Cloudflare URL: https://plastics-universities-naturals-spyware.trycloudflare.com
+[13:12:39] 
+[13:12:39] ============================================================
+[13:12:39] RestAron Server TAYYOR!
+[13:12:39] ============================================================
+[13:12:39]   Internet (4G/Wi-Fi):  https://plastics-universities-naturals-spyware.trycloudflare.com
+[13:12:39]   Lokal Wi-Fi:          http://10.156.72.36:8000
+[13:12:39]   Lokal:                http://localhost:8000
+[13:12:39] 
+[13:12:39]   Ofitsianlarga bering: https://plastics-universities-naturals-spyware.trycloudflare.com
+[13:12:39]   Admin panel: /login
+[13:12:39] ============================================================
+[13:12:39]   Serverni toxtatish: python server_manager.py stop
+[13:12:39] ============================================================
+[13:17:00] Server toxtatilmoqda...
+[13:17:00]   OK cloudflared (PID 20140) toxtatildi
+[13:17:00]   OK uvicorn (PID 13232) toxtatildi
+[13:17:00] Server toxtatildi.
+[13:17:55] RestAron Server ishga tushmoqda...
+[13:17:55]   Backend: C:\Users\johodev\Desktop\restaron\backend
+[13:17:55]   Python:  C:\Users\johodev\Desktop\restaron\backend\.venv\Scripts\python.exe
+[13:17:55]   Lokal IP: 10.156.72.36
+[13:17:55] FastAPI serveri ishga tushmoqda (port 8000)...
+[13:17:55]   uvicorn PID: 5428
+[13:17:55]   Backend tayyor bolishi kutilmoqda...
+[13:17:58]   Backend tayyor: http://localhost:8000
+[13:17:58] Cloudflare Tunnel ishga tushmoqda...
+[13:17:58]   cloudflared PID: 5892
+[13:18:05]   Cloudflare URL: https://reactions-flip-cases-toner.trycloudflare.com
+[13:18:05] 
+[13:18:05] ============================================================
+[13:18:05] RestAron Server TAYYOR!
+[13:18:05] ============================================================
+[13:18:05]   Internet (4G/Wi-Fi):  https://reactions-flip-cases-toner.trycloudflare.com
+[13:18:05]   Lokal Wi-Fi:          http://10.156.72.36:8000
+[13:18:05]   Lokal:                http://localhost:8000
+[13:18:05] 
+[13:18:05]   Ofitsianlarga bering: https://reactions-flip-cases-toner.trycloudflare.com
+[13:18:05]   Admin panel: /login
+[13:18:05] ============================================================
+[13:18:05]   Serverni toxtatish: python server_manager.py stop
+[13:18:05] ============================================================
