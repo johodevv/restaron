@@ -39,3 +39,6 @@ SERVER_ONLINE_URL.txt
 server_pids.json
 server_status.json
 server.log
+
+# Generated patch exports (git format-patch natijasi — tarixga kirmasligi kerak)
+*.patch
