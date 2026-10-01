@@ -176,14 +176,14 @@ export const CustomerMenu = ({
                 <button
                   key={cat.id}
                   onClick={() => setSelectedCatId(cat.id)}
-                  className={`flex items-center gap-2 px-4 py-2.5 rounded-2xl text-xs font-bold shrink-0 transition-all ${
+                  className={`flex items-center gap-2 px-4 py-2.5 rounded-2xl text-sm font-bold shrink-0 transition-all ${
                     active
                       ? 'bg-amber-500 text-slate-950 shadow-lg shadow-amber-500/25 scale-105'
                       : 'bg-slate-900 hover:bg-slate-850 text-slate-300 border border-slate-800'
                   }`}
                 >
-                  <span className="text-sm">{cat.icon || '🍽️'}</span>
-                  <span>{getLocalizedName(cat)}</span>
+                  <span className="text-base">{cat.icon || '🍽️'}</span>
+                  <span className="text-sm">{getLocalizedName(cat)}</span>
                   {cat.items && (
                     <span
                       className={`text-[10px] px-1.5 py-0.5 rounded-full ${
@@ -269,11 +269,11 @@ export const CustomerMenu = ({
 
                     {/* Content */}
                     <div className="p-4 sm:p-5">
-                      <h3 className="font-bold text-white text-base leading-snug group-hover:text-amber-400 transition-colors">
+                      <h3 className="font-bold text-white text-lg leading-snug group-hover:text-amber-400 transition-colors">
                         {getLocalizedName(item)}
                       </h3>
                       {item.description && (
-                        <p className="text-xs text-slate-400 line-clamp-2 mt-1.5 leading-relaxed">
+                        <p className="text-sm text-slate-400 line-clamp-2 mt-1.5 leading-relaxed">
                           {getLocalizedDesc(item)}
                         </p>
                       )}
@@ -283,8 +283,8 @@ export const CustomerMenu = ({
                   {/* Price Bar */}
                   <div className="p-4 pt-0 sm:p-5 sm:pt-0 flex items-center justify-between border-t border-slate-800/60 mt-3 pt-3">
                     <div>
-                      <span className="text-[11px] text-slate-400 block font-medium">Narxi:</span>
-                      <span className="text-base sm:text-lg font-black text-emerald-400">
+                      <span className="text-xs text-slate-400 block font-medium">Narxi:</span>
+                      <span className="text-lg sm:text-xl font-black text-emerald-400">
                         {item.price.toLocaleString('uz-UZ')} so'm
                       </span>
                     </div>
@@ -295,7 +295,7 @@ export const CustomerMenu = ({
                         e.stopPropagation();
                         setActiveItemDetail(item);
                       }}
-                      className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold border border-slate-700 transition-colors"
+                      className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-sm font-semibold border border-slate-700 transition-colors"
                     >
                       Batafsil
                     </button>
