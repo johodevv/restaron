@@ -148,10 +148,16 @@ export const AdminDashboard = () => {
 
       if (lanData) {
         setLanInfo(lanData);
-        const savedUrl = localStorage.getItem('restaron_qr_base_url');
-        if (!savedUrl && lanData.suggested_frontend_url && window.location.hostname === 'localhost') {
-          setQrBaseUrl(lanData.suggested_frontend_url);
-          localStorage.setItem('restaron_qr_base_url', lanData.suggested_frontend_url);
+        // If Cloudflare tunnel is active, always use the public URL for QR codes
+        if (lanData.public_url && lanData.mode === 'internet') {
+          setQrBaseUrl(lanData.public_url);
+          localStorage.setItem('restaron_qr_base_url', lanData.public_url);
+        } else {
+          const savedUrl = localStorage.getItem('restaron_qr_base_url');
+          if (!savedUrl && lanData.suggested_frontend_url) {
+            setQrBaseUrl(lanData.suggested_frontend_url);
+            localStorage.setItem('restaron_qr_base_url', lanData.suggested_frontend_url);
+          }
         }
       }
     } catch (e) {
@@ -614,7 +620,53 @@ export const AdminDashboard = () => {
         </button>
       </div>
 
-      {/* Real-time Kitchen Print Alert Toast */}
+      {/* Internet URL Status Banner */}
+      {lanInfo && (
+        <div className={`p-3.5 rounded-2xl border flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs font-semibold shadow-lg ${
+          lanInfo.mode === 'internet'
+            ? 'bg-emerald-500/10 border-emerald-500/40 text-emerald-300'
+            : 'bg-blue-500/10 border-blue-500/30 text-blue-300'
+        }`}>
+          <div className="flex items-center gap-2.5">
+            <div className={`w-2 h-2 rounded-full animate-pulse ${lanInfo.mode === 'internet' ? 'bg-emerald-400' : 'bg-blue-400'}`} />
+            {lanInfo.mode === 'internet' ? (
+              <span>
+                🌐 <strong>Internet (4G/Wi-Fi) rejimi aktiv</strong> — Har qanday joydan kirish mumkin
+              </span>
+            ) : (
+              <span>
+                📡 <strong>Lokal Wi-Fi rejimi</strong> — Faqat bir xil tarmoqda ishlaydi
+              </span>
+            )}
+          </div>
+          <div className="flex items-center gap-2 flex-wrap">
+            <code className="px-2.5 py-1 rounded-lg bg-black/40 font-mono text-white text-[11px] break-all">
+              {lanInfo.public_url || lanInfo.local_url || qrBaseUrl}
+            </code>
+            <button
+              onClick={() => {
+                const urlToCopy = lanInfo.public_url || lanInfo.local_url || qrBaseUrl;
+                navigator.clipboard.writeText(urlToCopy);
+                alert('URL nusxalandi! Ofitsianlarga yuboring.');
+              }}
+              className={`px-3 py-1.5 rounded-xl font-bold whitespace-nowrap transition-all active:scale-95 ${
+                lanInfo.mode === 'internet'
+                  ? 'bg-emerald-500 hover:bg-emerald-400 text-black'
+                  : 'bg-blue-500 hover:bg-blue-400 text-white'
+              }`}
+            >
+              📋 Nusxalash
+            </button>
+            {lanInfo.mode !== 'internet' && (
+              <span className="text-amber-400 text-[10px]">
+                ⚠ Internet uchun RESTARON_ISHGA_TUSHIR.bat ni ishga tushiring
+              </span>
+            )}
+          </div>
+        </div>
+      )}
+
+
       {activePrintAlert && (
         <div className="p-4 rounded-3xl bg-gradient-to-r from-amber-500/20 via-orange-500/20 to-amber-500/20 border-2 border-amber-500/50 shadow-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 animate-fade-in">
           <div className="flex items-center gap-3">
@@ -1138,21 +1190,30 @@ export const AdminDashboard = () => {
                   {qrBaseUrl}
                 </span>
 
+                {lanInfo?.public_url && qrBaseUrl !== lanInfo.public_url && (
+                  <button
+                    onClick={() => handleResetToAutoIp(lanInfo.public_url)}
+                    className="text-[11px] text-emerald-400 underline font-semibold ml-2"
+                  >
+                    🌐 Internet URL ga o'rnatish ({lanInfo.public_url.replace('https://', '').substring(0, 30)}...)
+                  </button>
+                )}
+
+                {lanInfo?.local_url && qrBaseUrl !== lanInfo.local_url && (
+                  <button
+                    onClick={() => handleResetToAutoIp(lanInfo.local_url)}
+                    className="text-[11px] text-blue-400 underline font-semibold ml-2"
+                  >
+                    📡 Lokal IP ga o'rnatish ({lanInfo.local_url})
+                  </button>
+                )}
+
                 {qrBaseUrl !== window.location.origin && (
                   <button
                     onClick={() => handleResetToAutoIp(window.location.origin)}
                     className="text-[11px] text-amber-400 underline font-semibold ml-2"
                   >
-                    🌐 Vercel/Web domeniga o'rnatish ({window.location.origin})
-                  </button>
-                )}
-
-                {lanInfo?.suggested_frontend_url && qrBaseUrl !== lanInfo.suggested_frontend_url && window.location.hostname === 'localhost' && (
-                  <button
-                    onClick={() => handleResetToAutoIp(lanInfo.suggested_frontend_url)}
-                    className="text-[11px] text-theme-primary underline ml-2"
-                  >
-                    Lokal Wi-Fi IP ga o'rnatish ({lanInfo.suggested_frontend_url})
+                    🖥 Hozirgi manzilga o'rnatish ({window.location.origin})
                   </button>
                 )}
               </div>

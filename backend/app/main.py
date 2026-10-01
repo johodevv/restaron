@@ -103,6 +103,10 @@ if os.path.exists(frontend_dist) and os.path.exists(os.path.join(frontend_dist, 
     if os.path.exists(assets_dir):
         app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
 
+    @app.get("/", include_in_schema=False)
+    async def serve_spa_root():
+        return FileResponse(os.path.join(frontend_dist, "index.html"))
+
     @app.get("/{full_path:path}", include_in_schema=False)
     async def serve_spa(full_path: str):
         if full_path.startswith("api/") or full_path.startswith("uploads/") or full_path in ["health", "docs", "redoc", "openapi.json"]:

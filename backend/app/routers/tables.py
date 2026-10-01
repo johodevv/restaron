@@ -1,5 +1,5 @@
-"""
-Stollar API — QR kod generatsiya bilan
+﻿"""
+Stollar API â€” QR kod generatsiya bilan
 """
 import os
 import uuid
@@ -27,7 +27,28 @@ from app.schemas.table import TableCreate, TableUpdate, TableResponse, TablePubl
 from app.schemas.order import TableBillResponse, BillItemSummary
 from app.websockets.manager import manager
 
-router = APIRouter(prefix="/tables", tags=["🪑 Stollar"])
+router = APIRouter(prefix="/tables", tags=["ðŸª‘ Stollar"])
+
+
+def get_qr_base_url() -> str:
+    """QR uchun ishlatilgan base URL ni aniqlash.
+    SERVER_ONLINE_URL.txt mavjud bo'lsa (Cloudflare tunnel aktiv), uni ishlatadi.
+    Aks holda settings.QR_BASE_URL ni ishlatadi."""
+    # SERVER_ONLINE_URL.txt ni 3 ta mumkin yo'ldan qidirish
+    possible_paths = [
+        os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "SERVER_ONLINE_URL.txt")),
+        os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "SERVER_ONLINE_URL.txt")),
+        os.path.abspath("SERVER_ONLINE_URL.txt"),
+    ]
+    for p in possible_paths:
+        if os.path.exists(p):
+            try:
+                val = open(p, "r", encoding="utf-8").read().strip()
+                if val.startswith("http"):
+                    return val.rstrip("/")
+            except Exception:
+                pass
+    return settings.QR_BASE_URL.rstrip("/")
 
 
 def generate_qr_image(url: str, token: str) -> str:
@@ -77,7 +98,7 @@ async def create_table(
         )
 
     qr_token = str(uuid.uuid4())
-    qr_url = f"{settings.QR_BASE_URL}/?table={qr_token}"
+    qr_url = f"{get_qr_base_url()}/?table={qr_token}"
     qr_image_url = generate_qr_image(qr_url, qr_token)
 
     table = Table(
@@ -159,7 +180,7 @@ async def scan_qr(qr_token: str, db: AsyncSession = Depends(get_db)):
                 "table_number": table.number,
                 "room": table.room,
                 "pin": table.current_pin,
-                "message": f"🔔 Stol #{table.number} ga yangi mijoz keldi! Tasdiqlash kodi: {table.current_pin}",
+                "message": f"ðŸ”” Stol #{table.number} ga yangi mijoz keldi! Tasdiqlash kodi: {table.current_pin}",
             },
         )
         await manager.broadcast_to_roles(
@@ -471,7 +492,7 @@ async def print_table_bill(
         if ord.waiter:
             waiter_names.add(ord.waiter.full_name or ord.waiter.username)
         for it in ord.items:
-            dish_name = getattr(it.menu_item, "name_cyrillic", None) or (it.menu_item.name if it.menu_item else "Таом")
+            dish_name = getattr(it.menu_item, "name_cyrillic", None) or (it.menu_item.name if it.menu_item else "Ð¢Ð°Ð¾Ð¼")
             items_for_receipt.append({
                 "name": dish_name,
                 "quantity": it.quantity,
@@ -501,7 +522,7 @@ async def print_table_bill(
         discount=0.0,
         total=grand_total,
         receipt_note=target_orders[0].receipt_note if target_orders else None,
-        footer_text=settings.receipt_footer if settings else "Ташрифингиз учун раҳмат! Яна келинг!",
+        footer_text=settings.receipt_footer if settings else "Ð¢Ð°ÑˆÑ€Ð¸Ñ„Ð¸Ð½Ð³Ð¸Ð· ÑƒÑ‡ÑƒÐ½ Ñ€Ð°Ò³Ð¼Ð°Ñ‚! Ð¯Ð½Ð° ÐºÐµÐ»Ð¸Ð½Ð³!",
         wifi_pass=settings.receipt_wifi_pass if settings else None,
         paper_width=paper_width,
     )
@@ -655,7 +676,7 @@ async def regenerate_qr(
         raise HTTPException(status_code=404, detail="Stol topilmadi")
 
     qr_token = str(uuid.uuid4())
-    qr_url = f"{settings.QR_BASE_URL}/?table={qr_token}"
+    qr_url = f"{get_qr_base_url()}/?table={qr_token}"
     qr_image_url = generate_qr_image(qr_url, qr_token)
 
     table.qr_token = qr_token
@@ -677,4 +698,5 @@ async def delete_table(
     if not table:
         raise HTTPException(status_code=404, detail="Stol topilmadi")
     await db.delete(table)
+
 

@@ -18,7 +18,28 @@ router = APIRouter(prefix="/stats", tags=["📊 Statistika"])
 
 @router.get("/lan-info", summary="Server tarmog'i IP manzillari")
 async def get_lan_info():
-    """QR kodlar telefon orqali ochilishi uchun serverning lokal IP manzillarini aniqlash"""
+    """QR kodlar telefon orqali ochilishi uchun serverning lokal va internet manzillarini aniqlash"""
+    # 1. Server public (Cloudflare tunnel) manzilini tekshirish
+    public_url = None
+    possible_paths = [
+        os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "SERVER_ONLINE_URL.txt")),
+        os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "SERVER_ONLINE_URL.txt")),
+        os.path.abspath("SERVER_ONLINE_URL.txt"),
+    ]
+    for p in possible_paths:
+        if os.path.exists(p):
+            try:
+                with open(p, "r", encoding="utf-8") as f:
+                    val = f.read().strip()
+                    if val.startswith("http"):
+                        public_url = val
+                        break
+            except Exception:
+                pass
+
+    if not public_url and os.environ.get("PUBLIC_SERVER_URL"):
+        public_url = os.environ["PUBLIC_SERVER_URL"].strip()
+
     ips = []
     try:
         hostname = socket.gethostname()
@@ -39,11 +60,17 @@ async def get_lan_info():
         pass
 
     primary = ips[0] if ips else "localhost"
+    local_url = f"http://{primary}:8000" if primary != "localhost" else "http://localhost:8000"
+    suggested = public_url if public_url else local_url
+
     return {
         "primary_ip": primary,
         "available_ips": ips,
-        "suggested_frontend_url": f"http://{primary}:5173" if primary != "localhost" else "http://localhost:5173",
-        "suggested_backend_url": f"http://{primary}:8000" if primary != "localhost" else "http://localhost:8000",
+        "public_url": public_url,
+        "local_url": local_url,
+        "suggested_frontend_url": suggested,
+        "suggested_backend_url": suggested,
+        "mode": "internet" if public_url else "local_wifi",
     }
 
 
