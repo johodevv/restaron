@@ -131,13 +131,26 @@ Qog'oz eni: **80mm** (Sozlamalar bo'limida o'zgartirish mumkin).
 
 ---
 
-## Internetdan kirish (ixtiyoriy)
+## Internetdan kirish
 
-Ofitsiant 4G orqali ham kirishi uchun **`RESTARON_ISHGA_TUSHIR.bat`**
-ishlatiladi — u Cloudflare Tunnel orqali `https://...trycloudflare.com`
-manzilini beradi va QR kodlar avtomatik shu manzilga moslashadi.
+**Alohida hech narsa qilish shart emas.** `2_SERVERNI_ORNATISH.bat` o'rnatgan
+xizmat ikkala rejimda ham ishlaydi:
+
+| Rejim | Manzil | Qachon |
+|---|---|---|
+| Lokal Wi-Fi | `http://<IP>:8000` | Darhol |
+| Internet (4G, uzoqdan) | `https://...trycloudflare.com` | 1-2 daqiqada |
+
+Server ishga tushgach Cloudflare Tunnel avtomatik ko'tariladi va internet
+manzili **`SERVER_ONLINE_URL.txt`** fayliga yoziladi.
 
 Manzilni ko'rish: **`RESTARON_URL_KOR.bat`**
+
+QR kodlar shu manzilga avtomatik moslashadi — ya'ni mijoz stoldagi QR ni
+skanerlasa, internetdan ham, Wi-Fi'dan ham menyu ochiladi.
+
+Tunnel uzilib qolsa, tizim o'zi qayta ulanadi va yangi manzilni faylga
+yozadi. Internet bo'lmasa ham lokal Wi-Fi rejimi ishlashda davom etadi.
 
 > Bepul tunnel manzili har safar qayta ishga tushganda **o'zgaradi**.
 > Stollardagi QR kodlar doimiy bo'lishi kerak bo'lsa, o'z domeningiz bilan

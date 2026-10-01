@@ -113,6 +113,11 @@ echo.
 echo    Ofitsiant telefonlari (bir xil Wi-Fi):
 echo      http://!LOCAL_IP!:8000
 echo.
+echo    Internet orqali (4G, boshqa joydan):
+echo      Manzil 1-2 daqiqada tayyor bo'ladi va
+echo      SERVER_ONLINE_URL.txt fayliga yoziladi.
+echo      Ko'rish uchun: RESTARON_URL_KOR.bat
+echo.
 echo    Admin login:  maqsad
 echo    Admin parol:  01020307m
 echo.

@@ -365,6 +365,63 @@ def show_url():
 
 
 
+
+def _tunnel_supervisor(stop_event):
+    """
+    Cloudflare Tunnel ni fonda ushlab turadi (alohida oqimda).
+
+    Tunnel ishga tushgach internet manzilini SERVER_ONLINE_URL.txt ga
+    yozadi. Tunnel uzilsa qayta ko'taradi va YANGI manzilni qayta yozadi
+    (bepul trycloudflare manzili har safar o'zgaradi).
+    """
+    if not CLOUDFLARED_EXE.exists():
+        log("  cloudflared.exe topilmadi - faqat lokal Wi-Fi rejimi")
+        return
+
+    url_pattern = re.compile(r"https://[a-z0-9\-]+\.trycloudflare\.com")
+    flags = 0x08000000 if sys.platform == "win32" else 0
+
+    while not stop_event.is_set():
+        try:
+            cf = subprocess.Popen(
+                [str(CLOUDFLARED_EXE), "tunnel", "--url",
+                 f"http://localhost:{PORT}", "--no-autoupdate"],
+                cwd=str(BASE_DIR),
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                stdin=subprocess.DEVNULL, text=True,
+                encoding="utf-8", errors="replace",
+                creationflags=flags,
+            )
+        except Exception as e:
+            log(f"  Tunnel ishga tushmadi: {e}")
+            time.sleep(20)
+            continue
+
+        log(f"  cloudflared PID {cf.pid} - internet manzili kutilmoqda...")
+        found = False
+        try:
+            for line in cf.stdout:
+                if stop_event.is_set():
+                    break
+                m = url_pattern.search(line or "")
+                if m and not found:
+                    found = True
+                    url = m.group(0)
+                    try:
+                        URL_FILE.write_text(url, encoding="utf-8")
+                    except Exception:
+                        pass
+                    log(f"  INTERNET MANZILI: {url}")
+        except Exception:
+            pass
+
+        cf.wait()
+        if stop_event.is_set():
+            break
+        log("  Tunnel uzildi, 10 sekunddan keyin qayta ulanadi...")
+        time.sleep(10)
+
+
 def serve_forever():
     """
     Nazoratchi rejim (Windows Scheduled Task shu rejimda ishga tushiradi).
@@ -388,6 +445,17 @@ def serve_forever():
         str(VENV_PYTHON), "-m", "uvicorn", "app.main:app",
         "--host", "0.0.0.0", "--port", str(PORT), "--no-access-log",
     ]
+
+    # Internet orqali kirish uchun Cloudflare Tunnel ni ham fonda ushlaymiz.
+    # Shunday qilib avtomatik ishga tushadigan xizmat ham lokal Wi-Fi'da,
+    # ham internetda (4G) ishlaydi.
+    stop_event = threading.Event()
+    local_ip = get_local_ip()
+    try:
+        URL_FILE.write_text(f"http://{local_ip}:{PORT}", encoding="utf-8")
+    except Exception:
+        pass
+    threading.Thread(target=_tunnel_supervisor, args=(stop_event,), daemon=True).start()
 
     flags = 0x08000000 if sys.platform == "win32" else 0  # CREATE_NO_WINDOW
     restarts = 0
