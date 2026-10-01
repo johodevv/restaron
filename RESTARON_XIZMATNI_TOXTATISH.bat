@@ -36,6 +36,6 @@ echo  Xizmat to'xtatildi va avtomatik ishga tushish o'chirildi.
 echo.
 echo  Ma'lumotlar saqlanib qoldi: backend\restaron.db
 echo.
-echo  Qayta yoqish uchun: RESTARON_WINDOWS_ORNATISH.bat
+echo  Qayta yoqish uchun: 2_SERVERNI_ORNATISH.bat
 echo.
 pause
