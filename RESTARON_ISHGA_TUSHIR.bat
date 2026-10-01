@@ -1,5 +1,8 @@
 ﻿@echo off
 chcp 65001 >nul
+REM Delayed expansion: `set /p` bilan o'qilgan qiymat `if (...)` bloki
+REM ichida %VAR% orqali ko'rinmaydi, shuning uchun !VAR! ishlatiladi.
+setlocal enabledelayedexpansion
 title RestAron - Server Ishga Tushmoqda...
 color 0A
 
@@ -46,7 +49,7 @@ if exist "%~dp0SERVER_ONLINE_URL.txt" (
     echo  ================================================================
     echo.
     echo    Internet URL (4G/Wi-Fi):
-    echo    %SERVER_URL%
+    echo    !SERVER_URL!
     echo.
     echo    Lokal:  http://localhost:8000
     echo.

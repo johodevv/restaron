@@ -1,5 +1,8 @@
 ﻿@echo off
 chcp 65001 >nul
+REM Delayed expansion: pastdagi `if exist (...)` bloki ichida
+REM `set /p` natijasi %URL% orqali ko'rinmaydi — !URL! kerak.
+setlocal enabledelayedexpansion
 title RestAron - Internet URL
 
 cd /d "%~dp0"
@@ -10,7 +13,7 @@ if exist "SERVER_ONLINE_URL.txt" (
     echo  ================================================
     echo  RestAron Internet URL (Ofitsianlarga bering):
     echo.
-    echo    %URL%
+    echo    !URL!
     echo.
     echo  QR kod uchun admin panelga kiring: /login
     echo  ================================================
