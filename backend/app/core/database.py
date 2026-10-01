@@ -74,6 +74,7 @@ def _sync_sqlite_migrations(sync_conn):
             ("auto_print_kitchen", "BOOLEAN DEFAULT 1"),
             ("auto_print_customer_bill", "BOOLEAN DEFAULT 1"),
             ("direct_qr_access", "BOOLEAN DEFAULT 1"),
+            ("enable_chef_kds", "BOOLEAN DEFAULT 0"),
         ],
         "categories": [
             ("name_cyrillic", "VARCHAR(100)"),

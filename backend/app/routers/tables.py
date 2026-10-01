@@ -20,7 +20,9 @@ from app.core.config import settings
 from app.models.table import Table, TableStatus
 from app.models.user import User, UserRole
 from app.models.order import Order, OrderItem, OrderStatus, CallStatus
-from app.models.restaurant import Restaurant
+from app.models.restaurant import Restaurant, RestaurantSettings
+from app.models.receipt import ReceiptArchive
+from app.core.printer_service import format_pre_check, print_to_windows_printer
 from app.schemas.table import TableCreate, TableUpdate, TableResponse, TablePublic
 from app.schemas.order import TableBillResponse, BillItemSummary
 from app.websockets.manager import manager
@@ -413,6 +415,126 @@ async def checkout_table(
     )
 
     return TableResponse.model_validate(table)
+
+
+@router.post("/{table_id}/print-bill", summary="Stol hisob chekini Printer 1 ga chop etish (Kassa / Mijoz)")
+async def print_table_bill(
+    table_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role("waiter", "admin", "developer")),
+):
+    """Admin yoki ofitsiant stol hisob chekini (1-Printer: Mijoz cheki) to'g'ridan-to'g'ri chop etadi"""
+    result = await db.execute(
+        select(Table)
+        .options(selectinload(Table.restaurant))
+        .where(Table.id == table_id)
+    )
+    table = result.scalar_one_or_none()
+    if not table:
+        raise HTTPException(status_code=404, detail="Stol topilmadi")
+
+    # Sozlamalarni olish
+    s_res = await db.execute(
+        select(RestaurantSettings).where(RestaurantSettings.restaurant_id == table.restaurant_id)
+    )
+    settings = s_res.scalar_one_or_none()
+    cust_printer = getattr(settings, "printer_customer_name", None) or "XP-Q80A"
+    paper_width = getattr(settings, "printer_paper_width", 80) or 80
+
+    # Buyurtmalarni olish
+    orders_res = await db.execute(
+        select(Order)
+        .options(
+            selectinload(Order.items).selectinload(OrderItem.menu_item),
+            selectinload(Order.waiter),
+        )
+        .where(
+            Order.table_id == table.id,
+            Order.status != OrderStatus.CANCELLED,
+        )
+        .order_by(Order.created_at.desc())
+    )
+    orders = orders_res.scalars().all()
+    if not orders:
+        raise HTTPException(status_code=400, detail="Ushbu stolda hali buyurtma yo'q")
+
+    active_orders = [o for o in orders if not o.is_paid]
+    target_orders = active_orders if active_orders else [orders[0]]
+
+    items_for_receipt = []
+    subtotal = 0.0
+    waiter_names = set()
+    order_nums = []
+
+    for ord in target_orders:
+        order_nums.append(ord.order_number)
+        if ord.waiter:
+            waiter_names.add(ord.waiter.full_name or ord.waiter.username)
+        for it in ord.items:
+            dish_name = getattr(it.menu_item, "name_cyrillic", None) or (it.menu_item.name if it.menu_item else "Таом")
+            items_for_receipt.append({
+                "name": dish_name,
+                "quantity": it.quantity,
+                "unit_price": it.unit_price,
+                "total_price": it.total_price,
+            })
+            subtotal += it.total_price
+
+    fee_pct = getattr(settings, "service_fee_percent", 12.0) or 12.0
+    fee_amount = round(subtotal * (fee_pct / 100.0), 2)
+    grand_total = subtotal + fee_amount
+    rest_name = settings.receipt_header if (settings and settings.receipt_header) else (table.restaurant.name if table.restaurant else "RestAron")
+    table_disp = f"{table.room or 'Zal'} N#{table.number}".strip()
+    waiter_disp = ", ".join(waiter_names) if waiter_names else (current_user.full_name or current_user.username)
+
+    bill_text = format_pre_check(
+        restaurant_name=rest_name,
+        address=settings.receipt_address if settings else None,
+        phone=settings.receipt_phone if settings else None,
+        table_name=table_disp,
+        waiter_name=waiter_disp,
+        order_number=", ".join(order_nums),
+        items=items_for_receipt,
+        subtotal=subtotal,
+        service_fee_percent=fee_pct,
+        service_fee_amount=fee_amount,
+        discount=0.0,
+        total=grand_total,
+        receipt_note=target_orders[0].receipt_note if target_orders else None,
+        footer_text=settings.receipt_footer if settings else "Ташрифингиз учун раҳмат! Яна келинг!",
+        wifi_pass=settings.receipt_wifi_pass if settings else None,
+        paper_width=paper_width,
+    )
+
+    # 1-Printer (USB yoki LAN IP) ga chop etish
+    p_res = print_to_windows_printer(bill_text, printer_name=cust_printer)
+
+    archive = ReceiptArchive(
+        restaurant_id=table.restaurant_id,
+        order_id=target_orders[0].id if target_orders else None,
+        receipt_number=f"BILL-{table.number}-{order_nums[0] if order_nums else '0'}",
+        receipt_type="pre_check",
+        hall_name=table.room,
+        table_name=table_disp,
+        waiter_name=waiter_disp,
+        subtotal=subtotal,
+        service_fee_percent=fee_pct,
+        service_fee_amount=fee_amount,
+        total_amount=grand_total,
+        payment_method="pre_check",
+        items_json=items_for_receipt,
+        raw_text=bill_text,
+    )
+    db.add(archive)
+    await db.commit()
+
+    return {
+        "success": p_res.get("success", False),
+        "printer_name": cust_printer,
+        "message": f"Chek {cust_printer} printeriga yuborildi",
+        "raw_text": bill_text,
+        "total": grand_total,
+    }
 
 
 @router.get("/{table_id}", response_model=TableResponse, summary="Stol ma'lumoti")

@@ -104,6 +104,7 @@ class RestaurantSettings(Base):
     auto_print_kitchen = Column(Boolean, default=True)            # Ofitsiant yuborganda avtomatik printerga chiqarish
     auto_print_customer_bill = Column(Boolean, default=True)      # Hisob yopilganda mijoz chekini avtomatik chiqarish
     direct_qr_access = Column(Boolean, default=True)              # QR kod skanerlanganda ruxsatsiz to'g'ridan-to'g'ri menyuga kirish
+    enable_chef_kds = Column(Boolean, default=False)              # Oshpaz KDS ekrani (planshet) yoqilganmi (o'chirilsa faqat printer ishlaydi)
 
     # Til sozlamasi
     language = Column(String(10), default="uz")

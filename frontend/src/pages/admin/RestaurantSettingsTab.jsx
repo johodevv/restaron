@@ -25,8 +25,30 @@ import {
   UtensilsCrossed,
   Flame,
   Receipt,
-  Search
+  Search,
+  Eye,
+  Sparkles,
+  CheckCircle2
 } from 'lucide-react';
+
+const toCyrillicJS = (str) => {
+  if (!str) return '';
+  let s = String(str);
+  const multi = [
+    [/sh/gi, 'ш'], [/ch/gi, 'ч'], [/yo/gi, 'ё'], [/yu/gi, 'ю'], [/ya/gi, 'я'], [/ye/gi, 'е'],
+    [/o['‘`’]/gi, 'ў'], [/g['‘`’]/gi, 'ғ']
+  ];
+  multi.forEach(([re, cyr]) => { s = s.replace(re, cyr); });
+  const map = {
+    a: 'а', b: 'б', d: 'д', e: 'е', f: 'ф', g: 'г', h: 'ҳ', i: 'и', j: 'ж',
+    k: 'к', l: 'л', m: 'м', n: 'н', o: 'о', p: 'п', q: 'қ', r: 'р', s: 'с',
+    t: 'т', u: 'у', v: 'в', x: 'х', y: 'й', z: 'з',
+    A: 'А', B: 'Б', D: 'Д', E: 'Е', F: 'Ф', G: 'Г', H: 'Ҳ', I: 'И', J: 'Ж',
+    K: 'К', L: 'Л', M: 'М', N: 'Н', O: 'О', P: 'П', Q: 'Қ', R: 'Р', S: 'С',
+    T: 'Т', U: 'У', V: 'В', X: 'Х', Y: 'Й', Z: 'З'
+  };
+  return s.split('').map(c => map[c] || c).join('');
+};
 
 const Toggle = ({ checked, onChange, label, description, icon: Icon, color = 'theme-primary' }) => (
   <div className="flex items-center justify-between p-4 rounded-2xl bg-black/30 border border-theme-border/70 gap-4">
@@ -75,6 +97,8 @@ export const RestaurantSettingsTab = ({ restaurantId }) => {
   const [receiptAddress, setReceiptAddress] = useState('');
   const [receiptPhone, setReceiptPhone] = useState('');
   const [receiptWifiPass, setReceiptWifiPass] = useState('');
+  const [previewTab, setPreviewTab] = useState('bill'); // 'bill' | 'k1' | 'k2'
+  const [receiptCyrillic, setReceiptCyrillic] = useState(true);
 
   // Feature toggles
   const [allowOrdersFromQr, setAllowOrdersFromQr] = useState(false);
@@ -91,6 +115,7 @@ export const RestaurantSettingsTab = ({ restaurantId }) => {
   const [autoPrintKitchen, setAutoPrintKitchen] = useState(true);
   const [autoPrintCustomerBill, setAutoPrintCustomerBill] = useState(true);
   const [directQrAccess, setDirectQrAccess] = useState(true);
+  const [enableChefKds, setEnableChefKds] = useState(false);
 
   // Printer detection and test states
   const [detectedPrinters, setDetectedPrinters] = useState([]);
@@ -184,6 +209,7 @@ export const RestaurantSettingsTab = ({ restaurantId }) => {
         setAutoPrintKitchen(s.auto_print_kitchen ?? true);
         setAutoPrintCustomerBill(s.auto_print_customer_bill ?? true);
         setDirectQrAccess(s.direct_qr_access ?? true);
+        setEnableChefKds(s.enable_chef_kds ?? false);
       }
     } catch (err) {
       console.error('Error fetching settings:', err);
@@ -236,6 +262,7 @@ export const RestaurantSettingsTab = ({ restaurantId }) => {
         auto_print_kitchen: autoPrintKitchen,
         auto_print_customer_bill: autoPrintCustomerBill,
         direct_qr_access: directQrAccess,
+        enable_chef_kds: enableChefKds,
       });
 
       setSavedOk(true);
@@ -450,57 +477,312 @@ export const RestaurantSettingsTab = ({ restaurantId }) => {
           </div>
         </div>
 
-        {/* Chek Shabloni */}
-        <div className="pt-4 border-t border-theme-border/50 grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <div>
-            <label className="block text-[11px] font-semibold text-theme-muted mb-1">Chek Sarlavhasi (Header):</label>
-            <input
-              type="text"
-              placeholder="Masalan: Ali Restoran"
-              value={receiptHeader}
-              onChange={(e) => setReceiptHeader(e.target.value)}
-              className="w-full px-3.5 py-2.5 rounded-xl bg-black/30 border border-theme-border text-xs text-white font-mono focus:outline-none focus:border-blue-400"
-            />
+        {/* Chek Shabloni va Jonli Ko'rinish */}
+        <div className="pt-5 border-t border-theme-border/60 space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <div>
+              <h4 className="text-sm font-bold text-white flex items-center gap-2">
+                <FileText className="w-4 h-4 text-blue-400" />
+                <span>🧾 Chek Shabloni & Jonli Ko'rinishi (Live Preview)</span>
+              </h4>
+              <p className="text-[11px] text-theme-muted">
+                Admin paneldan chek matnlarini, sarlavhani va pastki qismini o'zgartiring. Chek real vaqtda yangilanadi.
+              </p>
+            </div>
+
+            {/* Kirill alifbosi toggle */}
+            <button
+              type="button"
+              onClick={() => setReceiptCyrillic(!receiptCyrillic)}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition-all flex items-center gap-1.5 ${
+                receiptCyrillic
+                  ? 'bg-blue-600/20 border-blue-400 text-blue-300 shadow-sm'
+                  : 'bg-black/30 border-theme-border text-zinc-400'
+              }`}
+            >
+              <span>{receiptCyrillic ? '🔤 Kirillcha (Ўзбек / Рус)' : '🔤 Lotincha'}</span>
+            </button>
           </div>
-          <div>
-            <label className="block text-[11px] font-semibold text-theme-muted mb-1">Chek Oxiri (Footer):</label>
-            <input
-              type="text"
-              placeholder="Masalan: Tashrif uchun rahmat!"
-              value={receiptFooter}
-              onChange={(e) => setReceiptFooter(e.target.value)}
-              className="w-full px-3.5 py-2.5 rounded-xl bg-black/30 border border-theme-border text-xs text-white font-mono focus:outline-none focus:border-blue-400"
-            />
-          </div>
-          <div>
-            <label className="block text-[11px] font-semibold text-theme-muted mb-1">Chekdagi Manzil:</label>
-            <input
-              type="text"
-              placeholder="Toshkent shahar, ..."
-              value={receiptAddress}
-              onChange={(e) => setReceiptAddress(e.target.value)}
-              className="w-full px-3.5 py-2.5 rounded-xl bg-black/30 border border-theme-border text-xs text-white focus:outline-none focus:border-blue-400"
-            />
-          </div>
-          <div>
-            <label className="block text-[11px] font-semibold text-theme-muted mb-1">Chekdagi Telefon:</label>
-            <input
-              type="text"
-              placeholder="+998 ..."
-              value={receiptPhone}
-              onChange={(e) => setReceiptPhone(e.target.value)}
-              className="w-full px-3.5 py-2.5 rounded-xl bg-black/30 border border-theme-border text-xs text-white font-mono focus:outline-none focus:border-blue-400"
-            />
-          </div>
-          <div className="sm:col-span-2">
-            <label className="block text-[11px] font-semibold text-theme-muted mb-1">Wi-Fi Paroli (Chekda ko'rinadi):</label>
-            <input
-              type="text"
-              placeholder="Masalan: restaurant_wifi_2024"
-              value={receiptWifiPass}
-              onChange={(e) => setReceiptWifiPass(e.target.value)}
-              className="w-full px-3.5 py-2.5 rounded-xl bg-black/30 border border-theme-border text-xs text-white font-mono focus:outline-none focus:border-blue-400"
-            />
+
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
+            {/* Chap tomon: Shablon Maydonlari */}
+            <div className="lg:col-span-7 space-y-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[11px] font-semibold text-theme-muted mb-1">
+                    Restoran Sarlavhasi (Header):
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="Masalan: RestAron Chorsu"
+                    value={receiptHeader}
+                    onChange={(e) => setReceiptHeader(e.target.value)}
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-black/40 border border-theme-border text-xs text-white font-mono focus:outline-none focus:border-blue-400"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-semibold text-theme-muted mb-1">
+                    Pastki Matn / Tilak (Footer):
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="Masalan: Tashrifingiz uchun rahmat! Yana keling!"
+                    value={receiptFooter}
+                    onChange={(e) => setReceiptFooter(e.target.value)}
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-black/40 border border-theme-border text-xs text-white font-mono focus:outline-none focus:border-blue-400"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-semibold text-theme-muted mb-1">
+                    Chekdagi Manzil:
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="Toshkent sh., Navoiy ko'chasi, 21-uy"
+                    value={receiptAddress}
+                    onChange={(e) => setReceiptAddress(e.target.value)}
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-black/40 border border-theme-border text-xs text-white focus:outline-none focus:border-blue-400"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-semibold text-theme-muted mb-1">
+                    Chekdagi Telefon:
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="+998 71 200 00 00"
+                    value={receiptPhone}
+                    onChange={(e) => setReceiptPhone(e.target.value)}
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-black/40 border border-theme-border text-xs text-white font-mono focus:outline-none focus:border-blue-400"
+                  />
+                </div>
+                <div className="sm:col-span-2">
+                  <label className="block text-[11px] font-semibold text-theme-muted mb-1">
+                    Wi-Fi Login va Paroli (Mijoz chekida ko'rinadi):
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="Masalan: Wi-Fi: RestAron_Guest | Parol: 88889999"
+                    value={receiptWifiPass}
+                    onChange={(e) => setReceiptWifiPass(e.target.value)}
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-black/40 border border-theme-border text-xs text-white font-mono focus:outline-none focus:border-blue-400"
+                  />
+                </div>
+              </div>
+
+              {/* Shablondagi qo'shimcha parametrlar */}
+              <div className="p-3.5 rounded-2xl bg-black/30 border border-theme-border/60 text-xs space-y-2">
+                <span className="text-[11px] font-bold text-white block">💡 Chek sozlamalari ko'rsatmasi:</span>
+                <ul className="text-[11px] text-theme-muted space-y-1 list-disc list-inside">
+                  <li>Chekdagi barcha matnlar Xprinter termal printerlariga mos ravishda <strong>kirill harflarida (CP866)</strong> chop etiladi.</li>
+                  <li>Oshxona begunog'i (2 va 3-printer) da taom nomi, miqdori va maxsus izohi chiqadi.</li>
+                  <li>Mijoz chekida (1-printer) esa har bir taom narxi, umumiy hisob, {serviceFeePercent}% servis va yakuniy summa ko'rsatiladi.</li>
+                </ul>
+              </div>
+            </div>
+
+            {/* O'ng tomon: Jonli Termal Chek Qog'ozi (Live Paper Preview) */}
+            <div className="lg:col-span-5 bg-zinc-950 p-4 rounded-3xl border border-theme-border/80 shadow-2xl space-y-3">
+              <div className="flex items-center justify-between pb-2 border-b border-white/10">
+                <span className="text-xs font-bold text-zinc-300 flex items-center gap-1.5">
+                  <Eye className="w-3.5 h-3.5 text-blue-400" />
+                  <span>Jonli Chek Ko'rinishi ({printerPaperWidth}mm):</span>
+                </span>
+                <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-zinc-800 text-zinc-400">
+                  {receiptCyrillic ? 'КИРИЛЛ' : 'LOTIN'}
+                </span>
+              </div>
+
+              {/* Tab selector for 3 printers */}
+              <div className="flex gap-1 bg-black/50 p-1 rounded-xl border border-white/10">
+                <button
+                  type="button"
+                  onClick={() => setPreviewTab('bill')}
+                  className={`flex-1 py-1.5 text-[10px] font-bold rounded-lg transition-all ${
+                    previewTab === 'bill'
+                      ? 'bg-emerald-500 text-slate-950 shadow'
+                      : 'text-zinc-400 hover:text-white'
+                  }`}
+                >
+                  🧾 1-Mijoz Cheki
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPreviewTab('k1')}
+                  className={`flex-1 py-1.5 text-[10px] font-bold rounded-lg transition-all ${
+                    previewTab === 'k1'
+                      ? 'bg-amber-500 text-slate-950 shadow'
+                      : 'text-zinc-400 hover:text-white'
+                  }`}
+                >
+                  🫕 1-Oshxona
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPreviewTab('k2')}
+                  className={`flex-1 py-1.5 text-[10px] font-bold rounded-lg transition-all ${
+                    previewTab === 'k2'
+                      ? 'bg-cyan-500 text-slate-950 shadow'
+                      : 'text-zinc-400 hover:text-white'
+                  }`}
+                >
+                  🐟 2-Oshxona
+                </button>
+              </div>
+
+              {/* Realistik Oq Termal Qog'oz */}
+              <div className="bg-white text-zinc-900 p-4 sm:p-5 rounded-lg shadow-xl font-mono text-[11px] leading-tight select-none border-t-4 border-b-4 border-dashed border-zinc-300">
+                {previewTab === 'bill' && (
+                  <div className="space-y-1 text-center">
+                    <div className="font-extrabold text-sm tracking-wider uppercase text-zinc-900">
+                      {receiptCyrillic ? toCyrillicJS(receiptHeader || 'RestAron') : (receiptHeader || 'RestAron')}
+                    </div>
+                    {receiptAddress && (
+                      <div className="text-[10px] text-zinc-600">
+                        {receiptCyrillic ? toCyrillicJS(receiptAddress) : receiptAddress}
+                      </div>
+                    )}
+                    {receiptPhone && (
+                      <div className="text-[10px] text-zinc-600">
+                        Тел: {receiptPhone}
+                      </div>
+                    )}
+                    {receiptWifiPass && (
+                      <div className="text-[10px] text-zinc-600 font-semibold">
+                        Wi-Fi: {receiptWifiPass}
+                      </div>
+                    )}
+                    <div className="my-2 border-b border-dashed border-zinc-400" />
+                    <div className="flex justify-between text-[10px] font-bold text-left">
+                      <span>Стол: Зал № 5</span>
+                      <span>Чек: № ORD-1024</span>
+                    </div>
+                    <div className="flex justify-between text-[10px] text-zinc-600 text-left">
+                      <span>Официант: Зафарбек</span>
+                      <span>{new Date().toLocaleDateString()} 12:45</span>
+                    </div>
+                    <div className="my-2 border-b border-dashed border-zinc-400" />
+                    <div className="text-left font-bold text-xs mb-1">
+                      {receiptCyrillic ? 'Таомлар:' : 'Taomlar:'}
+                    </div>
+                    <div className="space-y-1 text-left text-[11px]">
+                      <div>
+                        <div>1. {receiptCyrillic ? 'Ош (Тўй оши)' : 'Osh (To\'y oshi)'}</div>
+                        <div className="flex justify-between text-zinc-600">
+                          <span>   2 х 45 000</span>
+                          <span className="font-bold text-zinc-900">90 000</span>
+                        </div>
+                      </div>
+                      <div>
+                        <div>2. {receiptCyrillic ? 'Қозон кабоб' : 'Qozon kabob'}</div>
+                        <div className="flex justify-between text-zinc-600">
+                          <span>   1 х 85 000</span>
+                          <span className="font-bold text-zinc-900">85 000</span>
+                        </div>
+                      </div>
+                      <div>
+                        <div>3. {receiptCyrillic ? 'Аччиқ-чучук салати' : 'Achchiq-chuchuk salati'}</div>
+                        <div className="flex justify-between text-zinc-600">
+                          <span>   2 х 15 000</span>
+                          <span className="font-bold text-zinc-900">30 000</span>
+                        </div>
+                      </div>
+                      <div>
+                        <div>4. {receiptCyrillic ? 'Тандир нон' : 'Tandir non'}</div>
+                        <div className="flex justify-between text-zinc-600">
+                          <span>   2 х 6 000</span>
+                          <span className="font-bold text-zinc-900">12 000</span>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="my-2 border-b border-dashed border-zinc-400" />
+                    <div className="space-y-0.5 text-left text-[11px]">
+                      <div className="flex justify-between">
+                        <span>{receiptCyrillic ? 'Жами (Итого):' : 'Jami:'}</span>
+                        <span>217 000</span>
+                      </div>
+                      <div className="flex justify-between text-zinc-700">
+                        <span>{receiptCyrillic ? `Хизмат ҳақи (${serviceFeePercent}%):` : `Xizmat haqi (${serviceFeePercent}%):`}</span>
+                        <span>{(217000 * (Number(serviceFeePercent) / 100)).toLocaleString()}</span>
+                      </div>
+                    </div>
+                    <div className="my-2 border-b-2 border-zinc-900" />
+                    <div className="flex justify-between font-black text-xs text-left">
+                      <span>{receiptCyrillic ? 'ЖАМИ ТЎЛОВ:' : 'JAMI TO\'LOV:'}</span>
+                      <span className="text-sm">{(217000 * (1 + Number(serviceFeePercent) / 100)).toLocaleString()} сўм</span>
+                    </div>
+                    <div className="my-2 border-b-2 border-zinc-900" />
+                    <div className="text-[10px] text-zinc-600 mt-2 italic text-center">
+                      {receiptCyrillic ? toCyrillicJS(receiptFooter || 'Ташрифингиз учун раҳмат!') : (receiptFooter || 'Tashrifingiz uchun rahmat!')}
+                    </div>
+                  </div>
+                )}
+
+                {previewTab === 'k1' && (
+                  <div className="space-y-1 text-center">
+                    <div className="font-extrabold text-xs tracking-wider uppercase text-amber-700">
+                      *** {receiptCyrillic ? toCyrillicJS(kitchen1Title).toUpperCase() : kitchen1Title.toUpperCase()} ***
+                    </div>
+                    <div className="font-bold text-xs uppercase text-zinc-900">
+                      {receiptCyrillic ? 'ЗАЛ' : 'ZAL'}
+                    </div>
+                    <div className="text-[10px] font-bold">Стол: № 5</div>
+                    <div className="text-[10px] text-zinc-600">Официант: Зафарбек</div>
+                    <div className="text-[10px] text-zinc-600">{new Date().toLocaleTimeString()}</div>
+                    <div className="my-2 border-b border-dashed border-zinc-400" />
+                    <div className="flex justify-between text-[10px] font-bold text-left">
+                      <span>ТАОМ</span>
+                      <span>СОНИ</span>
+                    </div>
+                    <div className="my-1 border-b border-dashed border-zinc-300" />
+                    <div className="space-y-1 text-left text-[11px]">
+                      <div className="flex justify-between font-bold">
+                        <span>{receiptCyrillic ? 'Ош (Тўй оши)' : 'Osh (To\'y oshi)'}</span>
+                        <span>2 та</span>
+                      </div>
+                      <div className="flex justify-between font-bold">
+                        <span>{receiptCyrillic ? 'Қозон кабоб' : 'Qozon kabob'}</span>
+                        <span>1 та</span>
+                      </div>
+                      <div className="text-[10px] text-zinc-500 italic">  * кам ёғли бўлсин</div>
+                    </div>
+                    <div className="my-2 border-b border-dashed border-zinc-400" />
+                  </div>
+                )}
+
+                {previewTab === 'k2' && (
+                  <div className="space-y-1 text-center">
+                    <div className="font-extrabold text-xs tracking-wider uppercase text-cyan-700">
+                      *** {receiptCyrillic ? toCyrillicJS(kitchen2Title).toUpperCase() : kitchen2Title.toUpperCase()} ***
+                    </div>
+                    <div className="font-bold text-xs uppercase text-zinc-900">
+                      {receiptCyrillic ? 'ЗАЛ' : 'ZAL'}
+                    </div>
+                    <div className="text-[10px] font-bold">Стол: № 5</div>
+                    <div className="text-[10px] text-zinc-600">Официант: Зафарбек</div>
+                    <div className="text-[10px] text-zinc-600">{new Date().toLocaleTimeString()}</div>
+                    <div className="my-2 border-b border-dashed border-zinc-400" />
+                    <div className="flex justify-between text-[10px] font-bold text-left">
+                      <span>ТАОМ</span>
+                      <span>СОНИ</span>
+                    </div>
+                    <div className="my-1 border-b border-dashed border-zinc-300" />
+                    <div className="space-y-1 text-left text-[11px]">
+                      <div className="flex justify-between font-bold">
+                        <span>{receiptCyrillic ? 'Гўштли сомса' : 'Go\'shtli somsa'}</span>
+                        <span>4 та</span>
+                      </div>
+                      <div className="flex justify-between font-bold">
+                        <span>{receiptCyrillic ? 'Судак балиқ қовурма' : 'Sudak baliq qovurma'}</span>
+                        <span>1 та</span>
+                      </div>
+                      <div className="text-[10px] text-zinc-500 italic">  * лимон ва соус билан</div>
+                    </div>
+                    <div className="my-2 border-b border-dashed border-zinc-400" />
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
         </div>
       </SettingsSection>
@@ -546,6 +828,34 @@ export const RestaurantSettingsTab = ({ restaurantId }) => {
               </div>
             </div>
           )}
+
+          {/* 3 ta Printerni kompyuterga ulash bo'yicha ko'rsatma */}
+          <div className="p-4 rounded-2xl bg-blue-500/10 border border-blue-500/30 space-y-2">
+            <div className="flex items-center gap-2 text-xs font-bold text-blue-300">
+              <Sparkles className="w-4 h-4 text-blue-400" />
+              <span>💡 3 ta Printerni Noutbukka Qanday Ulash Mumkin? (USB port yetishmasa)</span>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs text-theme-muted pt-1">
+              <div className="p-3 rounded-xl bg-black/40 border border-theme-border/60 space-y-1">
+                <div className="font-bold text-white flex items-center gap-1.5 text-xs">
+                  <span className="w-5 h-5 rounded-full bg-blue-500/20 text-blue-400 font-bold flex items-center justify-center text-[10px]">1</span>
+                  <span>LAN / Ethernet IP orqali (Tavsiya etiladi)</span>
+                </div>
+                <p className="text-[11px] leading-relaxed">
+                  1-Printer (Kassa) noutbukka USB kabel bilan ulanadi. 2-va 3-printerlar (Oshxona va Somsa) orqasidagi tarmoq (LAN RJ-45) kabeli orqali Wi-Fi routerga ulanadi. Noutbukka sim ulash shart emas! Sozlamada printerning IP manzilini yozasiz (masalan: <code className="text-amber-300 font-mono">192.168.1.201</code>). Tizim buyurtmani bevosita tarmoqdan oshxonaga yuboradi.
+                </p>
+              </div>
+              <div className="p-3 rounded-xl bg-black/40 border border-theme-border/60 space-y-1">
+                <div className="font-bold text-white flex items-center gap-1.5 text-xs">
+                  <span className="w-5 h-5 rounded-full bg-emerald-500/20 text-emerald-400 font-bold flex items-center justify-center text-[10px]">2</span>
+                  <span>USB Hub (Ko'paytirgich) orqali</span>
+                </div>
+                <p className="text-[11px] leading-relaxed">
+                  Agar printerlaringiz faqat USB bo'lsa: 4 portli arzon <strong>USB Hub</strong> (30-50 ming so'm) olinadi. Noutbukning 1 dona USB portiga tiqilib, 3 ta printerning barchasi unga ulanadi. Windows kompyuter ularni alohida taniydi (<code className="text-emerald-300 font-mono">XP-Q80A</code>, <code className="text-emerald-300 font-mono">XP-Q80A (Copy 1)</code>, va h.k.).
+                </p>
+              </div>
+            </div>
+          </div>
 
           {/* 3 ta printer kartalari */}
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 pt-2">
@@ -728,12 +1038,12 @@ export const RestaurantSettingsTab = ({ restaurantId }) => {
           </div>
 
           {/* Avtomatlashtirish togglelari */}
-          <div className="pt-3 border-t border-theme-border/50 grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div className="pt-3 border-t border-theme-border/50 grid grid-cols-1 sm:grid-cols-3 gap-3">
             <Toggle
               checked={autoPrintKitchen}
               onChange={setAutoPrintKitchen}
               label="Oshxonaga avtomatik chop etish"
-              description="Ofitsiant 'На кухню' bosganda tegishli 1 va 2-oshxona printerlariga to'g'ridan-to'g'ri chop etiladi."
+              description="Ofitsiant 'Buyurtmani tasdiqlash' bosganda tegishli 1 va 2-oshxona printerlariga to'g'ridan-to'g'ri chop etiladi."
               icon={Printer}
               color="amber-400"
             />
@@ -744,6 +1054,14 @@ export const RestaurantSettingsTab = ({ restaurantId }) => {
               description="Kassada to'lov amalga oshirilganda 1-printerdan mijoz hisob cheki avtomatik chiqadi."
               icon={Receipt}
               color="emerald-400"
+            />
+            <Toggle
+              checked={enableChefKds}
+              onChange={setEnableChefKds}
+              label="Oshpaz KDS Ekrani (Planshet)"
+              description="O'chirilsa: oshxonaga planshet shart emas, ofitsiant zakaz olganda buyurtmalar avtomatik printerlardan begunok qog'ozda chiqadi."
+              icon={UtensilsCrossed}
+              color="amber-400"
             />
           </div>
         </div>

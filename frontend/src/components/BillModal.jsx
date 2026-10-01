@@ -27,6 +27,7 @@ export const BillModal = ({
   const [bill, setBill] = useState(null);
   const [loading, setLoading] = useState(true);
   const [checkoutLoading, setCheckoutLoading] = useState(false);
+  const [printingThermal, setPrintingThermal] = useState(false);
   const [callLoading, setCallLoading] = useState(false);
   const [callSuccess, setCallSuccess] = useState(false);
   const { addEventListener } = useWebSocket();
@@ -72,6 +73,19 @@ export const BillModal = ({
 
   const handlePrint = () => {
     window.print();
+  };
+
+  const handlePrintThermal = async () => {
+    if (!tableId) return;
+    setPrintingThermal(true);
+    try {
+      const res = await api.post(`/tables/${tableId}/print-bill`);
+      alert(`✅ Chek ${res.printer_name || 'Printer 1'} ga muvaffaqiyatli yuborildi!`);
+    } catch (err) {
+      alert(`❌ Chek chiqarishda xatolik: ` + (err.message || ''));
+    } finally {
+      setPrintingThermal(false);
+    }
   };
 
   const handleCheckoutAndClear = async () => {
@@ -261,14 +275,23 @@ export const BillModal = ({
             </div>
           )}
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+            <button
+              onClick={handlePrintThermal}
+              disabled={printingThermal || !bill || bill.items.length === 0}
+              className="py-3 px-3 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-black text-xs flex items-center justify-center gap-1.5 transition-all shadow-md active:scale-95 disabled:opacity-40"
+            >
+              <Printer className={`w-4 h-4 ${printingThermal ? 'animate-spin' : ''}`} />
+              <span>{printingThermal ? 'Chop etilmoqda...' : '🖨️ Printer 1 (Kassa)'}</span>
+            </button>
+
             <button
               onClick={handlePrint}
               disabled={!bill || bill.items.length === 0}
-              className="py-3 px-4 rounded-xl border border-theme-border hover:border-theme-primary/60 bg-white/5 hover:bg-white/10 text-white font-bold text-xs flex items-center justify-center gap-2 transition-all disabled:opacity-40"
+              className="py-3 px-3 rounded-xl border border-theme-border hover:border-theme-primary/60 bg-white/5 hover:bg-white/10 text-white font-bold text-xs flex items-center justify-center gap-1.5 transition-all disabled:opacity-40"
             >
               <Printer className="w-4 h-4" />
-              <span>Chekni chop etish</span>
+              <span>Ekran / PDF</span>
             </button>
 
             {isStaff ? (

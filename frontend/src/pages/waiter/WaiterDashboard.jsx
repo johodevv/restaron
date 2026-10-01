@@ -59,6 +59,8 @@ export const WaiterDashboard = () => {
   const [receiptNote, setReceiptNote] = useState('');
   const [kitchenNoteModalOpen, setKitchenNoteModalOpen] = useState(false);
   const [receiptNoteModalOpen, setReceiptNoteModalOpen] = useState(false);
+  const [kitchenSendSuccess, setKitchenSendSuccess] = useState(false);
+  const [sendingToKitchen, setSendingToKitchen] = useState(false);
 
   // Checkout modal
   const [checkoutModalOpen, setCheckoutModalOpen] = useState(false);
@@ -263,24 +265,28 @@ export const WaiterDashboard = () => {
     }
   };
 
-  // Action: "На кухню" (Send to kitchen -> print ticket)
+  // Action: "🔥 Buyurtmani tasdiqlash" (Send to kitchen -> auto-print on 1- & 2-kitchen printers)
   const handleSendToKitchen = async () => {
     if (!activeOrder || !activeOrder.items || activeOrder.items.length === 0) {
-      alert("Buyurtmada taomlar yo'q!");
+      alert("Buyurtmada taomlar yo'q! Avval o'ng tomondan taom qo'shing.");
       return;
     }
+    setSendingToKitchen(true);
     try {
       const res = await api.post(`/orders/${activeOrder.id}/send-to-kitchen`, {});
       if (res.raw_text) {
         setThermalReceiptText(res.raw_text);
         setReceiptModalTitle(`Oshxona Begunogi (${selectedTable?.room || 'Zal'} N#${selectedTable?.number || ''})`);
-        setReceiptModalOpen(true);
       }
-      confetti({ particleCount: 60, spread: 60, origin: { y: 0.7 } });
+      setKitchenSendSuccess(true);
+      setTimeout(() => setKitchenSendSuccess(false), 4000);
+      confetti({ particleCount: 75, spread: 70, origin: { y: 0.7 } });
       if (soundEnabled && playChime) playChime('success');
-      fetchTableActiveOrder(selectedTable);
+      await fetchTableActiveOrder(selectedTable);
     } catch (err) {
-      alert(err.message || 'Oshxonaga yuborishda xatolik');
+      alert(err.message || 'Oshxonaga yuborishda xatolik yuz berdi');
+    } finally {
+      setSendingToKitchen(false);
     }
   };
 
@@ -593,26 +599,26 @@ export const WaiterDashboard = () => {
           )}
         </div>
       ) : (
-        /* ── POS EKRANI (Ali Poster 1- va 2-rasmlar analogi) ───────── */
+        /* ── POS EKRANI (Ali Poster uslubida yuqori sifatli dizayn) ───────── */
         <div className="flex-1 flex flex-col lg:flex-row overflow-hidden">
-          {/* ── Chap Panel: Tanlangan Stol va Zakaz (Photo 1) ─────────── */}
-          <div className="w-full lg:w-[460px] bg-slate-900/90 border-r border-slate-800 flex flex-col justify-between shrink-0">
+          {/* ── Chap Panel: Tanlangan Stol va Zakaz (Katta va qulay shriftlar) ─────────── */}
+          <div className="w-full lg:w-[480px] xl:w-[500px] bg-slate-900/95 border-r border-slate-800 flex flex-col justify-between shrink-0 shadow-2xl">
             {/* Table Header Bar */}
-            <div className="p-3.5 bg-slate-950/70 border-b border-slate-800 flex items-center justify-between">
+            <div className="p-4 bg-slate-950/80 border-b border-slate-800 flex items-center justify-between">
               <div>
-                <span className="text-[10px] text-slate-400 uppercase tracking-wider font-semibold">
+                <span className="text-[11px] text-slate-400 uppercase tracking-wider font-bold block">
                   Joriy stol:
                 </span>
-                <div className="flex items-center gap-2">
-                  <h2 className="text-base font-black text-white">
+                <div className="flex items-center gap-2 mt-0.5">
+                  <h2 className="text-xl sm:text-2xl font-black text-white tracking-tight">
                     {selectedTable?.room ? `${selectedTable.room} - ` : ''}
                     {selectedTable?.name || `Stol #${selectedTable?.number || 1}`}
                   </h2>
                   <span
-                    className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${
+                    className={`text-xs px-2.5 py-0.5 rounded-full font-black uppercase tracking-wider ${
                       selectedTable?.status === 'occupied'
-                        ? 'bg-red-500/20 text-red-400 border border-red-500/30'
-                        : 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                        ? 'bg-red-500/20 text-red-400 border border-red-500/40'
+                        : 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40'
                     }`}
                   >
                     {selectedTable?.status === 'occupied' ? 'Band' : "Bo'sh"}
@@ -627,7 +633,7 @@ export const WaiterDashboard = () => {
                   const t = tables.find((x) => x.id === parseInt(e.target.value));
                   if (t) setSelectedTable(t);
                 }}
-                className="bg-slate-800 border border-slate-700 text-xs text-white rounded-xl px-2.5 py-1.5 focus:outline-none focus:border-emerald-500 font-medium"
+                className="bg-slate-800 border-2 border-slate-700 hover:border-emerald-500 text-sm font-bold text-white rounded-xl px-3 py-2 focus:outline-none focus:border-emerald-500 shadow-sm"
               >
                 {tables.map((tbl) => (
                   <option key={tbl.id} value={tbl.id}>
@@ -638,66 +644,70 @@ export const WaiterDashboard = () => {
               </select>
             </div>
 
-            {/* Active Items Table (Photo 1 format: Блюда, Цена, Кол., Итого) */}
+            {/* Active Items Table (Kattalashtirilgan qulay jadval) */}
             <div className="flex-1 overflow-y-auto">
-              <div className="grid grid-cols-12 text-[11px] font-bold text-slate-400 bg-slate-950/40 px-3 py-2 border-b border-slate-800/80">
-                <span className="col-span-5">Блюда (Taom)</span>
-                <span className="col-span-3 text-right">Цена</span>
-                <span className="col-span-2 text-center">Кол.</span>
-                <span className="col-span-2 text-right">Итого</span>
+              <div className="grid grid-cols-12 text-xs sm:text-sm font-black text-slate-300 bg-slate-950/70 px-4 py-2.5 border-b border-slate-800 uppercase tracking-wider">
+                <span className="col-span-5">Taom nomi</span>
+                <span className="col-span-3 text-right">Narxi</span>
+                <span className="col-span-2 text-center">Soni</span>
+                <span className="col-span-2 text-right">Jami</span>
               </div>
 
               {orderLoading ? (
-                <div className="p-8 text-center text-xs text-slate-500">Yuklanmoqda...</div>
+                <div className="p-12 text-center text-sm font-bold text-slate-400">Yuklanmoqda...</div>
               ) : !activeOrder || !activeOrder.items || activeOrder.items.length === 0 ? (
-                <div className="p-8 text-center text-slate-500 text-xs">
-                  <p className="font-semibold text-slate-400">Ushbu stolda hali zakaz yo'q</p>
-                  <p className="mt-1 text-[11px]">O'ng tomondan taomlarni tanlang</p>
+                <div className="p-12 text-center text-slate-400 space-y-1">
+                  <p className="font-extrabold text-white text-base">Ushbu stolda hali zakaz yo'q</p>
+                  <p className="text-xs text-slate-400">O'ng tomondagi menyudan taomlarni bosing</p>
                 </div>
               ) : (
-                <div className="divide-y divide-slate-800/50">
+                <div className="divide-y divide-slate-800/60">
                   {activeOrder.items.map((it) => (
                     <div
                       key={it.id}
-                      className="grid grid-cols-12 items-center px-3 py-2.5 hover:bg-slate-800/40 transition-colors text-xs"
+                      className="grid grid-cols-12 items-center px-4 py-3 hover:bg-slate-800/50 transition-colors"
                     >
                       {/* Name & time */}
                       <div className="col-span-5 pr-1">
-                        <p className="font-bold text-white text-xs truncate">
+                        <p className="font-extrabold text-white text-sm sm:text-base leading-snug">
                           {it.menu_item_name || 'Taom'}
                         </p>
-                        <p className="text-[10px] text-slate-400 font-mono mt-0.5">
-                          {it.quantity}x • {it.item_time || '19:36'} •{' '}
-                          {it.sent_to_kitchen ? 'Oshxonada' : 'Yangi'}
+                        <p className="text-xs font-semibold text-slate-400 font-mono mt-0.5">
+                          {it.quantity} dona • {it.item_time || '12:00'} •{' '}
+                          <span className={it.sent_to_kitchen ? 'text-amber-400 font-bold' : 'text-emerald-400'}>
+                            {it.sent_to_kitchen ? 'Oshxonada ♨️' : 'Yangi ✦'}
+                          </span>
                         </p>
                       </div>
 
                       {/* Unit Price */}
-                      <div className="col-span-3 text-right font-medium text-slate-300 text-xs">
+                      <div className="col-span-3 text-right font-bold text-slate-200 text-sm sm:text-base font-mono">
                         {it.unit_price.toLocaleString('uz-UZ')}
                       </div>
 
-                      {/* Quantity Controls [- 1 +] */}
-                      <div className="col-span-2 flex items-center justify-center gap-1">
+                      {/* Quantity Controls [- 1 +] — Katta va qulay sensor tugmalar */}
+                      <div className="col-span-2 flex items-center justify-center gap-1.5">
                         <button
                           onClick={() => handleQtyChange(it, -1)}
-                          className="w-5 h-5 rounded bg-emerald-700/80 hover:bg-emerald-600 text-white flex items-center justify-center font-bold text-xs transition-colors"
+                          className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-emerald-700 hover:bg-emerald-600 text-white flex items-center justify-center font-black text-lg transition-transform active:scale-90 shadow-md"
+                          title="Kamaytirish"
                         >
                           -
                         </button>
-                        <span className="text-xs font-bold text-white w-4 text-center">
+                        <span className="text-sm sm:text-base font-black text-white w-5 text-center font-mono">
                           {it.quantity}
                         </span>
                         <button
                           onClick={() => handleQtyChange(it, 1)}
-                          className="w-5 h-5 rounded bg-emerald-700/80 hover:bg-emerald-600 text-white flex items-center justify-center font-bold text-xs transition-colors"
+                          className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-emerald-700 hover:bg-emerald-600 text-white flex items-center justify-center font-black text-lg transition-transform active:scale-90 shadow-md"
+                          title="Ko'paytirish"
                         >
                           +
                         </button>
                       </div>
 
                       {/* Line Total */}
-                      <div className="col-span-2 text-right font-black text-emerald-400 text-xs">
+                      <div className="col-span-2 text-right font-black text-emerald-400 text-sm sm:text-base font-mono">
                         {it.total_price.toLocaleString('uz-UZ')}
                       </div>
                     </div>
@@ -706,87 +716,95 @@ export const WaiterDashboard = () => {
               )}
             </div>
 
-            {/* Bottom Total and Actions (Photo 1 exact layout) */}
-            <div className="p-3.5 bg-slate-950 border-t border-slate-800">
+            {/* Bottom Total and Actions */}
+            <div className="p-4 bg-slate-950 border-t border-slate-800 shadow-2xl">
+              {/* Bildirishnoma: Oshxonaga avtomatik chop etildi */}
+              {kitchenSendSuccess && (
+                <div className="p-3 mb-3 rounded-2xl bg-emerald-500/20 border-2 border-emerald-500/50 text-emerald-300 font-black text-xs sm:text-sm text-center flex items-center justify-center gap-2 animate-bounce-subtle shadow-lg">
+                  <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />
+                  <span>✅ Buyurtma tasdiqlandi va oshxona printerlariga avtomatik chop etildi!</span>
+                </div>
+              )}
+
               {/* Subtotal & Service fee summary */}
-              <div className="space-y-1 mb-3 text-xs">
-                <div className="flex justify-between text-slate-400">
-                  <span>Taomlar jami:</span>
-                  <span className="font-semibold text-slate-200">
+              <div className="space-y-1.5 mb-3.5 bg-slate-900/60 p-3 rounded-2xl border border-slate-800">
+                <div className="flex justify-between text-xs sm:text-sm text-slate-300">
+                  <span className="font-semibold">Taomlar jami:</span>
+                  <span className="font-bold text-white font-mono">
                     {(activeOrder?.subtotal || 0).toLocaleString('uz-UZ')} so'm
                   </span>
                 </div>
-                <div className="flex justify-between text-slate-400">
-                  <span>Xizmat haqi ({activeOrder?.service_fee_percent || 12}%):</span>
-                  <span className="font-semibold text-slate-200">
+                <div className="flex justify-between text-xs sm:text-sm text-slate-300">
+                  <span className="font-semibold">Xizmat haqi ({activeOrder?.service_fee_percent || 12}%):</span>
+                  <span className="font-bold text-amber-300 font-mono">
                     {(activeOrder?.service_fee_amount || 0).toLocaleString('uz-UZ')} so'm
                   </span>
                 </div>
-                <div className="flex justify-between text-sm font-black text-white pt-1 border-t border-slate-800">
-                  <span>Итого (Jami):</span>
-                  <span className="text-emerald-400 text-base">
+                <div className="flex justify-between text-base sm:text-lg font-black text-white pt-2 border-t border-slate-800">
+                  <span>Jami hisob:</span>
+                  <span className="text-emerald-400 text-xl sm:text-2xl font-mono">
                     {(activeOrder?.total || 0).toLocaleString('uz-UZ')} so'm
                   </span>
                 </div>
               </div>
 
-              {/* Action Buttons: Comments */}
-              <div className="grid grid-cols-2 gap-2 mb-2">
+              {/* Action Buttons: Izohlar */}
+              <div className="grid grid-cols-2 gap-2 mb-2.5">
                 <button
                   onClick={() => setKitchenNoteModalOpen(true)}
-                  className="py-2 px-3 rounded-xl bg-teal-600/20 hover:bg-teal-600/30 border border-teal-500/40 text-teal-300 font-bold text-xs transition-colors truncate"
+                  className="py-2.5 px-3 rounded-xl bg-teal-600/20 hover:bg-teal-600/30 border border-teal-500/40 text-teal-300 font-bold text-xs sm:text-sm transition-all truncate"
                 >
-                  Комент. к кухне {kitchenNote ? '✓' : ''}
+                  💬 Oshxona izohi {kitchenNote ? '✓' : ''}
                 </button>
                 <button
                   onClick={() => setReceiptNoteModalOpen(true)}
-                  className="py-2 px-3 rounded-xl bg-cyan-600/20 hover:bg-cyan-600/30 border border-cyan-500/40 text-cyan-300 font-bold text-xs transition-colors truncate"
+                  className="py-2.5 px-3 rounded-xl bg-cyan-600/20 hover:bg-cyan-600/30 border border-cyan-500/40 text-cyan-300 font-bold text-xs sm:text-sm transition-all truncate"
                 >
-                  Комент. к чеку {receiptNote ? '✓' : ''}
+                  🧾 Chek izohi {receiptNote ? '✓' : ''}
                 </button>
               </div>
 
-              {/* Main POS Actions: "На кухню" (Orange) | "К оплате" (Green) */}
-              <div className="grid grid-cols-2 gap-2">
+              {/* Main POS Actions: "🔥 Buyurtmani tasdiqlash" | "💳 To'lov / Hisob" */}
+              <div className="grid grid-cols-2 gap-2.5">
                 <button
                   onClick={handleSendToKitchen}
-                  disabled={!activeOrder}
-                  className="py-3 px-3 rounded-xl bg-amber-600 hover:bg-amber-500 disabled:opacity-40 text-white font-extrabold text-xs shadow-lg shadow-amber-600/20 transition-all active:scale-95 flex items-center justify-center gap-1.5"
+                  disabled={!activeOrder || sendingToKitchen}
+                  className="py-4 px-3 rounded-2xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 disabled:opacity-40 text-slate-950 font-black text-xs sm:text-sm shadow-xl shadow-amber-500/25 transition-all active:scale-95 flex items-center justify-center gap-1.5"
                 >
-                  <Printer className="w-4 h-4" />
-                  <span>На кухню (Begunok)</span>
+                  <Printer className="w-5 h-5 shrink-0" />
+                  <span>{sendingToKitchen ? 'Chop etilmoqda...' : '🔥 Buyurtmani tasdiqlash'}</span>
                 </button>
 
                 <button
                   onClick={() => setCheckoutModalOpen(true)}
                   disabled={!activeOrder}
-                  className="py-3 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white font-extrabold text-xs shadow-lg shadow-emerald-600/20 transition-all active:scale-95 flex items-center justify-center gap-1.5"
+                  className="py-4 px-3 rounded-2xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 disabled:opacity-40 text-white font-black text-xs sm:text-sm shadow-xl shadow-emerald-600/25 transition-all active:scale-95 flex items-center justify-center gap-1.5"
                 >
-                  <CreditCard className="w-4 h-4" />
-                  <span>К оплате (Hisob)</span>
+                  <CreditCard className="w-5 h-5 shrink-0" />
+                  <span>💳 To'lov / Hisob</span>
                 </button>
               </div>
             </div>
           </div>
 
-          {/* ── O'ng Panel: Kategoriyalar va Taomlar Gridi (Photo 2) ───── */}
+          {/* ── O'ng Panel: Kategoriyalar va Taomlar Gridi (Katta va qulay kartochkalar) ───── */}
           <div className="flex-1 flex flex-col bg-slate-950 overflow-hidden">
-            {/* Top Categories Strip (Photo 2 categories buttons) */}
-            <div className="p-3 bg-slate-900/60 border-b border-slate-800">
+            {/* Top Categories Strip */}
+            <div className="p-3.5 bg-slate-900/70 border-b border-slate-800">
               {/* Search bar */}
-              <div className="mb-2.5 relative">
-                <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
+              <div className="mb-3 relative">
+                <Search className="w-5 h-5 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
                 <input
                   type="text"
                   value={searchItemQuery}
                   onChange={(e) => setSearchItemQuery(e.target.value)}
                   placeholder="Menyudan taom qidirish..."
-                  className="w-full pl-9 pr-3 py-1.5 rounded-xl bg-slate-900 border border-slate-700/80 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500 font-medium"
+                  className="w-full pl-11 pr-4 py-2.5 rounded-2xl bg-slate-900 border-2 border-slate-700/80 text-sm text-white placeholder-slate-400 focus:outline-none focus:border-emerald-500 font-medium"
                 />
               </div>
 
               {/* Category buttons list */}
-              <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-1">
+              <div className="flex items-center gap-2 overflow-x-auto no-scrollbar pb-1">
                 {categories.map((cat) => {
                   const active = cat.id === selectedCatId;
                   return (
@@ -796,9 +814,9 @@ export const WaiterDashboard = () => {
                         setSelectedCatId(cat.id);
                         setSearchItemQuery('');
                       }}
-                      className={`px-3 py-1.5 rounded-xl text-xs font-bold shrink-0 transition-all ${
+                      className={`px-4 py-2.5 rounded-2xl text-xs sm:text-sm font-extrabold shrink-0 transition-all ${
                         active
-                          ? 'bg-emerald-600 text-white shadow-md'
+                          ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-600/30 scale-102'
                           : 'bg-slate-850 hover:bg-slate-800 text-slate-300 border border-slate-700/60'
                       }`}
                     >
@@ -809,21 +827,21 @@ export const WaiterDashboard = () => {
               </div>
             </div>
 
-            {/* Dishes Grid (Photo 2 Cards with green price badges) */}
-            <div className="flex-1 overflow-y-auto p-4">
-              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 gap-3">
+            {/* Dishes Grid — Katta va qulay taom kartalari */}
+            <div className="flex-1 overflow-y-auto p-4 sm:p-5">
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 gap-3.5 sm:gap-4">
                 {displayedItems.map((item) => {
                   const isStop = item.is_stop_list || item.is_available === false;
                   return (
                     <div
                       key={item.id}
                       onClick={() => handleAddItem(item)}
-                      className={`group relative rounded-2xl bg-slate-900 border border-slate-800 p-2.5 flex flex-col justify-between hover:border-emerald-500/80 hover:bg-slate-850 transition-all shadow-md cursor-pointer select-none active:scale-95 ${
-                        isStop ? 'opacity-50 grayscale' : ''
+                      className={`group relative rounded-3xl bg-slate-900 border-2 border-slate-800 p-3 flex flex-col justify-between hover:border-emerald-500 hover:bg-slate-850 transition-all shadow-lg cursor-pointer select-none active:scale-95 ${
+                        isStop ? 'opacity-50 grayscale pointer-events-none' : ''
                       }`}
                     >
                       {/* Image / Thumbnail */}
-                      <div className="h-28 w-full rounded-xl bg-slate-950 overflow-hidden relative mb-2 flex items-center justify-center">
+                      <div className="h-32 sm:h-36 w-full rounded-2xl bg-slate-950 overflow-hidden relative mb-2.5 flex items-center justify-center">
                         {item.image_url ? (
                           <img
                             src={item.image_url}
@@ -833,29 +851,29 @@ export const WaiterDashboard = () => {
                           />
                         ) : (
                           <div className="text-slate-600 flex flex-col items-center">
-                            <ImageIcon className="w-6 h-6 mb-1" />
-                            <span className="text-[10px]">Taom</span>
+                            <ImageIcon className="w-8 h-8 mb-1 text-slate-500" />
+                            <span className="text-xs font-bold">Taom</span>
                           </div>
                         )}
 
                         {isStop && (
-                          <span className="absolute inset-x-1 bottom-1 text-center bg-red-600/90 text-white font-extrabold text-[9px] py-0.5 rounded">
-                            Tugagan (Stop)
+                          <span className="absolute inset-x-2 bottom-2 text-center bg-red-600 text-white font-black text-xs py-1 rounded-xl shadow-lg">
+                            Tugagan (Stop-list)
                           </span>
                         )}
                       </div>
 
                       {/* Title */}
-                      <h4 className="text-xs font-bold text-white group-hover:text-emerald-300 transition-colors line-clamp-2 leading-tight">
+                      <h4 className="text-sm sm:text-base font-extrabold text-white group-hover:text-emerald-300 transition-colors line-clamp-2 leading-tight">
                         {item.name}
                       </h4>
 
-                      {/* Price Badge (Photo 2 green badge bottom left) */}
-                      <div className="mt-2.5 flex items-center justify-between">
-                        <span className="px-2 py-0.5 rounded-lg bg-emerald-600 text-white font-black text-xs shadow-sm">
-                          {item.price.toLocaleString('uz-UZ')}
+                      {/* Price Badge and Plus button */}
+                      <div className="mt-3 flex items-center justify-between">
+                        <span className="px-3 py-1.5 rounded-xl bg-emerald-600 text-white font-black text-xs sm:text-sm shadow-md font-mono">
+                          {item.price.toLocaleString('uz-UZ')} so'm
                         </span>
-                        <span className="w-5 h-5 rounded-full bg-emerald-500/20 text-emerald-400 flex items-center justify-center text-xs font-bold group-hover:bg-emerald-500 group-hover:text-slate-950 transition-colors">
+                        <span className="w-8 h-8 rounded-xl bg-emerald-500/20 text-emerald-400 flex items-center justify-center text-base font-black group-hover:bg-emerald-500 group-hover:text-slate-950 transition-colors shadow-sm">
                           +
                         </span>
                       </div>

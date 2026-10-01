@@ -21,7 +21,19 @@ async function request(endpoint, options = {}) {
   }
 
   const url = endpoint.startsWith('http') ? endpoint : `${BASE_URL}${endpoint}`;
-  const response = await fetch(url, config);
+  let response;
+  try {
+    response = await fetch(url, config);
+  } catch (netErr) {
+    // 1-marta avtomatik qayta urinish (Wi-Fi yoki backend uyg'onish kechikishi uchun)
+    try {
+      await new Promise((r) => setTimeout(r, 600));
+      response = await fetch(url, config);
+    } catch (secondErr) {
+      console.warn('Backend aloqasida uzilish:', secondErr);
+      throw new Error("Server bilan aloqa vaqtincha uzildi. Backend (port 8000) ishlayotganini yoki Wi-Fi tarmog'ini tekshiring.");
+    }
+  }
 
   if (!response.ok) {
     let errorDetail = 'Xatolik yuz berdi';

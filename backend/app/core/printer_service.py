@@ -26,6 +26,77 @@ def _center_line(text: str, width: int = 42) -> str:
     return f"{' ' * pad}{text}"
 
 
+def latin_to_cyrillic(text: Optional[str]) -> str:
+    """O'zbek lotin yozuvidagi matnni krill harflariga o'girish (termal cheklar uchun)"""
+    if not text:
+        return ""
+    s = str(text)
+
+    # 2-harfli birikmalar (katta-kichik harflar bilan)
+    multi_pairs = [
+        ("sh", "ш"), ("Sh", "Ш"), ("SH", "Ш"),
+        ("ch", "ч"), ("Ch", "Ч"), ("CH", "Ч"),
+        ("yo", "ё"), ("Yo", "Ё"), ("YO", "Ё"),
+        ("yu", "ю"), ("Yu", "Ю"), ("YU", "Ю"),
+        ("ya", "я"), ("Ya", "Я"), ("YA", "Я"),
+        ("ye", "е"), ("Ye", "Е"), ("YE", "Е"),
+        ("o'", "ў"), ("O'", "Ў"), ("o‘", "ў"), ("O‘", "Ў"), ("o’", "ў"), ("O’", "Ў"), ("o`", "ў"), ("O`", "Ў"),
+        ("g'", "ғ"), ("G'", "Ғ"), ("g‘", "ғ"), ("G‘", "Ғ"), ("g’", "ғ"), ("G’", "Ғ"), ("g`", "ғ"), ("G`", "Ғ"),
+    ]
+    for lat, cyr in multi_pairs:
+        s = s.replace(lat, cyr)
+
+    # 1-harfli harflar
+    single_map = {
+        'a': 'а', 'A': 'А',
+        'b': 'б', 'B': 'Б',
+        'd': 'д', 'D': 'Д',
+        'e': 'е', 'E': 'Е',
+        'f': 'ф', 'F': 'Ф',
+        'g': 'г', 'G': 'Г',
+        'h': 'ҳ', 'H': 'Ҳ',
+        'i': 'и', 'I': 'И',
+        'j': 'ж', 'J': 'Ж',
+        'k': 'к', 'K': 'К',
+        'l': 'л', 'L': 'Л',
+        'm': 'м', 'M': 'М',
+        'n': 'н', 'N': 'Н',
+        'o': 'о', 'O': 'О',
+        'p': 'п', 'P': 'П',
+        'q': 'қ', 'Q': 'Қ',
+        'r': 'р', 'R': 'Р',
+        's': 'с', 'S': 'С',
+        't': 'т', 'T': 'Т',
+        'u': 'у', 'U': 'У',
+        'v': 'в', 'V': 'В',
+        'x': 'х', 'X': 'Х',
+        'y': 'й', 'Y': 'Й',
+        'z': 'з', 'Z': 'З',
+    }
+    return "".join(single_map.get(ch, ch) for ch in s)
+
+
+def clean_for_cp866(text: str) -> str:
+    """
+    CP866 (DOS Russian) kodirovkasida xatolik '???' chiqmasligi uchun
+    maxsus o'zbek kirill harflarini standart rus kirill harflariga normallashtirish.
+    Xprinter termal printerlari buni 100% tiniq va xatosiz chop etadi!
+    """
+    if not text:
+        return ""
+    t = str(text)
+    cp_map = {
+        'Ў': 'У', 'ў': 'у',
+        'Қ': 'К', 'қ': 'к',
+        'Ғ': 'Г', 'ғ': 'г',
+        'Ҳ': 'Х', 'ҳ': 'х',
+        '’': "'", '‘': "'", '`': "'", '“': '"', '”': '"',
+    }
+    for k, v in cp_map.items():
+        t = t.replace(k, v)
+    return t
+
+
 def format_kitchen_ticket(
     hall_name: Optional[str],
     room_name: Optional[str],
@@ -38,7 +109,7 @@ def format_kitchen_ticket(
     station_title: Optional[str] = None,
 ) -> str:
     """
-    Oshxona / Bar begunogi (Runner ticket)
+    Oshxona / Bar begunogi (Runner ticket) — To'liq Kirill alifbosida
     """
     col_width = 42 if paper_width >= 80 else 32
     sep = "-" * col_width
@@ -46,27 +117,39 @@ def format_kitchen_ticket(
     dt_str = dt.strftime("%d.%m.%Y | %H:%M")
 
     lines = []
-    if station_title:
-        lines.append(_center_line(f"*** {station_title.upper()} ***", col_width))
-    if hall_name:
-        lines.append(_center_line(hall_name.upper(), col_width))
+    # Oshxona stansiyasi sarlavhasi
+    st_title = station_title or "ОШХОНА БЕГУНОГИ"
+    lines.append(_center_line(f"*** {latin_to_cyrillic(st_title).upper()} ***", col_width))
+
+    # Zal / Xona nomi
+    zal = hall_name or room_name or "Зал"
+    lines.append(_center_line(latin_to_cyrillic(zal).upper(), col_width))
     if room_name and room_name != hall_name:
-        lines.append(str(room_name))
-    lines.append(f"N# {table_number}")
-    lines.append(f"Выполнена: {waiter_name or 'Официант'}")
-    lines.append(dt_str)
+        lines.append(_center_line(latin_to_cyrillic(room_name), col_width))
+
+    # Stol va Ofitsiant
+    lines.append(f"Стол: № {table_number}")
+    waiter_cyr = latin_to_cyrillic(waiter_name or 'Официант')
+    lines.append(f"Официант: {waiter_cyr}")
+    lines.append(f"Вақт: {dt_str}")
+    lines.append(sep)
+
+    lines.append(_pad_line("ТАОМ", "СОНИ", col_width))
     lines.append(sep)
 
     for item in items:
-        name = item.get("name") or "Taom"
+        raw_name = item.get("name_cyrillic") or item.get("name") or "Таом"
+        name = latin_to_cyrillic(raw_name)
         qty = item.get("quantity") or 1
-        lines.append(_pad_line(name, str(qty), col_width))
+        lines.append(_pad_line(name, f"{qty} та", col_width))
         if item.get("note"):
-            lines.append(f"  * {item['note']}")
+            note_cyr = latin_to_cyrillic(item['note'])
+            lines.append(f"  * {note_cyr}")
 
     lines.append(sep)
     if kitchen_note:
-        lines.append(f"Izoh: {kitchen_note}")
+        note_str = latin_to_cyrillic(kitchen_note)
+        lines.append(f"Изоҳ: {note_str}")
         lines.append(sep)
 
     return "\n".join(lines) + "\n\n\n"
@@ -87,20 +170,12 @@ def format_pre_check(
     total: float,
     receipt_note: Optional[str] = None,
     footer_text: Optional[str] = None,
+    wifi_pass: Optional[str] = None,
     created_at: Optional[datetime] = None,
     paper_width: int = 80,
 ) -> str:
     """
-    Mijoz hisob cheki (Pre-check / Bill)
-    Namuna (Rasm 1 o'ng tomoni):
-      Стол: Terasa-11
-      Кассир/Официант: Зафарбек
-      Блюда:
-      1. Сомса        1 x 15 000        15 000
-      ...
-      Итого:                           217 000
-      Обслуживание (12%):               26 040
-      ИТОГО К ОПЛАТЕ:                  243 040
+    Mijoz hisob cheki (Pre-check / Bill) — To'liq Kirill alifbosida
     """
     col_width = 42 if paper_width >= 80 else 32
     sep = "-" * col_width
@@ -110,55 +185,59 @@ def format_pre_check(
 
     lines = []
     lines.append(double_sep)
-    lines.append(_center_line(restaurant_name.upper(), col_width))
+    rest_cyr = latin_to_cyrillic(restaurant_name or "RestAron")
+    lines.append(_center_line(rest_cyr.upper(), col_width))
     if address:
-        lines.append(_center_line(address, col_width))
+        lines.append(_center_line(latin_to_cyrillic(address), col_width))
     if phone:
-        lines.append(_center_line(f"Tel: {phone}", col_width))
+        lines.append(_center_line(f"Тел: {phone}", col_width))
+    if wifi_pass:
+        lines.append(_center_line(f"Wi-Fi: {wifi_pass}", col_width))
     lines.append(sep)
 
-    lines.append(_pad_line(f"Стол: {table_name}", f"Чек: {order_number}", col_width))
-    lines.append(_pad_line(f"Официант: {waiter_name or 'Xodim'}", dt_str, col_width))
+    tbl_cyr = latin_to_cyrillic(table_name)
+    lines.append(_pad_line(f"Стол: {tbl_cyr}", f"Чек: №{order_number}", col_width))
+    w_cyr = latin_to_cyrillic(waiter_name or 'Ходим')
+    lines.append(_pad_line(f"Официант: {w_cyr}", dt_str, col_width))
     lines.append(sep)
-    lines.append("Блюда:")
+    lines.append("Таомлар:")
 
     for idx, it in enumerate(items, 1):
-        name = it.get("name") or "Taom"
+        raw_name = it.get("name_cyrillic") or it.get("name") or "Таом"
+        name = latin_to_cyrillic(raw_name)
         qty = it.get("quantity") or 1
         unit_price = it.get("unit_price") or it.get("price") or 0.0
         line_total = it.get("total_price") or (qty * unit_price)
 
-        # 1. Somsa
         lines.append(f"{idx}. {name}")
-        # 1 x 15 000          15 000
         calc_str = f"   {qty} x {unit_price:,.0f}".replace(",", " ")
         tot_str = f"{line_total:,.0f}".replace(",", " ")
         lines.append(_pad_line(calc_str, tot_str, col_width))
 
     lines.append(sep)
     sub_str = f"{subtotal:,.0f}".replace(",", " ")
-    lines.append(_pad_line("Итого:", sub_str, col_width))
+    lines.append(_pad_line("Жами (Итого):", sub_str, col_width))
 
     if service_fee_percent > 0:
-        fee_title = f"Обслуживание ({service_fee_percent:.0f}%):"
+        fee_title = f"Хизмат ҳақи ({service_fee_percent:.0f}%):"
         fee_str = f"{service_fee_amount:,.0f}".replace(",", " ")
         lines.append(_pad_line(fee_title, fee_str, col_width))
 
     if discount > 0:
         disc_str = f"-{discount:,.0f}".replace(",", " ")
-        lines.append(_pad_line("Скидка:", disc_str, col_width))
+        lines.append(_pad_line("Чегирма (Скидка):", disc_str, col_width))
 
     lines.append(double_sep)
     total_str = f"{total:,.0f}".replace(",", " ")
-    lines.append(_pad_line("ИТОГО К ОПЛАТЕ:", total_str, col_width))
+    lines.append(_pad_line("ЖАМИ ТЎЛОВ:", total_str, col_width))
     lines.append(double_sep)
 
     if receipt_note:
-        lines.append(f"Izoh: {receipt_note}")
+        lines.append(f"Изоҳ: {latin_to_cyrillic(receipt_note)}")
         lines.append(sep)
 
-    msg = footer_text or "Tashrifingiz uchun rahmat!"
-    lines.append(_center_line(msg, col_width))
+    foot = footer_text or "Ташрифингиз учун раҳмат! Яна келинг!"
+    lines.append(_center_line(latin_to_cyrillic(foot), col_width))
 
     return "\n".join(lines) + "\n\n\n"
 
@@ -185,51 +264,52 @@ def format_shift_report(
     paper_width: int = 80,
 ) -> str:
     """
-    X-Report (oraliq hisobot) yoki Z-Report (kassani yopish)
+    X-Report (oraliq hisobot) yoki Z-Report (kassani yopish) — To'liq Kirill alifbosida
     """
     col_width = 42 if paper_width >= 80 else 32
     sep = "-" * col_width
     double_sep = "=" * col_width
 
-    title = "Z - HISOBOT (KASSA YOPILISHI)" if report_type.lower() == "z_report" else "X - HISOBOT (ORALIQ HISOBOT)"
+    title = "Z - ҲИСОБОТ (КАССА ЁПИЛИШИ)" if report_type.lower() == "z_report" else "X - ҲИСОБОТ (ОРАЛИҚ)"
 
     lines = []
     lines.append(double_sep)
-    lines.append(_center_line(restaurant_name.upper(), col_width))
+    lines.append(_center_line(latin_to_cyrillic(restaurant_name).upper(), col_width))
     lines.append(_center_line(title, col_width))
     lines.append(sep)
 
-    lines.append(_pad_line(f"Smena: #{shift_number}", f"Kassir: {cashier_name}", col_width))
+    c_cyr = latin_to_cyrillic(cashier_name or "Кассир")
+    lines.append(_pad_line(f"Смена: #{shift_number}", f"Кассир: {c_cyr}", col_width))
     if opened_at:
-        lines.append(f"Ochilgan: {opened_at.strftime('%d.%m.%Y %H:%M')}")
+        lines.append(f"Очилган: {opened_at.strftime('%d.%m.%Y %H:%M')}")
     dt_close = closed_at or datetime.now()
-    lines.append(f"Hisobot:  {dt_close.strftime('%d.%m.%Y %H:%M')}")
+    lines.append(f"Ҳисобот: {dt_close.strftime('%d.%m.%Y %H:%M')}")
     lines.append(sep)
 
-    lines.append(_pad_line("Yopilgan buyurtmalar:", str(total_orders), col_width))
+    lines.append(_pad_line("Ёпилган буюртмалар:", str(total_orders), col_width))
     lines.append(sep)
 
-    lines.append(_pad_line("Naqd pul (Наличные):", f"{total_cash:,.0f}".replace(",", " "), col_width))
-    lines.append(_pad_line("Karta (Карта):", f"{total_card:,.0f}".replace(",", " "), col_width))
+    lines.append(_pad_line("Нақд пул (Наличные):", f"{total_cash:,.0f}".replace(",", " "), col_width))
+    lines.append(_pad_line("Банк карта (Карта):", f"{total_card:,.0f}".replace(",", " "), col_width))
     lines.append(_pad_line("Click / Payme:", f"{total_click:,.0f}".replace(",", " "), col_width))
-    lines.append(_pad_line("Nasiya / Qarz:", f"{total_debt:,.0f}".replace(",", " "), col_width))
+    lines.append(_pad_line("Насия / Қарз:", f"{total_debt:,.0f}".replace(",", " "), col_width))
     lines.append(sep)
 
-    lines.append(_pad_line("Jami xizmat haqi:", f"{total_service_fee:,.0f}".replace(",", " "), col_width))
-    lines.append(_pad_line("Ofitsiantlar ulushi:", f"{total_waiter_earnings:,.0f}".replace(",", " "), col_width))
+    lines.append(_pad_line("Жами хизмат ҳақи:", f"{total_service_fee:,.0f}".replace(",", " "), col_width))
+    lines.append(_pad_line("Официантлар улуши:", f"{total_waiter_earnings:,.0f}".replace(",", " "), col_width))
     lines.append(double_sep)
 
-    lines.append(_pad_line("UMUMIY TUSHUM:", f"{total_sales:,.0f}".replace(",", " "), col_width))
+    lines.append(_pad_line("УМУМИЙ ТУШУМ:", f"{total_sales:,.0f}".replace(",", " "), col_width))
     lines.append(double_sep)
 
     if waiter_breakdown:
-        lines.append("OFITSIANTLAR KESIMIDA:")
+        lines.append("ОФИЦИАНТЛАР КЕСИМИДА:")
         for w in waiter_breakdown:
-            w_name = w.get("name", "Ofitsiant")
+            w_name = latin_to_cyrillic(w.get("name", "Официант"))
             w_sales = w.get("sales", 0.0)
             w_earn = w.get("earning", 0.0)
             lines.append(f" • {w_name}:")
-            lines.append(_pad_line(f"   Savdo: {w_sales:,.0f}".replace(",", " "), f"Ulush: {w_earn:,.0f}".replace(",", " "), col_width))
+            lines.append(_pad_line(f"   Савдо: {w_sales:,.0f}".replace(",", " "), f"Улуш: {w_earn:,.0f}".replace(",", " "), col_width))
         lines.append(sep)
 
     return "\n".join(lines) + "\n\n\n"
@@ -255,17 +335,84 @@ def get_installed_printers() -> List[str]:
         return []
 
 
+import socket
+import re
+
+def is_ip_address(text: str) -> bool:
+    """Tekshirish: kiritilgan matn IP manzilmi (masalan: 192.168.1.100 yoki 192.168.1.100:9100)"""
+    if not text:
+        return False
+    clean = text.strip().split(":")[0]
+    pattern = r"^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$"
+    return bool(re.match(pattern, clean))
+
+
+def print_to_network_printer(
+    ip_or_host: str,
+    port: int = 9100,
+    raw_text: str = "",
+    cut_paper: bool = True
+) -> Dict[str, Any]:
+    """
+    Wi-Fi yoki Ethernet (LAN kabel) orqali ulangan Xprinterga
+    to'g'ridan-to'g'ri TCP Port 9100 orqali chek chop etish.
+    (Oshxonadagi uzoq masofali printerlar uchun eng qulay usul!)
+    """
+    host = ip_or_host.strip()
+    if ":" in host:
+        parts = host.split(":")
+        host = parts[0]
+        try:
+            port = int(parts[1])
+        except Exception:
+            pass
+
+    try:
+        # Matnni CP866 (rus/o'zbek kirill termal) yoki UTF-8 kodlash
+        clean_text = clean_for_cp866(raw_text)
+        try:
+            payload = clean_text.encode("cp866", errors="replace")
+        except Exception:
+            payload = raw_text.encode("utf-8", errors="replace")
+
+        if cut_paper:
+            payload += b"\n\n\n\n\x1d\x56\x42\x00"
+
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.settimeout(3.5)
+        s.connect((host, port))
+        s.sendall(payload)
+        s.close()
+
+        return {
+            "success": True,
+            "printer": f"LAN {host}:{port}",
+            "message": f"Chek oshxona printeriga ({host}:{port}) tarmoq orqali muvaffaqiyatli yuborildi"
+        }
+    except Exception as e:
+        logger.error(f"Tarmoq printeriga ({host}:{port}) ulanishda xatolik: {e}")
+        return {
+            "success": False,
+            "error": f"Oshxona printeriga ({host}:{port}) ulanib bo'lmadi. Printer yoqilgani va Wi-Fi/kabelga ulangani tekshirilsin. Xato: {str(e)}"
+        }
+
+
 def print_to_windows_printer(
     raw_text: str,
     printer_name: Optional[str] = None,
     cut_paper: bool = True
 ) -> Dict[str, Any]:
     """
-    USB yoki Windows spooler orqali ulangan Xprinter termal printeriga
-    to'g'ridan-to'g'ri chop etish
+    USB, Windows Spooler yoki Tarmoq (LAN/Wi-Fi IP) orqali chop etish
     """
+    target = (printer_name or "").strip()
+
+    # Agar kiritilgan qiymat IP manzil bo'lsa -> Tarmoq orqali yuborish!
+    if is_ip_address(target):
+        return print_to_network_printer(target, raw_text=raw_text, cut_paper=cut_paper)
+
     if platform.system() != "Windows":
-        return {"success": False, "error": "Faqat Windows tizimida USB to'g'ridan-to'g'ri chop etish qo'llab-quvvatlanadi"}
+        return {"success": False, "error": "USB to'g'ridan-to'g'ri chop etish faqat Windows tizimida ishlaydi. Tarmoq printeri uchun IP manzil kiriting (masalan: 192.168.1.100)."}
 
     try:
         import win32print
@@ -291,9 +438,10 @@ def print_to_windows_printer(
         if not target:
             return {"success": False, "error": "Hech qanday printer topilmadi. Xprinter drayverini o'rnating."}
 
-        # Matnni kodlash (Uzbek / Rus harflari uchun CP866 yoki UTF-8)
+        # Matnni CP866 (rus/o'zbek kirill termal) yoki UTF-8 kodlash
+        clean_text = clean_for_cp866(raw_text)
         try:
-            payload = raw_text.encode("cp866", errors="replace")
+            payload = clean_text.encode("cp866", errors="replace")
         except Exception:
             payload = raw_text.encode("utf-8", errors="replace")
 

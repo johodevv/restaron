@@ -68,6 +68,7 @@ class SettingsUpdate(BaseModel):
     auto_print_kitchen: Optional[bool] = None
     auto_print_customer_bill: Optional[bool] = None
     direct_qr_access: Optional[bool] = None
+    enable_chef_kds: Optional[bool] = None
 
 
 

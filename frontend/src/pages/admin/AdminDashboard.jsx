@@ -53,7 +53,8 @@ import {
 export const AdminDashboard = () => {
   const { user } = useAuth();
   const { activeThemes, setActiveThemes, allThemes } = useTheme();
-  const { addEventListener } = useWebSocket();
+  const { addEventListener, playChime } = useWebSocket();
+  const [activePrintAlert, setActivePrintAlert] = useState(null);
   const [tab, setTab] = useState('overview'); // 'overview' | 'menu' | 'tables' | 'staff' | 'settings' | 'reviews'
 
   const restaurantId = user?.restaurant_id || 1;
@@ -249,6 +250,16 @@ export const AdminDashboard = () => {
     setBillModalOpen(true);
   };
 
+  // Direct print bill to Printer 1 (Kassa / Mijoz cheki)
+  const handleDirectPrintBill = async (tableId, tableNumber) => {
+    try {
+      const res = await api.post(`/tables/${tableId}/print-bill`);
+      alert(`✅ Stol #${tableNumber} hisob cheki ${res.printer_name || 'Printer 1'} ga muvaffaqiyatli yuborildi!`);
+    } catch (err) {
+      alert(`❌ Chek chiqarishda xatolik: ` + (err.message || ''));
+    }
+  };
+
   // Save QR Base URL
   const handleSaveBaseUrl = () => {
     if (tempBaseUrl.trim()) {
@@ -270,6 +281,31 @@ export const AdminDashboard = () => {
       setIsEditingBaseUrl(false);
     }
   };
+
+  // WebSocket: real-time buyurtmalar va oshxona printeriga yuborilgan cheklar monitoringi
+  useEffect(() => {
+    const unsub = addEventListener('*', (event) => {
+      if (event.type === 'kitchen_ticket' || event.type === 'order_to_kitchen') {
+        if (playChime) playChime('urgent');
+        setActivePrintAlert({
+          table: event.table_number || event.table_id || '—',
+          waiter: event.waiter_name || 'Ofitsiant',
+          tickets: event.tickets || [],
+          raw_text: event.raw_text,
+          time: new Date().toLocaleTimeString(),
+        });
+        loadAll();
+      } else if (
+        event.type === 'new_order' ||
+        event.type === 'order_updated' ||
+        event.type === 'table_status_updated' ||
+        event.type === 'call_waiter'
+      ) {
+        loadAll();
+      }
+    });
+    return () => unsub();
+  }, [addEventListener, playChime]);
 
   // ─── TABLES MANAGEMENT ──────────────────────────────────────────
   const handleCreateTable = async (e) => {
@@ -577,6 +613,55 @@ export const AdminDashboard = () => {
           <span>Yangilash</span>
         </button>
       </div>
+
+      {/* Real-time Kitchen Print Alert Toast */}
+      {activePrintAlert && (
+        <div className="p-4 rounded-3xl bg-gradient-to-r from-amber-500/20 via-orange-500/20 to-amber-500/20 border-2 border-amber-500/50 shadow-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 animate-fade-in">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-2xl bg-amber-500 text-slate-950 flex items-center justify-center font-black shrink-0 shadow-lg text-lg">
+              🖨️
+            </div>
+            <div>
+              <div className="text-sm font-extrabold text-white flex items-center gap-2">
+                <span>Yangi buyurtma! Oshxona printerlariga chiqarildi</span>
+                <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-black/40 text-amber-300">
+                  {activePrintAlert.time}
+                </span>
+              </div>
+              <div className="text-xs text-amber-200 mt-0.5">
+                Stol: <strong>№ {activePrintAlert.table}</strong> • Ofitsiant: <strong>{activePrintAlert.waiter || 'Xodim'}</strong>
+              </div>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 self-end sm:self-auto">
+            {activePrintAlert.raw_text && (
+              <button
+                type="button"
+                onClick={async () => {
+                  try {
+                    await api.post('/receipts/print-raw-usb', { text: activePrintAlert.raw_text });
+                    alert("✅ Chek printerga qayta yuborildi!");
+                  } catch (e) {
+                    alert("Xatolik: " + e.message);
+                  }
+                }}
+                className="px-3.5 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs flex items-center gap-1.5 transition-all shadow active:scale-95"
+              >
+                <Printer className="w-3.5 h-3.5" />
+                <span>Qayta chop etish</span>
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => setActivePrintAlert(null)}
+              className="p-2 rounded-xl bg-white/10 hover:bg-white/20 text-white transition-colors"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Tabs — Full Navigation Bar */}
       <div className="flex items-center gap-2 overflow-x-auto pb-2 scrollbar-none no-scrollbar">
@@ -894,6 +979,37 @@ export const AdminDashboard = () => {
                                     {(item.price || 0).toLocaleString()} so'm
                                   </div>
 
+                                  {/* Printer Station badge & quick switcher */}
+                                  <div className="mt-1.5 flex items-center gap-1">
+                                    <select
+                                      value={item.kitchen_station || 'hot_kitchen'}
+                                      onChange={async (e) => {
+                                        const newStation = e.target.value;
+                                        try {
+                                          await api.patch(`/menu/items/${item.id}`, { kitchen_station: newStation });
+                                          loadAll();
+                                        } catch (err) {
+                                          alert(err.message || 'Xatolik');
+                                        }
+                                      }}
+                                      className={`text-[10px] font-bold px-2 py-0.5 rounded-lg border cursor-pointer outline-none transition-all ${
+                                        item.kitchen_station === 'cold_kitchen'
+                                          ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/40 hover:bg-cyan-500/30'
+                                          : item.kitchen_station === 'customer_only'
+                                          ? 'bg-purple-500/20 text-purple-300 border-purple-500/40 hover:bg-purple-500/30'
+                                          : item.kitchen_station === 'all_kitchens'
+                                          ? 'bg-indigo-500/20 text-indigo-300 border-indigo-500/40 hover:bg-indigo-500/30'
+                                          : 'bg-amber-500/20 text-amber-300 border-amber-500/40 hover:bg-amber-500/30'
+                                      }`}
+                                      title="Printerni o'zgartirish"
+                                    >
+                                      <option value="hot_kitchen" className="bg-slate-900 text-white">🫕 1-Oshxona (Qozon)</option>
+                                      <option value="cold_kitchen" className="bg-slate-900 text-white">🐟 2-Oshxona (Baliq/Somsa)</option>
+                                      <option value="customer_only" className="bg-slate-900 text-white">🧾 Faqat Kassa</option>
+                                      <option value="all_kitchens" className="bg-slate-900 text-white">📢 Har 2 Oshxona</option>
+                                    </select>
+                                  </div>
+
                                   <div className="text-[10px] text-theme-muted flex items-center gap-2 mt-1">
                                     {item.prep_time_minutes && (
                                       <span className="flex items-center gap-0.5">
@@ -1179,14 +1295,25 @@ export const AdminDashboard = () => {
                       </select>
                     </div>
 
-                    {/* View Bill & Checkout Button */}
-                    <button
-                      onClick={() => handleOpenBill(t)}
-                      className="w-full py-2.5 rounded-xl bg-theme-primary/15 hover:bg-theme-primary/25 border border-theme-primary/30 text-theme-primary text-xs font-bold flex items-center justify-center gap-1.5 transition-all shadow-sm"
-                    >
-                      <Receipt className="w-3.5 h-3.5" />
-                      <span>Chek / Hisobni ko'rish</span>
-                    </button>
+                    {/* View Bill & Direct Print Button */}
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        onClick={() => handleOpenBill(t)}
+                        className="w-full py-2.5 rounded-xl bg-theme-primary/15 hover:bg-theme-primary/25 border border-theme-primary/30 text-theme-primary text-xs font-bold flex items-center justify-center gap-1.5 transition-all shadow-sm"
+                      >
+                        <Receipt className="w-3.5 h-3.5" />
+                        <span>Hisobni ko'rish</span>
+                      </button>
+
+                      <button
+                        onClick={() => handleDirectPrintBill(t.id, t.number)}
+                        className="w-full py-2.5 rounded-xl bg-blue-600/20 hover:bg-blue-600/30 border border-blue-500/40 text-blue-300 text-xs font-bold flex items-center justify-center gap-1.5 transition-all shadow-sm active:scale-95"
+                        title="Mijoz hisob chekini to'g'ridan-to'g'ri Printer 1 ga chiqarish"
+                      >
+                        <Printer className="w-3.5 h-3.5" />
+                        <span>Chek (Printer 1)</span>
+                      </button>
+                    </div>
 
                     {t.is_unlocked && (
                       <button
@@ -1684,6 +1811,26 @@ export const AdminDashboard = () => {
                       </option>
                     ))}
                   </select>
+                </div>
+
+                {/* Printer / Oshxona stansiyasi sozlamasi */}
+                <div className="sm:col-span-2 p-3.5 rounded-2xl bg-amber-500/10 border border-amber-500/30 space-y-1.5">
+                  <label className="block text-xs font-bold text-amber-300">
+                    🖨️ Qaysi printerdan chiqsin? (Oshxona stansiyasi):
+                  </label>
+                  <select
+                    value={dishKitchenStation}
+                    onChange={(e) => setDishKitchenStation(e.target.value)}
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-slate-900 border border-amber-500/40 text-xs text-white font-bold focus:outline-none focus:border-amber-400 cursor-pointer"
+                  >
+                    <option value="hot_kitchen">🫕 1-Oshxona (Qozon taomlari — Osh, Sho'rva, Lag'mon, Qozon kabob...) [2-Printer]</option>
+                    <option value="cold_kitchen">🐟 2-Oshxona (Baliq, Somsa, Shashlik, Mangal, Salatlar...) [3-Printer]</option>
+                    <option value="customer_only">🧾 Faqat Kassa / Mijoz cheki (Oshxonaga kirmaydi — Ichimliklar, non, desert)</option>
+                    <option value="all_kitchens">📢 Barcha oshxonalarga (1- va 2-oshxona ikkalasidan ham chiqarilsin)</option>
+                  </select>
+                  <p className="text-[10px] text-theme-muted">
+                    Ofitsiant zakaz olib "Buyurtmani tasdiqlash"ni bosganda, ushbu taom avtomatik ravishda tanlangan printerdan chop etiladi.
+                  </p>
                 </div>
 
                 <div>

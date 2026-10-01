@@ -65,21 +65,14 @@ Bearer JWT token ishlatiladi. `/auth/login` orqali token oling.
     lifespan=lifespan,
 )
 
-# CORS
-allowed_origins = [
-    settings.FRONTEND_URL,
-    "http://localhost:3000",
-    "http://localhost:5173",
-    "http://127.0.0.1:5173",
-    "http://localhost:4173",
-]
+# CORS — Restoran ichki Wi-Fi (192.168.x.x), mobil telefonlar, localhost va bulutli domenlarni to'liq qo'llab-quvvatlash
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=allowed_origins,
-    allow_origin_regex=r"https://.*\.vercel\.app|https://.*\.onrender\.com",
+    allow_origin_regex=r".*",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["*"],
 )
 
 # Static fayllar (rasmlar, QR kodlar)

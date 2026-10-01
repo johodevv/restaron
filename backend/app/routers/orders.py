@@ -697,14 +697,24 @@ async def send_to_kitchen(
 
     for it in target_items:
         st = getattr(it.menu_item, "kitchen_station", "hot_kitchen") if it.menu_item else "hot_kitchen"
-        st = (st or "hot_kitchen").lower()
+        st = (st or "hot_kitchen").lower().strip()
+
+        dish_name = getattr(it.menu_item, "name_cyrillic", None) or (it.menu_item.name if it.menu_item else "Таом")
 
         item_dict = {
-            "name": it.menu_item.name if it.menu_item else "Taom",
+            "name": dish_name,
             "quantity": it.quantity,
             "note": it.special_note,
         }
-        if any(key in st for key in ["cold", "kitchen2", "2", "baliq", "fish", "somsa", "mangal", "grill"]):
+
+        # Stansiya bo'yicha saralash
+        if st in ["customer_only", "customer", "kassa", "bill_only"]:
+            # Faqat mijoz kassa hisob chekida chiqadi, oshxonaga kirmaydi
+            continue
+        elif st in ["all_kitchens", "both", "all"]:
+            k1_items.append(item_dict)
+            k2_items.append(item_dict)
+        elif st in ["cold_kitchen", "kitchen2", "somsa", "baliq"] or any(key in st for key in ["cold", "kitchen2", "2", "baliq", "fish", "somsa", "mangal", "grill"]):
             k2_items.append(item_dict)
         else:
             k1_items.append(item_dict)
