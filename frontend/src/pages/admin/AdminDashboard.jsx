@@ -49,7 +49,8 @@ import {
   Archive,
   FileSpreadsheet,
   Trophy,
-  Palette
+  Palette,
+  CreditCard
 } from 'lucide-react';
 
 export const AdminDashboard = () => {
