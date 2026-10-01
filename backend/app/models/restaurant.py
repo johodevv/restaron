@@ -95,6 +95,16 @@ class RestaurantSettings(Base):
     sms_provider_api_key = Column(String(255), nullable=True)
     sms_template = Column(Text, default="Hurmatli {name}, {restaurant} restoranidagi {amount} so'm qarzingizni to'lashingizni so'raymiz.")
 
+    # 3 ta Chek Printerlari va Oshxona Routing Sozlamalari
+    printer_customer_name = Column(String(100), default="XP-Q80A", nullable=True)     # 1-Printer: Mijoz kassa cheki
+    printer_kitchen1_name = Column(String(100), default="XP-Q80A", nullable=True)     # 2-Printer: 1-Oshxona (Qozon taomlari)
+    printer_kitchen2_name = Column(String(100), default="XP-Q80A", nullable=True)     # 3-Printer: 2-Oshxona (Baliq, Somsa)
+    kitchen1_title = Column(String(100), default="1-Oshxona (Qozon taomlari)", nullable=True)
+    kitchen2_title = Column(String(100), default="2-Oshxona (Baliq / Somsa)", nullable=True)
+    auto_print_kitchen = Column(Boolean, default=True)            # Ofitsiant yuborganda avtomatik printerga chiqarish
+    auto_print_customer_bill = Column(Boolean, default=True)      # Hisob yopilganda mijoz chekini avtomatik chiqarish
+    direct_qr_access = Column(Boolean, default=True)              # QR kod skanerlanganda ruxsatsiz to'g'ridan-to'g'ri menyuga kirish
+
     # Til sozlamasi
     language = Column(String(10), default="uz")
 

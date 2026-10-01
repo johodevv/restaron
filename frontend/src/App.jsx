@@ -68,7 +68,8 @@ export const App = () => {
           const tableData = await api.get(`/tables/scan/${qrToken}`);
           currentTable = tableData;
           setTableInfo(tableData);
-          setTableUnlocked(Boolean(tableData.is_unlocked));
+          // Ruxsatsiz to'g'ridan-to'g'ri kirish (direct access)
+          setTableUnlocked(tableData.is_unlocked !== false);
         } catch (e) {
           console.warn('QR token topilmadi:', e);
           setTableInfo(null);
@@ -105,6 +106,7 @@ export const App = () => {
 
   const handleSelectTable = async (table) => {
     setTableInfo(table);
+    setTableUnlocked(true);
     const url = new URL(window.location);
     url.searchParams.set('table', table.qr_token || table.number);
     window.history.pushState({}, '', url);

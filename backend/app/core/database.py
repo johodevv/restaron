@@ -66,6 +66,17 @@ def _sync_sqlite_migrations(sync_conn):
             ("enable_sms_reminders", "BOOLEAN DEFAULT 0"),
             ("sms_provider_api_key", "VARCHAR(255)"),
             ("sms_template", "TEXT"),
+            ("printer_customer_name", "VARCHAR(100) DEFAULT 'XP-Q80A'"),
+            ("printer_kitchen1_name", "VARCHAR(100) DEFAULT 'XP-Q80A'"),
+            ("printer_kitchen2_name", "VARCHAR(100) DEFAULT 'XP-Q80A'"),
+            ("kitchen1_title", "VARCHAR(100) DEFAULT '1-Oshxona (Qozon taomlari)'"),
+            ("kitchen2_title", "VARCHAR(100) DEFAULT '2-Oshxona (Baliq / Somsa)'"),
+            ("auto_print_kitchen", "BOOLEAN DEFAULT 1"),
+            ("auto_print_customer_bill", "BOOLEAN DEFAULT 1"),
+            ("direct_qr_access", "BOOLEAN DEFAULT 1"),
+        ],
+        "categories": [
+            ("name_cyrillic", "VARCHAR(100)"),
         ],
         "orders": [
             ("order_type", "VARCHAR(50) DEFAULT 'table'"),
@@ -90,6 +101,9 @@ def _sync_sqlite_migrations(sync_conn):
         ],
         "menu_items": [
             ("is_stop_list", "BOOLEAN DEFAULT 0"),
+            ("name_cyrillic", "VARCHAR(200)"),
+            ("description_cyrillic", "TEXT"),
+            ("kitchen_station", "VARCHAR(50) DEFAULT 'hot_kitchen'"),
         ],
         "users": [
             ("commission_percent", "FLOAT DEFAULT 0.0"),

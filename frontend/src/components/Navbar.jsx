@@ -3,6 +3,7 @@ import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { useCart } from '../context/CartContext';
 import { useWebSocket } from '../context/WebSocketContext';
+import { useLanguage } from '../context/LanguageContext';
 import ThemePickerModal from './ThemePickerModal';
 import {
   UtensilsCrossed,
@@ -29,6 +30,7 @@ export const Navbar = ({
   const { user, logout } = useAuth();
   const { totalCount } = useCart();
   const { connected } = useWebSocket();
+  const { lang, setLang, t } = useLanguage();
   const [themeModalOpen, setThemeModalOpen] = useState(false);
 
   return (
@@ -99,6 +101,30 @@ export const Navbar = ({
                 <span className="hidden sm:inline">Hisob (Chek)</span>
               </button>
             )}
+
+            {/* 4 Languages Switcher (UZ | ЎЗ | RU | EN) */}
+            <div className="relative flex items-center bg-black/40 rounded-xl p-0.5 border border-theme-border/60">
+              {[
+                { code: 'uz', label: 'UZ' },
+                { code: 'oz', label: 'ЎЗ' },
+                { code: 'ru', label: 'RU' },
+                { code: 'en', label: 'EN' },
+              ].map(({ code, label }) => (
+                <button
+                  key={code}
+                  type="button"
+                  onClick={() => setLang(code)}
+                  className={`px-2 py-1 rounded-lg text-[11px] font-bold transition-all ${
+                    lang === code
+                      ? 'bg-amber-500 text-black shadow-sm'
+                      : 'text-zinc-400 hover:text-white'
+                  }`}
+                  title={code === 'oz' ? "Ўзбекча (Кирилл - Салом)" : code === 'uz' ? "O'zbekcha (Lotin)" : code === 'ru' ? "Русский" : "English"}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
 
             {/* Theme switcher */}
             <button

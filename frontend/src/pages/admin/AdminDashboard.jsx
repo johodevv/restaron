@@ -106,14 +106,18 @@ export const AdminDashboard = () => {
   const [categoryIcon, setCategoryIcon] = useState('🍽️');
   const [categoryNameRu, setCategoryNameRu] = useState('');
   const [categoryNameEn, setCategoryNameEn] = useState('');
+  const [categoryNameCyrillic, setCategoryNameCyrillic] = useState('');
 
   // Dish Modal States (Add & Edit)
   const [showDishModal, setShowDishModal] = useState(false);
   const [editingDish, setEditingDish] = useState(null);
   const [dishName, setDishName] = useState('');
+  const [dishNameCyrillic, setDishNameCyrillic] = useState('');
   const [dishPrice, setDishPrice] = useState('');
   const [dishCategory, setDishCategory] = useState('');
+  const [dishKitchenStation, setDishKitchenStation] = useState('hot_kitchen');
   const [dishDescription, setDishDescription] = useState('');
+  const [dishDescriptionCyrillic, setDishDescriptionCyrillic] = useState('');
   const [dishPrepTime, setDishPrepTime] = useState(15);
   const [dishCalories, setDishCalories] = useState('');
   const [dishImageUrl, setDishImageUrl] = useState('');
@@ -329,6 +333,7 @@ export const AdminDashboard = () => {
     setCategoryIcon('🍽️');
     setCategoryNameRu('');
     setCategoryNameEn('');
+    setCategoryNameCyrillic('');
     setShowCategoryModal(true);
   };
 
@@ -338,6 +343,7 @@ export const AdminDashboard = () => {
     setCategoryIcon(cat.icon || '🍽️');
     setCategoryNameRu(cat.name_ru || '');
     setCategoryNameEn(cat.name_en || '');
+    setCategoryNameCyrillic(cat.name_cyrillic || '');
     setShowCategoryModal(true);
   };
 
@@ -353,6 +359,7 @@ export const AdminDashboard = () => {
           icon: categoryIcon.trim() || '🍽️',
           name_ru: categoryNameRu.trim() || undefined,
           name_en: categoryNameEn.trim() || undefined,
+          name_cyrillic: categoryNameCyrillic.trim() || undefined,
         });
       } else {
         // Create
@@ -362,6 +369,7 @@ export const AdminDashboard = () => {
           icon: categoryIcon.trim() || '🍽️',
           name_ru: categoryNameRu.trim() || undefined,
           name_en: categoryNameEn.trim() || undefined,
+          name_cyrillic: categoryNameCyrillic.trim() || undefined,
           sort_order: categories.length,
         });
       }
@@ -386,9 +394,12 @@ export const AdminDashboard = () => {
   const handleOpenAddDish = (defaultCatId = null) => {
     setEditingDish(null);
     setDishName('');
+    setDishNameCyrillic('');
     setDishPrice('');
     setDishCategory(defaultCatId ? defaultCatId.toString() : (categories[0]?.id?.toString() || ''));
+    setDishKitchenStation('hot_kitchen');
     setDishDescription('');
+    setDishDescriptionCyrillic('');
     setDishPrepTime(15);
     setDishCalories('');
     setDishImageUrl('');
@@ -401,9 +412,12 @@ export const AdminDashboard = () => {
   const handleOpenEditDish = (dish) => {
     setEditingDish(dish);
     setDishName(dish.name || '');
+    setDishNameCyrillic(dish.name_cyrillic || '');
     setDishPrice(dish.price ? dish.price.toString() : '');
     setDishCategory(dish.category_id ? dish.category_id.toString() : '');
+    setDishKitchenStation(dish.kitchen_station || 'hot_kitchen');
     setDishDescription(dish.description || '');
+    setDishDescriptionCyrillic(dish.description_cyrillic || '');
     setDishPrepTime(dish.prep_time_minutes || 15);
     setDishCalories(dish.calories ? dish.calories.toString() : '');
     setDishImageUrl(dish.image_url || '');
@@ -428,9 +442,12 @@ export const AdminDashboard = () => {
         // Update Dish
         const updated = await api.patch(`/menu/items/${editingDish.id}`, {
           name: dishName.trim(),
+          name_cyrillic: dishNameCyrillic.trim() || undefined,
           price: parseFloat(dishPrice),
           category_id: parseInt(dishCategory),
+          kitchen_station: dishKitchenStation,
           description: dishDescription.trim() || undefined,
+          description_cyrillic: dishDescriptionCyrillic.trim() || undefined,
           prep_time_minutes: parseInt(dishPrepTime) || 15,
           calories: dishCalories ? parseInt(dishCalories) : undefined,
           image_url: dishImageUrl.trim() || undefined,
@@ -442,9 +459,12 @@ export const AdminDashboard = () => {
         // Create Dish
         const created = await api.post('/menu/items', {
           name: dishName.trim(),
+          name_cyrillic: dishNameCyrillic.trim() || undefined,
           price: parseFloat(dishPrice),
           category_id: parseInt(dishCategory),
+          kitchen_station: dishKitchenStation,
           description: dishDescription.trim() || undefined,
+          description_cyrillic: dishDescriptionCyrillic.trim() || undefined,
           prep_time_minutes: parseInt(dishPrepTime) || 15,
           calories: dishCalories ? parseInt(dishCalories) : undefined,
           image_url: dishImageUrl.trim() || undefined,
@@ -1508,6 +1528,19 @@ export const AdminDashboard = () => {
                 />
               </div>
 
+              <div>
+                <label className="block text-xs font-semibold text-theme-muted mb-1">
+                  Ўзбекча (Кирилл алифбосида):
+                </label>
+                <input
+                  type="text"
+                  value={categoryNameCyrillic}
+                  onChange={(e) => setCategoryNameCyrillic(e.target.value)}
+                  placeholder="masalan: Иссиқ таомлар"
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-black/30 border border-theme-border text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-theme-primary"
+                />
+              </div>
+
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-semibold text-theme-muted mb-1">
@@ -1586,6 +1619,38 @@ export const AdminDashboard = () => {
                     className="w-full px-3.5 py-2.5 rounded-xl bg-black/30 border border-theme-border text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-theme-primary"
                     required
                   />
+                </div>
+
+                <div className="sm:col-span-2">
+                  <label className="block text-xs font-semibold text-theme-muted mb-1">
+                    Taom Nomi (Ўзбекча Кирилл алифбосида):
+                  </label>
+                  <input
+                    type="text"
+                    value={dishNameCyrillic}
+                    onChange={(e) => setDishNameCyrillic(e.target.value)}
+                    placeholder="masalan: Қозон Кабоб (bo'sh qolsa avtomatik o'giriladi)"
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-black/30 border border-theme-border text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-theme-primary"
+                  />
+                </div>
+
+                <div className="sm:col-span-2 p-3 rounded-2xl bg-amber-500/10 border border-amber-500/30">
+                  <label className="block text-xs font-bold text-amber-300 mb-1">
+                    🖨️ Oshxona Stansiyasi (Qaysi printerdan chiqadi): *
+                  </label>
+                  <select
+                    value={dishKitchenStation}
+                    onChange={(e) => setDishKitchenStation(e.target.value)}
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-slate-900 border border-amber-500/40 text-xs text-white focus:outline-none focus:border-amber-400 font-bold"
+                    required
+                  >
+                    <option value="hot_kitchen">🍲 1-Oshxona (Qozon taomlari - osh, sho'rva, qozon kabob...)</option>
+                    <option value="cold_kitchen">🐟 2-Oshxona (Baliq, Somsa, mangal, shashlik...)</option>
+                    <option value="bar">🥤 Bar (Ichimliklar / Choyxona)</option>
+                  </select>
+                  <span className="text-[10px] text-theme-muted mt-1 block">
+                    Ofitsiant buyurtmani oshxonaga yuborganida faqat o'z stansiyasidagi printerdan begunok chiqadi.
+                  </span>
                 </div>
 
                 <div>

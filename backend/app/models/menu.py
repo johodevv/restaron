@@ -15,9 +15,10 @@ class Category(Base):
     id = Column(Integer, primary_key=True, index=True)
     restaurant_id = Column(Integer, ForeignKey("restaurants.id", ondelete="CASCADE"), nullable=False)
 
-    name = Column(String(100), nullable=False)
-    name_ru = Column(String(100), nullable=True)   # Rus tili
-    name_en = Column(String(100), nullable=True)   # Ingliz tili
+    name = Column(String(100), nullable=False)          # O'zbek (lotin)
+    name_ru = Column(String(100), nullable=True)          # Rus tili
+    name_en = Column(String(100), nullable=True)          # Ingliz tili
+    name_cyrillic = Column(String(100), nullable=True)    # O'zbek kirill (Ўзбекча)
     description = Column(Text, nullable=True)
     icon = Column(String(100), nullable=True)       # Emoji yoki icon nomi
     image_url = Column(String(500), nullable=True)
@@ -41,12 +42,14 @@ class MenuItem(Base):
     id = Column(Integer, primary_key=True, index=True)
     category_id = Column(Integer, ForeignKey("categories.id", ondelete="CASCADE"), nullable=False)
 
-    name = Column(String(200), nullable=False)
-    name_ru = Column(String(200), nullable=True)
-    name_en = Column(String(200), nullable=True)
+    name = Column(String(200), nullable=False)            # O'zbek (lotin)
+    name_ru = Column(String(200), nullable=True)          # Rus tili
+    name_en = Column(String(200), nullable=True)          # Ingliz tili
+    name_cyrillic = Column(String(200), nullable=True)    # O'zbek kirill
     description = Column(Text, nullable=True)
     description_ru = Column(Text, nullable=True)
     description_en = Column(Text, nullable=True)
+    description_cyrillic = Column(Text, nullable=True)    # Tavsif (kirill)
 
     price = Column(Float, nullable=False)
     image_url = Column(String(500), nullable=True)
@@ -61,6 +64,11 @@ class MenuItem(Base):
     prep_time_minutes = Column(Integer, default=15)   # Tayyorlash vaqti (minut)
     calories = Column(Integer, nullable=True)
     weight_grams = Column(Integer, nullable=True)     # Gramm
+
+    # Oshxona stansiyasi (printer routing uchun)
+    # hot_kitchen = 1-oshxona (qozonda pishadigan), cold_kitchen = 2-oshxona (baliq, somsa)
+    # bar = Bar, customer = faqat mijozlar chekiga, other = boshqa
+    kitchen_station = Column(String(50), default="hot_kitchen", nullable=False)
 
     # Statistika
     total_ordered = Column(Integer, default=0)        # Necha marta buyurtma qilingan

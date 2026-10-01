@@ -35,18 +35,10 @@ def format_kitchen_ticket(
     kitchen_note: Optional[str] = None,
     order_time: Optional[datetime] = None,
     paper_width: int = 80,
+    station_title: Optional[str] = None,
 ) -> str:
     """
     Oshxona / Bar begunogi (Runner ticket)
-    Namuna (Rasm 1):
-      Балкон
-      Хона
-      N# 30
-      Выполнена: Зафарбек
-      29.09.2026 | 20:09
-      ------------------------------------------
-      Кола1,5                                 1
-      Фанта 1,5                               1
     """
     col_width = 42 if paper_width >= 80 else 32
     sep = "-" * col_width
@@ -54,6 +46,8 @@ def format_kitchen_ticket(
     dt_str = dt.strftime("%d.%m.%Y | %H:%M")
 
     lines = []
+    if station_title:
+        lines.append(_center_line(f"*** {station_title.upper()} ***", col_width))
     if hall_name:
         lines.append(_center_line(hall_name.upper(), col_width))
     if room_name and room_name != hall_name:

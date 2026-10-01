@@ -21,7 +21,11 @@ import {
   ShieldCheck,
   AlertTriangle,
   Bot,
-  Smartphone
+  Smartphone,
+  UtensilsCrossed,
+  Flame,
+  Receipt,
+  Search
 } from 'lucide-react';
 
 const Toggle = ({ checked, onChange, label, description, icon: Icon, color = 'theme-primary' }) => (
@@ -78,6 +82,21 @@ export const RestaurantSettingsTab = ({ restaurantId }) => {
   const [enableTelegramNotifications, setEnableTelegramNotifications] = useState(false);
   const [enableSmsReminders, setEnableSmsReminders] = useState(false);
 
+  // 3-Printer Configuration
+  const [printerCustomerName, setPrinterCustomerName] = useState('XP-Q80A');
+  const [printerKitchen1Name, setPrinterKitchen1Name] = useState('XP-Q80A');
+  const [printerKitchen2Name, setPrinterKitchen2Name] = useState('XP-Q80A');
+  const [kitchen1Title, setKitchen1Title] = useState('1-Oshxona (Qozon taomlari)');
+  const [kitchen2Title, setKitchen2Title] = useState('2-Oshxona (Baliq / Somsa)');
+  const [autoPrintKitchen, setAutoPrintKitchen] = useState(true);
+  const [autoPrintCustomerBill, setAutoPrintCustomerBill] = useState(true);
+  const [directQrAccess, setDirectQrAccess] = useState(true);
+
+  // Printer detection and test states
+  const [detectedPrinters, setDetectedPrinters] = useState([]);
+  const [detectingPrinters, setDetectingPrinters] = useState(false);
+  const [testPrintLoading, setTestPrintLoading] = useState({});
+
   // Integrations
   const [telegramBotToken, setTelegramBotToken] = useState('');
   const [telegramChatId, setTelegramChatId] = useState('');
@@ -91,6 +110,41 @@ export const RestaurantSettingsTab = ({ restaurantId }) => {
   const [restaurantDescription, setRestaurantDescription] = useState('');
   const [restaurantAddress, setRestaurantAddress] = useState('');
   const [restaurantPhone, setRestaurantPhone] = useState('');
+
+  const handleDetectPrinters = async () => {
+    setDetectingPrinters(true);
+    try {
+      const res = await api.get('/receipts/printers/installed');
+      if (res && res.printers) {
+        setDetectedPrinters(res.printers);
+      }
+    } catch (e) {
+      alert("Printerlarni aniqlashda xatolik: " + (e.message || ''));
+    } finally {
+      setDetectingPrinters(false);
+    }
+  };
+
+  const handleTestPrint = async (printerKey, printerName, title) => {
+    if (!printerName) {
+      alert("Iltimos printer nomini kiriting yoki ro'yxatdan tanlang");
+      return;
+    }
+    setTestPrintLoading((prev) => ({ ...prev, [printerKey]: true }));
+    try {
+      const sampleText = `================================\n   ${title.toUpperCase()}\n   RestAron Test Chop Etish\n================================\nPrinter: ${printerName}\nSana: ${new Date().toLocaleString()}\nHolat: Ulanish muvaffaqiyatli!\n================================\n\n\n`;
+      await api.post('/receipts/print-raw-usb', {
+        text: sampleText,
+        printer_name: printerName,
+        cut_paper: true,
+      });
+      alert(`✅ ${printerName} printeriga test cheki muvaffaqiyatli yuborildi!`);
+    } catch (err) {
+      alert(`❌ Chop etishda xatolik (${printerName}): ` + (err.message || 'Printer ulanmagan yoki Windows drayveri topilmadi'));
+    } finally {
+      setTestPrintLoading((prev) => ({ ...prev, [printerKey]: false }));
+    }
+  };
 
   const fetchSettings = async () => {
     setLoading(true);
@@ -120,6 +174,16 @@ export const RestaurantSettingsTab = ({ restaurantId }) => {
         setTelegramChatId(s.telegram_chat_id || '');
         setSmsProviderApiKey(s.sms_provider_api_key || '');
         setSmsTemplate(s.sms_template || smsTemplate);
+
+        // 3-Printer settings
+        setPrinterCustomerName(s.printer_customer_name || 'XP-Q80A');
+        setPrinterKitchen1Name(s.printer_kitchen1_name || 'XP-Q80A');
+        setPrinterKitchen2Name(s.printer_kitchen2_name || 'XP-Q80A');
+        setKitchen1Title(s.kitchen1_title || '1-Oshxona (Qozon taomlari)');
+        setKitchen2Title(s.kitchen2_title || '2-Oshxona (Baliq / Somsa)');
+        setAutoPrintKitchen(s.auto_print_kitchen ?? true);
+        setAutoPrintCustomerBill(s.auto_print_customer_bill ?? true);
+        setDirectQrAccess(s.direct_qr_access ?? true);
       }
     } catch (err) {
       console.error('Error fetching settings:', err);
@@ -163,6 +227,15 @@ export const RestaurantSettingsTab = ({ restaurantId }) => {
         enable_sms_reminders: enableSmsReminders,
         sms_provider_api_key: smsProviderApiKey.trim() || undefined,
         sms_template: smsTemplate.trim() || undefined,
+        // 3-Printer and Routing
+        printer_customer_name: printerCustomerName.trim() || undefined,
+        printer_kitchen1_name: printerKitchen1Name.trim() || undefined,
+        printer_kitchen2_name: printerKitchen2Name.trim() || undefined,
+        kitchen1_title: kitchen1Title.trim() || undefined,
+        kitchen2_title: kitchen2Title.trim() || undefined,
+        auto_print_kitchen: autoPrintKitchen,
+        auto_print_customer_bill: autoPrintCustomerBill,
+        direct_qr_access: directQrAccess,
       });
 
       setSavedOk(true);
@@ -432,9 +505,261 @@ export const RestaurantSettingsTab = ({ restaurantId }) => {
         </div>
       </SettingsSection>
 
+      {/* ─── Section 3.5: 3 ta Chek Printerlari va Oshxona Routing ───────────────── */}
+      <SettingsSection title="🖨️ 3 ta Chek Printerlari va Oshxona Routing Sozlamasi" icon={Printer} accentColor="text-amber-400">
+        <div className="space-y-4">
+          <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div>
+              <div className="text-xs font-bold text-amber-300">Tizimga ulangan Windows printerlarni aniqlash</div>
+              <div className="text-[11px] text-theme-muted mt-0.5">
+                Kompyuteringizga USB orqali ulangan barcha Xprinter yoki kassa printerlarini avtomatik qidiradi.
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={handleDetectPrinters}
+              disabled={detectingPrinters}
+              className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs shrink-0 flex items-center gap-1.5 transition-all shadow-md disabled:opacity-50"
+            >
+              <Search className={`w-3.5 h-3.5 ${detectingPrinters ? 'animate-spin' : ''}`} />
+              <span>{detectingPrinters ? 'Qidirilmoqda...' : 'Printerlarni aniqlash'}</span>
+            </button>
+          </div>
+
+          {detectedPrinters.length > 0 && (
+            <div className="p-3.5 rounded-2xl bg-black/40 border border-theme-border/60">
+              <span className="text-[11px] font-bold text-theme-muted block mb-2">Kompyuterda topilgan printerlar (bosib tanlang):</span>
+              <div className="flex flex-wrap gap-2">
+                {detectedPrinters.map((p) => (
+                  <span
+                    key={p}
+                    className="px-2.5 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-white text-xs font-mono font-bold flex items-center gap-1.5 cursor-pointer border border-white/10"
+                    title="Bosib printer nomini nusxalang"
+                    onClick={() => {
+                      navigator.clipboard?.writeText(p);
+                      alert(`'${p}' nusxalandi!`);
+                    }}
+                  >
+                    <span>🖨️ {p}</span>
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* 3 ta printer kartalari */}
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 pt-2">
+            {/* 1-Printer: Mijoz kassa cheki */}
+            <div className="p-4 rounded-2xl bg-black/40 border border-emerald-500/30 flex flex-col justify-between space-y-3 shadow-lg">
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 text-[10px] font-black uppercase tracking-wider">
+                    1-Printer • Mijoz Cheki
+                  </span>
+                  <Receipt className="w-4 h-4 text-emerald-400" />
+                </div>
+                <div className="text-sm font-bold text-white">Mijozlar Hisob Cheki (Kassa)</div>
+                <p className="text-[11px] text-theme-muted leading-relaxed">
+                  Mijoz nimalar yeganini narxi, servis haqi va to'lov summasi bilan kassa oldida chiqaradigan printer.
+                </p>
+
+                <div className="pt-2">
+                  <label className="block text-[11px] font-semibold text-theme-muted mb-1">Printer nomi (Windows):</label>
+                  <input
+                    type="text"
+                    placeholder="Masalan: XP-Q80A yoki Xprinter"
+                    value={printerCustomerName}
+                    onChange={(e) => setPrinterCustomerName(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl bg-slate-900 border border-emerald-500/40 text-xs text-white font-mono focus:outline-none focus:border-emerald-400"
+                  />
+                  {detectedPrinters.length > 0 && (
+                    <div className="mt-1 flex flex-wrap gap-1">
+                      {detectedPrinters.map(p => (
+                        <button
+                          key={p}
+                          type="button"
+                          onClick={() => setPrinterCustomerName(p)}
+                          className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20 border border-emerald-500/20"
+                        >
+                          {p}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <button
+                type="button"
+                disabled={testPrintLoading.p1}
+                onClick={() => handleTestPrint('p1', printerCustomerName, '1-Printer (Mijozlar Cheki)')}
+                className="w-full py-2 rounded-xl bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/40 text-emerald-300 text-xs font-bold transition-all flex items-center justify-center gap-1.5 active:scale-95"
+              >
+                <Printer className="w-3.5 h-3.5" />
+                <span>{testPrintLoading.p1 ? 'Chop etilmoqda...' : 'Test chop etish'}</span>
+              </button>
+            </div>
+
+            {/* 2-Printer: 1-Oshxona (Qozon) */}
+            <div className="p-4 rounded-2xl bg-black/40 border border-amber-500/30 flex flex-col justify-between space-y-3 shadow-lg">
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-400 text-[10px] font-black uppercase tracking-wider">
+                    2-Printer • 1-Oshxona
+                  </span>
+                  <UtensilsCrossed className="w-4 h-4 text-amber-400" />
+                </div>
+                <div className="text-sm font-bold text-white">Qozonda Pishadigan Taomlar</div>
+                <p className="text-[11px] text-theme-muted leading-relaxed">
+                  Oshxonadagi 1-printer. Faqat qozonda pishiriladigan taomlar (osh, sho'rva, qozon kabob...) buyurtmalari chiqadi.
+                </p>
+
+                <div className="pt-2 space-y-2">
+                  <div>
+                    <label className="block text-[11px] font-semibold text-theme-muted mb-1">Oshxona nomi:</label>
+                    <input
+                      type="text"
+                      placeholder="1-Oshxona (Qozon taomlari)"
+                      value={kitchen1Title}
+                      onChange={(e) => setKitchen1Title(e.target.value)}
+                      className="w-full px-3 py-1.5 rounded-xl bg-slate-900 border border-theme-border text-xs text-white focus:outline-none focus:border-amber-400"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-semibold text-theme-muted mb-1">Printer nomi (Windows):</label>
+                    <input
+                      type="text"
+                      placeholder="Masalan: XP-80 Kitchen 1"
+                      value={printerKitchen1Name}
+                      onChange={(e) => setPrinterKitchen1Name(e.target.value)}
+                      className="w-full px-3 py-2 rounded-xl bg-slate-900 border border-amber-500/40 text-xs text-white font-mono focus:outline-none focus:border-amber-400"
+                    />
+                    {detectedPrinters.length > 0 && (
+                      <div className="mt-1 flex flex-wrap gap-1">
+                        {detectedPrinters.map(p => (
+                          <button
+                            key={p}
+                            type="button"
+                            onClick={() => setPrinterKitchen1Name(p)}
+                            className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-300 hover:bg-amber-500/20 border border-amber-500/20"
+                          >
+                            {p}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                disabled={testPrintLoading.p2}
+                onClick={() => handleTestPrint('p2', printerKitchen1Name, kitchen1Title || '1-Oshxona (Qozon)')}
+                className="w-full py-2 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-300 text-xs font-bold transition-all flex items-center justify-center gap-1.5 active:scale-95"
+              >
+                <Printer className="w-3.5 h-3.5" />
+                <span>{testPrintLoading.p2 ? 'Chop etilmoqda...' : 'Test chop etish'}</span>
+              </button>
+            </div>
+
+            {/* 3-Printer: 2-Oshxona (Baliq va Somsa) */}
+            <div className="p-4 rounded-2xl bg-black/40 border border-blue-500/30 flex flex-col justify-between space-y-3 shadow-lg">
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-400 text-[10px] font-black uppercase tracking-wider">
+                    3-Printer • 2-Oshxona
+                  </span>
+                  <Flame className="w-4 h-4 text-blue-400" />
+                </div>
+                <div className="text-sm font-bold text-white">Baliq va Somsa Stansiyasi</div>
+                <p className="text-[11px] text-theme-muted leading-relaxed">
+                  Oshxonadagi 2-printer. Faqat qozonda pishmaydigan taomlar (baliq, somsa, mangal...) buyurtmalari chiqadi.
+                </p>
+
+                <div className="pt-2 space-y-2">
+                  <div>
+                    <label className="block text-[11px] font-semibold text-theme-muted mb-1">Oshxona nomi:</label>
+                    <input
+                      type="text"
+                      placeholder="2-Oshxona (Baliq / Somsa)"
+                      value={kitchen2Title}
+                      onChange={(e) => setKitchen2Title(e.target.value)}
+                      className="w-full px-3 py-1.5 rounded-xl bg-slate-900 border border-theme-border text-xs text-white focus:outline-none focus:border-blue-400"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-semibold text-theme-muted mb-1">Printer nomi (Windows):</label>
+                    <input
+                      type="text"
+                      placeholder="Masalan: XP-80 Kitchen 2"
+                      value={printerKitchen2Name}
+                      onChange={(e) => setPrinterKitchen2Name(e.target.value)}
+                      className="w-full px-3 py-2 rounded-xl bg-slate-900 border border-blue-500/40 text-xs text-white font-mono focus:outline-none focus:border-blue-400"
+                    />
+                    {detectedPrinters.length > 0 && (
+                      <div className="mt-1 flex flex-wrap gap-1">
+                        {detectedPrinters.map(p => (
+                          <button
+                            key={p}
+                            type="button"
+                            onClick={() => setPrinterKitchen2Name(p)}
+                            className="text-[10px] px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-300 hover:bg-blue-500/20 border border-blue-500/20"
+                          >
+                            {p}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                disabled={testPrintLoading.p3}
+                onClick={() => handleTestPrint('p3', printerKitchen2Name, kitchen2Title || '2-Oshxona (Baliq/Somsa)')}
+                className="w-full py-2 rounded-xl bg-blue-500/20 hover:bg-blue-500/30 border border-blue-500/40 text-blue-300 text-xs font-bold transition-all flex items-center justify-center gap-1.5 active:scale-95"
+              >
+                <Printer className="w-3.5 h-3.5" />
+                <span>{testPrintLoading.p3 ? 'Chop etilmoqda...' : 'Test chop etish'}</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Avtomatlashtirish togglelari */}
+          <div className="pt-3 border-t border-theme-border/50 grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <Toggle
+              checked={autoPrintKitchen}
+              onChange={setAutoPrintKitchen}
+              label="Oshxonaga avtomatik chop etish"
+              description="Ofitsiant 'На кухню' bosganda tegishli 1 va 2-oshxona printerlariga to'g'ridan-to'g'ri chop etiladi."
+              icon={Printer}
+              color="amber-400"
+            />
+            <Toggle
+              checked={autoPrintCustomerBill}
+              onChange={setAutoPrintCustomerBill}
+              label="Mijoz chekini avtomatik chop etish"
+              description="Kassada to'lov amalga oshirilganda 1-printerdan mijoz hisob cheki avtomatik chiqadi."
+              icon={Receipt}
+              color="emerald-400"
+            />
+          </div>
+        </div>
+      </SettingsSection>
+
       {/* ─── Section 4: Xususiyat Togglelari ─────────────────────────── */}
       <SettingsSection title="⚙️ Funksiya va Huquq Sozlamalari" icon={ShieldCheck} accentColor="text-emerald-400">
         <div className="space-y-2">
+          <Toggle
+            checked={directQrAccess}
+            onChange={setDirectQrAccess}
+            label="QR kod skanerlanganda ruxsatsiz to'g'ridan-to'g'ri kirish"
+            description="Mijoz stolga o'tirib QR kodni skaner qilganda hech qanday ruxsatsiz yoki PIN kodi kutilmasdan to'g'ridan-to'g'ri menyuga kiradi."
+            icon={Globe}
+            color="emerald-400"
+          />
           <Toggle
             checked={allowOrdersFromQr}
             onChange={setAllowOrdersFromQr}

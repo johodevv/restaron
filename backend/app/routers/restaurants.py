@@ -60,6 +60,14 @@ class SettingsUpdate(BaseModel):
     enable_sms_reminders: Optional[bool] = None
     sms_provider_api_key: Optional[str] = None
     sms_template: Optional[str] = None
+    printer_customer_name: Optional[str] = None
+    printer_kitchen1_name: Optional[str] = None
+    printer_kitchen2_name: Optional[str] = None
+    kitchen1_title: Optional[str] = None
+    kitchen2_title: Optional[str] = None
+    auto_print_kitchen: Optional[bool] = None
+    auto_print_customer_bill: Optional[bool] = None
+    direct_qr_access: Optional[bool] = None
 
 
 

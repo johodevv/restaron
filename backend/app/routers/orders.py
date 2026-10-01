@@ -26,7 +26,7 @@ from app.schemas.order import (
     WaiterOrderCreate, WaiterAddItemsRequest, UpdateItemQtyRequest,
     OrderNoteUpdate, OrderCheckoutRequest
 )
-from app.core.printer_service import format_kitchen_ticket, format_pre_check
+from app.core.printer_service import format_kitchen_ticket, format_pre_check, print_to_windows_printer
 from app.core.sms_telegram import send_telegram_alert
 from app.websockets.manager import manager
 
@@ -689,45 +689,136 @@ async def send_to_kitchen(
     settings = set_res.scalar_one_or_none()
     paper_width = settings.printer_paper_width if settings else 80
 
-    ticket_items = [
-        {
+    # 3-Printer Routing:
+    # 1-Oshxona (Qozon taomlari) -> hot_kitchen
+    # 2-Oshxona (Baliq, Somsa, va h.k.) -> cold_kitchen / fish / somsa
+    k1_items = []
+    k2_items = []
+
+    for it in target_items:
+        st = getattr(it.menu_item, "kitchen_station", "hot_kitchen") if it.menu_item else "hot_kitchen"
+        st = (st or "hot_kitchen").lower()
+
+        item_dict = {
             "name": it.menu_item.name if it.menu_item else "Taom",
             "quantity": it.quantity,
             "note": it.special_note,
         }
-        for it in target_items
-    ]
+        if any(key in st for key in ["cold", "kitchen2", "2", "baliq", "fish", "somsa", "mangal", "grill"]):
+            k2_items.append(item_dict)
+        else:
+            k1_items.append(item_dict)
 
-    kitchen_text = format_kitchen_ticket(
-        hall_name=order.hall_name or room_name,
-        room_name=room_name,
-        table_number=table_num,
-        waiter_name=waiter_display,
-        items=ticket_items,
-        kitchen_note=order.kitchen_note,
-        order_time=datetime.now(),
-        paper_width=paper_width,
-    )
+    k1_title = getattr(settings, "kitchen1_title", "1-Oshxona (Qozon taomlari)") or "1-Oshxona (Qozon taomlari)"
+    k2_title = getattr(settings, "kitchen2_title", "2-Oshxona (Baliq / Somsa)") or "2-Oshxona (Baliq / Somsa)"
+    k1_printer = getattr(settings, "printer_kitchen1_name", None) or "XP-Q80A"
+    k2_printer = getattr(settings, "printer_kitchen2_name", None) or "XP-Q80A"
+    auto_print = getattr(settings, "auto_print_kitchen", True)
 
-    archive = ReceiptArchive(
-        restaurant_id=order.restaurant_id,
-        order_id=order.id,
-        receipt_number=f"KITCHEN-{order.order_number}",
-        receipt_type="kitchen",
-        hall_name=order.hall_name or room_name,
-        table_name=f"N# {table_num}",
-        waiter_name=waiter_display,
-        subtotal=order.subtotal or 0.0,
-        service_fee_percent=0.0,
-        service_fee_amount=0.0,
-        total_amount=order.subtotal or 0.0,
-        payment_method="kitchen",
-        items_json=ticket_items,
-        notes=order.kitchen_note,
-        raw_text=kitchen_text,
-    )
-    db.add(archive)
+    generated_tickets = []
+    combined_texts = []
+
+    # 1-Oshxona (Qozon taomlari)
+    if k1_items:
+        k1_text = format_kitchen_ticket(
+            hall_name=order.hall_name or room_name,
+            room_name=room_name,
+            table_number=table_num,
+            waiter_name=waiter_display,
+            items=k1_items,
+            kitchen_note=order.kitchen_note,
+            order_time=datetime.now(),
+            paper_width=paper_width,
+            station_title=k1_title,
+        )
+        combined_texts.append(k1_text)
+        print_status = False
+        if auto_print:
+            try:
+                p_res = print_to_windows_printer(k1_text, printer_name=k1_printer)
+                print_status = p_res.get("success", False)
+            except Exception:
+                pass
+
+        archive1 = ReceiptArchive(
+            restaurant_id=order.restaurant_id,
+            order_id=order.id,
+            receipt_number=f"KITCHEN1-{order.order_number}",
+            receipt_type="kitchen",
+            hall_name=order.hall_name or room_name,
+            table_name=f"N# {table_num} ({k1_title})",
+            waiter_name=waiter_display,
+            subtotal=order.subtotal or 0.0,
+            service_fee_percent=0.0,
+            service_fee_amount=0.0,
+            total_amount=order.subtotal or 0.0,
+            payment_method="kitchen",
+            items_json=k1_items,
+            notes=order.kitchen_note,
+            raw_text=k1_text,
+        )
+        db.add(archive1)
+        generated_tickets.append({
+            "station": "hot_kitchen",
+            "station_title": k1_title,
+            "printer_name": k1_printer,
+            "items": k1_items,
+            "raw_text": k1_text,
+            "printed": print_status,
+        })
+
+    # 2-Oshxona (Baliq / Somsa)
+    if k2_items:
+        k2_text = format_kitchen_ticket(
+            hall_name=order.hall_name or room_name,
+            room_name=room_name,
+            table_number=table_num,
+            waiter_name=waiter_display,
+            items=k2_items,
+            kitchen_note=order.kitchen_note,
+            order_time=datetime.now(),
+            paper_width=paper_width,
+            station_title=k2_title,
+        )
+        combined_texts.append(k2_text)
+        print_status = False
+        if auto_print:
+            try:
+                p_res = print_to_windows_printer(k2_text, printer_name=k2_printer)
+                print_status = p_res.get("success", False)
+            except Exception:
+                pass
+
+        archive2 = ReceiptArchive(
+            restaurant_id=order.restaurant_id,
+            order_id=order.id,
+            receipt_number=f"KITCHEN2-{order.order_number}",
+            receipt_type="kitchen",
+            hall_name=order.hall_name or room_name,
+            table_name=f"N# {table_num} ({k2_title})",
+            waiter_name=waiter_display,
+            subtotal=order.subtotal or 0.0,
+            service_fee_percent=0.0,
+            service_fee_amount=0.0,
+            total_amount=order.subtotal or 0.0,
+            payment_method="kitchen",
+            items_json=k2_items,
+            notes=order.kitchen_note,
+            raw_text=k2_text,
+        )
+        db.add(archive2)
+        generated_tickets.append({
+            "station": "cold_kitchen",
+            "station_title": k2_title,
+            "printer_name": k2_printer,
+            "items": k2_items,
+            "raw_text": k2_text,
+            "printed": print_status,
+        })
+
     await db.flush()
+
+    main_raw_text = "\n------------------------------------------\n".join(combined_texts) if combined_texts else ""
 
     await manager.broadcast_to_roles(
         order.restaurant_id,
@@ -739,8 +830,8 @@ async def send_to_kitchen(
             "table_number": table_num,
             "hall_name": order.hall_name or room_name,
             "waiter_name": waiter_display,
-            "items": ticket_items,
-            "raw_text": kitchen_text,
+            "tickets": generated_tickets,
+            "raw_text": main_raw_text,
             "message": f"🔔 Yangi oshxona begunogi: Stol #{table_num}",
         }
     )
@@ -749,7 +840,8 @@ async def send_to_kitchen(
         "success": True,
         "order_id": order.id,
         "items_count": len(target_items),
-        "raw_text": kitchen_text,
+        "tickets": generated_tickets,
+        "raw_text": main_raw_text,
     }
 
 
@@ -905,6 +997,14 @@ async def checkout_order(
     )
     db.add(archive)
     await db.flush()
+
+    # Avtomatik 1-Printer (Mijoz kassa cheki) ga chop etish
+    if getattr(settings, "auto_print_customer_bill", True):
+        cust_printer = getattr(settings, "printer_customer_name", None) or "XP-Q80A"
+        try:
+            print_to_windows_printer(bill_text, printer_name=cust_printer)
+        except Exception:
+            pass
 
     await manager.broadcast_to_restaurant(order.restaurant_id, {
         "type": "order_paid",

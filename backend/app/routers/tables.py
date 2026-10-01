@@ -127,13 +127,20 @@ async def scan_qr(qr_token: str, db: AsyncSession = Depends(get_db)):
     if not table:
         raise HTTPException(status_code=404, detail="QR kod yaroqsiz yoki stol faol emas")
 
-    # Agar stol hali tasdiqlanmagan bo'lsa yoki bo'sh (AVAILABLE) bo'lsa -> yangi PIN va qulf holati
+    # Sozlamalarni tekshirish: direct_qr_access (ruxsatsiz to'g'ridan-to'g'ri kirish)
+    from app.models.restaurant import RestaurantSettings
+    set_res = await db.execute(select(RestaurantSettings).where(RestaurantSettings.restaurant_id == table.restaurant_id))
+    settings = set_res.scalar_one_or_none()
+    direct_access = getattr(settings, "direct_qr_access", True) if settings else True
+
     needs_broadcast = False
-    if not table.is_unlocked or not table.current_pin or table.status == TableStatus.AVAILABLE or table.status == "available":
-        if not table.current_pin or table.status == TableStatus.AVAILABLE or table.status == "available":
+    if not table.is_unlocked or table.status == TableStatus.AVAILABLE or table.status == "available":
+        table.status = TableStatus.OCCUPIED
+        if direct_access:
+            table.is_unlocked = True
+        else:
             table.current_pin = f"{random.randint(1000, 9999)}"
             table.is_unlocked = False
-        table.status = TableStatus.OCCUPIED
         needs_broadcast = True
 
     await db.flush()

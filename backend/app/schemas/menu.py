@@ -11,6 +11,7 @@ class CategoryBase(BaseModel):
     name: str = Field(..., min_length=1, max_length=100)
     name_ru: Optional[str] = None
     name_en: Optional[str] = None
+    name_cyrillic: Optional[str] = None
     description: Optional[str] = None
     icon: Optional[str] = None
     image_url: Optional[str] = None
@@ -26,6 +27,7 @@ class CategoryUpdate(BaseModel):
     name: Optional[str] = None
     name_ru: Optional[str] = None
     name_en: Optional[str] = None
+    name_cyrillic: Optional[str] = None
     description: Optional[str] = None
     icon: Optional[str] = None
     image_url: Optional[str] = None
@@ -46,9 +48,11 @@ class MenuItemBase(BaseModel):
     name: str = Field(..., min_length=1, max_length=200)
     name_ru: Optional[str] = None
     name_en: Optional[str] = None
+    name_cyrillic: Optional[str] = None
     description: Optional[str] = None
     description_ru: Optional[str] = None
     description_en: Optional[str] = None
+    description_cyrillic: Optional[str] = None
     price: float = Field(..., gt=0)
     image_url: Optional[str] = None
     is_available: bool = True
@@ -58,6 +62,7 @@ class MenuItemBase(BaseModel):
     prep_time_minutes: int = 15
     calories: Optional[int] = None
     weight_grams: Optional[int] = None
+    kitchen_station: Optional[str] = "hot_kitchen"
     sort_order: int = 0
 
 
@@ -69,7 +74,11 @@ class MenuItemUpdate(BaseModel):
     name: Optional[str] = None
     name_ru: Optional[str] = None
     name_en: Optional[str] = None
+    name_cyrillic: Optional[str] = None
     description: Optional[str] = None
+    description_ru: Optional[str] = None
+    description_en: Optional[str] = None
+    description_cyrillic: Optional[str] = None
     price: Optional[float] = None
     image_url: Optional[str] = None
     is_available: Optional[bool] = None
@@ -79,6 +88,7 @@ class MenuItemUpdate(BaseModel):
     prep_time_minutes: Optional[int] = None
     calories: Optional[int] = None
     weight_grams: Optional[int] = None
+    kitchen_station: Optional[str] = None
     category_id: Optional[int] = None
     sort_order: Optional[int] = None
 

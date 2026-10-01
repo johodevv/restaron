@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import api from '../../utils/api';
 import { useWebSocket } from '../../context/WebSocketContext';
+import { useLanguage } from '../../context/LanguageContext';
 import {
   Search,
   Clock,
@@ -22,6 +23,7 @@ export const CustomerMenu = ({
   onOpenBill,
   onReturnToLanding,
 }) => {
+  const { t, getLocalizedName, getLocalizedDesc } = useLanguage();
   const [categories, setCategories] = useState([]);
   const [selectedCatId, setSelectedCatId] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
@@ -181,7 +183,7 @@ export const CustomerMenu = ({
                   }`}
                 >
                   <span className="text-sm">{cat.icon || '🍽️'}</span>
-                  <span>{cat.name}</span>
+                  <span>{getLocalizedName(cat)}</span>
                   {cat.items && (
                     <span
                       className={`text-[10px] px-1.5 py-0.5 rounded-full ${
@@ -233,7 +235,7 @@ export const CustomerMenu = ({
                       {item.image_url ? (
                         <img
                           src={item.image_url}
-                          alt={item.name}
+                          alt={getLocalizedName(item)}
                           className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
                           loading="lazy"
                         />
@@ -268,11 +270,11 @@ export const CustomerMenu = ({
                     {/* Content */}
                     <div className="p-4 sm:p-5">
                       <h3 className="font-bold text-white text-base leading-snug group-hover:text-amber-400 transition-colors">
-                        {item.name}
+                        {getLocalizedName(item)}
                       </h3>
                       {item.description && (
                         <p className="text-xs text-slate-400 line-clamp-2 mt-1.5 leading-relaxed">
-                          {item.description}
+                          {getLocalizedDesc(item)}
                         </p>
                       )}
                     </div>
@@ -361,7 +363,7 @@ export const CustomerMenu = ({
             <div className="p-6">
               <div className="flex items-start justify-between gap-4">
                 <div>
-                  <h2 className="text-xl font-extrabold text-white">{activeItemDetail.name}</h2>
+                  <h2 className="text-xl font-extrabold text-white">{getLocalizedName(activeItemDetail)}</h2>
                   <p className="text-emerald-400 font-black text-lg mt-1">
                     {activeItemDetail.price.toLocaleString('uz-UZ')} so'm
                   </p>
@@ -370,7 +372,7 @@ export const CustomerMenu = ({
 
               {activeItemDetail.description && (
                 <p className="text-xs sm:text-sm text-slate-300 mt-3 leading-relaxed">
-                  {activeItemDetail.description}
+                  {getLocalizedDesc(activeItemDetail)}
                 </p>
               )}
 
