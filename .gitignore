@@ -42,3 +42,6 @@ server.log
 
 # Generated patch exports (git format-patch natijasi — tarixga kirmasligi kerak)
 *.patch
+
+# Xizmat ishga tushiruvchi fayli (o' rnatish skripti yaratadi)
+_xizmat_ishga_tushirish.cmd

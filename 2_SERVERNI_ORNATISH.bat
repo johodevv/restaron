@@ -89,8 +89,17 @@ if exist "%TEMP%\restaron_ports.txt" (
     del "%TEMP%\restaron_ports.txt" >nul 2>&1
 )
 timeout /t 2 /nobreak >nul
-schtasks /Create /TN "RestAron Server" /SC ONSTART /RU SYSTEM /RL HIGHEST /F ^
-  /TR "\"%PYTHON_PATH%\" \"%BASE_DIR%server_manager.py\" serve" >nul 2>&1
+REM Ishga tushiruvchi faylni yaratamiz.
+REM MUHIM: schtasks /TR ichiga qo'sh tirnoqli uzun buyruq berib bo'lmaydi --
+REM cmd `\"` ni ekranlash deb bilmaydi va uni so'zma-so'z uzatadi, natijada
+REM yo'l buzilib, vazifa umuman ishga tushmaydi. Shuning uchun vazifa
+REM BITTA faylga ishora qiladi, qolgan hammasi shu fayl ichida.
+set LAUNCHER=%BASE_DIR%_xizmat_ishga_tushirish.cmd
+> "%LAUNCHER%" echo @echo off
+>>"%LAUNCHER%" echo cd /d "%BASE_DIR%"
+>>"%LAUNCHER%" echo "%PYTHON_PATH%" "%BASE_DIR%server_manager.py" serve
+
+schtasks /Create /TN "RestAron Server" /SC ONSTART /RU SYSTEM /RL HIGHEST /F /TR "%LAUNCHER%" >nul 2>&1
 
 if %errorLevel% neq 0 (
     echo        OGOHLANTIRISH: Avtomatik ishga tushirishni sozlab bo'lmadi.
@@ -102,7 +111,33 @@ if %errorLevel% neq 0 (
 REM --- 5. Hoziroq ishga tushirish ---
 echo  [5/5] Server ishga tushirilmoqda...
 schtasks /Run /TN "RestAron Server" >nul 2>&1
-timeout /t 20 /nobreak >nul
+
+REM Server haqiqatan javob berishini kutamiz (60 soniyagacha).
+REM Ilgari shunchaki 20 soniya kutilib, "tayyor" deb yozilardi -- server
+REM ko'tarilmagan bo'lsa ham. Endi haqiqiy holat tekshiriladi.
+set SERVER_OK=0
+for /l %%i in (1,1,20) do (
+    if !SERVER_OK!==0 (
+        timeout /t 3 /nobreak >nul
+        powershell -NoProfile -Command "try { if ((Invoke-WebRequest -Uri 'http://localhost:8000/health' -UseBasicParsing -TimeoutSec 3).StatusCode -eq 200) { exit 0 } else { exit 1 } } catch { exit 1 }" >nul 2>&1
+        if !errorLevel!==0 set SERVER_OK=1
+    )
+)
+
+if !SERVER_OK!==1 (
+    echo        Tayyor: server javob bermoqda.
+) else (
+    echo.
+    echo        XATO: Server 60 soniyada ko'tarilmadi!
+    echo.
+    echo        Tekshiring:
+    echo          1^) 1_BIRINCHI_ORNATISH.bat to'liq bajarilganmi?
+    echo          2^) Jurnal: %BASE_DIR%server.log
+    echo          3^) Qo'lda sinab ko'ring:
+    echo             cd "%BASE_DIR%backend"
+    echo             .venv\Scripts\python.exe -m uvicorn app.main:app --port 8000
+    echo.
+)
 
 REM --- Mahalliy IP ni aniqlash ---
 REM IP ni aniqlash. `for /f` ichidagi PowerShell quvuri (^|) ishonchsiz --
