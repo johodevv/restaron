@@ -1,5 +1,10 @@
+import os
+import re
 from pydantic_settings import BaseSettings
 from typing import Optional
+
+# backend/ papkasining absolyut yo'li (bu fayl: backend/app/core/config.py)
+BACKEND_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 
 
 class Settings(BaseSettings):
@@ -31,8 +36,35 @@ class Settings(BaseSettings):
     COMMISSION_PERCENT: float = 5.0
 
     class Config:
-        env_file = ".env"
+        env_file = os.path.join(BACKEND_DIR, ".env")
         env_file_encoding = "utf-8"
 
 
+def _absolutize_sqlite(url: str) -> str:
+    """
+    SQLite yo'lini ABSOLYUT qiladi.
+
+    MUHIM: sukut bo'yicha yo'l nisbiy edi ("sqlite:///./restaron.db").
+    Server Windows'da xizmat (Scheduled Task) sifatida ishga tushganda ish
+    papkasi C:\\Windows\\System32 bo'ladi — natijada o'sha yerda BO'SH yangi
+    baza yaratilib, restoranning barcha ma'lumotlari yo'qolgandek ko'rinardi.
+    Shuning uchun yo'lni doim backend/ papkasiga bog'laymiz.
+    """
+    m = re.match(r"^(sqlite(?:\+\w+)?:///)(?!/)(.*)$", url)
+    if not m:
+        return url
+    prefix, path = m.group(1), m.group(2)
+    if not path or os.path.isabs(path):
+        return url
+    abs_path = os.path.normpath(os.path.join(BACKEND_DIR, path))
+    return prefix + abs_path.replace("\\", "/")
+
+
 settings = Settings()
+
+settings.DATABASE_URL = _absolutize_sqlite(settings.DATABASE_URL)
+settings.SYNC_DATABASE_URL = _absolutize_sqlite(settings.SYNC_DATABASE_URL)
+
+# Yuklanmalar (QR kodlar, rasmlar) ham absolyut papkada saqlanishi kerak
+if not os.path.isabs(settings.UPLOAD_DIR):
+    settings.UPLOAD_DIR = os.path.join(BACKEND_DIR, settings.UPLOAD_DIR)

@@ -364,18 +364,75 @@ def show_url():
         print(f"http://{local_ip}:{PORT}")
 
 
+
+def serve_forever():
+    """
+    Nazoratchi rejim (Windows Scheduled Task shu rejimda ishga tushiradi).
+
+    Uvicorn ni ishga tushiradi va u qandaydir sababga ko'ra to'xtab qolsa
+    avtomatik qayta ko'taradi. Shunday qilib server kompyuter yonib
+    turgan paytda doimiy ishlaydi va "qotib qolish" holatidan o'zi chiqadi.
+
+    Jurnal: server.log
+    """
+    log("=" * 60)
+    log("RestAron nazoratchi rejimi ishga tushdi (serve)")
+    log(f"  Python: {VENV_PYTHON}")
+    log(f"  Papka:  {BACKEND_DIR}")
+
+    env = os.environ.copy()
+    env["PYTHONIOENCODING"] = "utf-8"
+    env["PYTHONPATH"] = str(BACKEND_DIR)
+
+    cmd = [
+        str(VENV_PYTHON), "-m", "uvicorn", "app.main:app",
+        "--host", "0.0.0.0", "--port", str(PORT), "--no-access-log",
+    ]
+
+    flags = 0x08000000 if sys.platform == "win32" else 0  # CREATE_NO_WINDOW
+    restarts = 0
+
+    while True:
+        started_at = time.time()
+        try:
+            proc = subprocess.Popen(
+                cmd, cwd=str(BACKEND_DIR), env=env,
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                stdin=subprocess.DEVNULL, creationflags=flags,
+            )
+        except Exception as e:
+            log(f"XATO: uvicorn ishga tushmadi: {e}")
+            time.sleep(15)
+            continue
+
+        log(f"  uvicorn PID {proc.pid} — port {PORT}")
+        save_pids(proc.pid, 0)
+        save_status("running", "", get_local_ip())
+
+        code = proc.wait()          # jarayon tugaguncha kutamiz
+        uptime = time.time() - started_at
+        restarts += 1
+        log(f"  uvicorn to'xtadi (kod {code}, {uptime:.0f} sek ishladi). Qayta ishga tushirilmoqda...")
+
+        # Juda tez-tez qulab tushsa, loglarni to'ldirmaslik uchun kutib turamiz
+        delay = 5 if uptime > 60 else min(60, 5 * restarts)
+        time.sleep(delay)
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="RestAron Server Manager")
     parser.add_argument(
         "action",
         nargs="?",
         default="start",
-        choices=["start", "stop", "status", "url", "restart"],
-        help="Amal: start | stop | status | url | restart",
+        choices=["start", "stop", "status", "url", "restart", "serve"],
+        help="Amal: start | stop | status | url | restart | serve",
     )
     args = parser.parse_args()
 
-    if args.action == "start":
+    if args.action == "serve":
+        serve_forever()
+    elif args.action == "start":
         start_server()
     elif args.action == "stop":
         stop_server()
