@@ -73,7 +73,22 @@ echo        Tayyor: ofitsiant telefonlari ulanishi mumkin.
 
 REM --- 4. Avtomatik ishga tushish (Scheduled Task) ---
 echo  [4/5] Avtomatik ishga tushish sozlanmoqda...
+REM Eski xizmat ishlab turgan bo'lsa to'xtatamiz, aks holda 8000-port band
+REM qolib, yangi server ishga tushmaydi (masalan boshqa papkadan qayta
+REM o'rnatilayotgan bo'lsa).
+schtasks /End /TN "RestAron Server" >nul 2>&1
 schtasks /Delete /TN "RestAron Server" /F >nul 2>&1
+
+REM 8000-portni band qilib turgan jarayonni topib yopamiz.
+REM Natijani faylga yozamiz, chunki `for /f` ichida quvur ishonchsiz.
+netstat -ano -p TCP > "%TEMP%\restaron_ports.txt" 2>nul
+if exist "%TEMP%\restaron_ports.txt" (
+    for /f "tokens=5" %%p in ('findstr /r /c:":8000 .*LISTENING" "%TEMP%\restaron_ports.txt"') do (
+        taskkill /F /PID %%p >nul 2>&1
+    )
+    del "%TEMP%\restaron_ports.txt" >nul 2>&1
+)
+timeout /t 2 /nobreak >nul
 schtasks /Create /TN "RestAron Server" /SC ONSTART /RU SYSTEM /RL HIGHEST /F ^
   /TR "\"%PYTHON_PATH%\" \"%BASE_DIR%server_manager.py\" serve" >nul 2>&1
 
