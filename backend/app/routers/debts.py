@@ -134,8 +134,20 @@ async def pay_debt(
     if debt.status == "paid":
         raise HTTPException(status_code=400, detail="Bu qarz allaqachon to'liq yopilgan")
 
-    debt.paid_amount += payload.payment_amount
-    debt.remaining_amount = max(0.0, debt.amount - debt.paid_amount)
+    # Qarzdan ortiq to'lovni qabul qilmaymiz — aks holda `paid_amount`
+    # qarz summasidan oshib ketadi va nasiya kitobi hisobotlari buziladi.
+    outstanding = max(0.0, (debt.amount or 0.0) - (debt.paid_amount or 0.0))
+    if payload.payment_amount - outstanding > 0.01:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"To'lov qarzdan ko'p: {payload.payment_amount:,.0f} so'm kiritildi, "
+                f"qolgan qarz {outstanding:,.0f} so'm."
+            ),
+        )
+
+    debt.paid_amount = round(min(debt.amount or 0.0, (debt.paid_amount or 0.0) + payload.payment_amount), 2)
+    debt.remaining_amount = round(max(0.0, (debt.amount or 0.0) - debt.paid_amount), 2)
 
     if debt.remaining_amount <= 0:
         debt.status = "paid"

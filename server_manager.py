@@ -123,14 +123,24 @@ def kill_pid(pid: int, name: str = ""):
 
 
 def wait_for_backend(timeout=60) -> bool:
+    """
+    Backend TAYYOR bolishini kutadi.
+
+    Faqat portni tekshirish yetarli emas: uvicorn portni ochadi, lekin
+    jadvallar yaratilishi va seed tugaguncha sorovlar xato qaytaradi.
+    Shuning uchun /health endpointi javob berishini kutamiz.
+    """
+    from urllib.request import urlopen
+
     start = time.time()
     while time.time() - start < timeout:
         try:
-            s = socket.create_connection(("127.0.0.1", PORT), timeout=2)
-            s.close()
-            return True
-        except (ConnectionRefusedError, OSError):
-            time.sleep(1)
+            with urlopen(f"http://127.0.0.1:{PORT}/health", timeout=3) as resp:
+                if resp.status == 200:
+                    return True
+        except Exception:
+            pass
+        time.sleep(1)
     return False
 
 
@@ -217,7 +227,9 @@ def start_server():
             encoding="utf-8",
             errors="replace",
             stdin=subprocess.DEVNULL,
-            creationflags=0x08000000,  # CREATE_NO_WINDOW only (no DETACHED so PIPE works)
+            # creationflags faqat Windows da qollab-quvvatlanadi — Linux/Mac da
+            # nolga teng bolmagan qiymat ValueError beradi.
+            creationflags=cf_flags,  # CREATE_NO_WINDOW only (no DETACHED so PIPE works)
         )
 
         cf_pid = cf_proc.pid

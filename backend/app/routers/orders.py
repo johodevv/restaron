@@ -101,6 +101,28 @@ async def auto_assign_waiter(db: AsyncSession, restaurant_id: int) -> Optional[U
     return best_waiter
 
 
+async def load_order_full(db: AsyncSession, order_id: int) -> Optional[Order]:
+    """
+    Buyurtmani barcha bog'liqliklari bilan to'liq yuklab oladi.
+
+    MUHIM: `db.refresh(order)` bog'liqliklarni (items -> menu_item, table, waiter)
+    "expired" holatga o'tkazadi. Keyin ularga murojaat qilish async kontekstda
+    lazy-load'ni ishga tushiradi va SQLAlchemy `MissingGreenlet` xatosi bilan
+    500 qaytaradi. Shuning uchun refresh o'rniga doim selectinload bilan
+    qaytadan yuklaymiz.
+    """
+    res = await db.execute(
+        select(Order)
+        .options(
+            selectinload(Order.items).selectinload(OrderItem.menu_item),
+            selectinload(Order.table),
+            selectinload(Order.waiter),
+        )
+        .where(Order.id == order_id)
+    )
+    return res.scalar_one_or_none()
+
+
 def build_order_response(order: Order, table_number: Optional[int] = None, waiter_name: Optional[str] = None) -> OrderResponse:
     """OrderResponse obyektini xavfsiz va to'liq yaratish"""
     items_response = []
@@ -540,7 +562,7 @@ async def waiter_add_items(
         "added_items": added_details,
     })
 
-    await db.refresh(order)
+    order = await load_order_full(db, order.id) or order
     return build_order_response(order)
 
 
@@ -577,7 +599,7 @@ async def update_item_quantity(
     order.total = subtotal + order.service_fee_amount - (order.discount or 0.0)
 
     await db.flush()
-    await db.refresh(order)
+    order = await load_order_full(db, order.id) or order
     return build_order_response(order)
 
 
@@ -613,7 +635,7 @@ async def delete_order_item(
     order.total = subtotal + order.service_fee_amount - (order.discount or 0.0)
 
     await db.flush()
-    await db.refresh(order)
+    order = await load_order_full(db, order.id) or order
     return build_order_response(order)
 
 
@@ -638,7 +660,7 @@ async def update_order_notes(
         order.receipt_note = payload.receipt_note
 
     await db.flush()
-    await db.refresh(order)
+    order = await load_order_full(db, order.id) or order
     return build_order_response(order)
 
 
@@ -909,19 +931,55 @@ async def checkout_order(
     order.closed_at = datetime.now(timezone.utc)
 
     order.payment_method = payload.payment_method
-    order.cash_amount = payload.cash_amount
-    order.card_amount = payload.card_amount
-    order.click_amount = payload.click_amount
-    order.debt_amount = payload.debt_amount
 
-    if payload.payment_method == "cash" and payload.cash_amount == 0.0:
-        order.cash_amount = total
-    elif payload.payment_method == "card" and payload.card_amount == 0.0:
-        order.card_amount = total
-    elif payload.payment_method == "click" and payload.click_amount == 0.0:
-        order.click_amount = total
-    elif payload.payment_method == "debt" and payload.debt_amount == 0.0:
-        order.debt_amount = total
+    # ─── To'lov summalarini tekshirish va kassaga to'g'ri yozish ───
+    # Kassir faqat to'lov turini tanlab, summani kiritmasligi mumkin —
+    # bunday holda butun summa o'sha tur bo'yicha yoziladi.
+    cash_in = max(0.0, payload.cash_amount or 0.0)
+    card_in = max(0.0, payload.card_amount or 0.0)
+    click_in = max(0.0, payload.click_amount or 0.0)
+    debt_in = max(0.0, payload.debt_amount or 0.0)
+
+    if (cash_in + card_in + click_in + debt_in) == 0.0:
+        if payload.payment_method == "cash":
+            cash_in = total
+        elif payload.payment_method == "card":
+            card_in = total
+        elif payload.payment_method == "click":
+            click_in = total
+        elif payload.payment_method == "debt":
+            debt_in = total
+
+    # Naqd pul mijozdan ortig'i bilan olinishi mumkin (qaytim beriladi),
+    # lekin karta / Click / nasiya summasi hisobdan oshib ketmasligi kerak.
+    non_cash = card_in + click_in + debt_in
+    if non_cash - total > 0.01:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"To'lov summasi hisobdan oshib ketdi: "
+                f"{non_cash:,.0f} so'm kiritildi, hisob {total:,.0f} so'm."
+            ),
+        )
+
+    tendered = cash_in + non_cash
+    if tendered + 0.01 < total:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"To'lov to'liq emas: {tendered:,.0f} so'm kiritildi, "
+                f"hisob {total:,.0f} so'm. Yetishmayotgan summa: {total - tendered:,.0f} so'm. "
+                f"Qolgan qismini nasiya (qarz) sifatida rasmiylashtiring."
+            ),
+        )
+
+    # Kassaga faqat haqiqiy tushum yoziladi — naqd ortiqchasi qaytim sifatida
+    # qaytariladi va hisobotlarni shishirmaydi.
+    change_amount = round(max(0.0, tendered - total), 2)
+    order.card_amount = card_in
+    order.click_amount = click_in
+    order.debt_amount = debt_in
+    order.cash_amount = round(max(0.0, cash_in - change_amount), 2)
 
     debt_obj = None
     if order.debt_amount > 0 or payload.payment_method == "debt":
@@ -937,7 +995,7 @@ async def checkout_order(
             remaining_amount=order.debt_amount if order.debt_amount > 0 else total,
             status="unpaid",
             due_date=payload.debt_due_date,
-            note=payload.debt_note or f"Buyurtma #{order.order_number} uchun qarz",
+            note=payload.debt_note or f"Buyurtma {order.order_number} uchun qarz",
         )
         db.add(debt_obj)
 
@@ -1037,13 +1095,15 @@ async def checkout_order(
             "new_status": TableStatus.AVAILABLE.value,
         })
 
-    await db.refresh(order)
+    order = await load_order_full(db, order.id) or order
     return {
         "success": True,
         "order_id": order.id,
         "order_number": order.order_number,
         "total": total,
         "payment_method": order.payment_method,
+        "cash_received": round(cash_in, 2),
+        "change_amount": change_amount,
         "raw_text": bill_text,
         "debt_created": bool(debt_obj),
         "order": build_order_response(order),
@@ -1534,7 +1594,7 @@ async def deliver_order(
         },
     )
 
-    await db.refresh(order)
+    order = await load_order_full(db, order.id) or order
     return build_order_response(order, table_num, waiter_display)
 
 
@@ -1683,7 +1743,7 @@ async def update_order_status(
         },
     )
 
-    await db.refresh(order)
+    order = await load_order_full(db, order.id) or order
     return build_order_response(order)
 
 

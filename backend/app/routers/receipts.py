@@ -6,13 +6,14 @@ from datetime import datetime, timezone, timedelta
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, and_, or_
+from sqlalchemy.orm import selectinload
 from pydantic import BaseModel
 from typing import List, Optional
 
 from app.core.database import get_db
 from app.core.security import require_role
 from app.models.receipt import ReceiptArchive, ShiftReport
-from app.models.order import Order, OrderStatus
+from app.models.order import Order, OrderItem, OrderStatus
 from app.models.restaurant import Restaurant, RestaurantSettings
 from app.models.user import User, UserRole
 from app.schemas.receipt import (
@@ -166,6 +167,16 @@ async def create_shift_report(
     """
     restaurant_id = payload.restaurant_id
 
+    # Hisobot turini normallashtirish ("X" / "x" / "x_report" -> "x_report")
+    rt = (payload.report_type or "z_report").strip().lower()
+    report_type = "x_report" if rt in ("x", "x_report") else "z_report"
+
+    # X-hisobot — oraliq hisobot, smenani HECH QACHON yopmaydi.
+    # Z-hisobot — kunlik kassani yopadi.
+    close_shift = payload.close_shift if payload.close_shift is not None else (report_type == "z_report")
+    if report_type == "x_report":
+        close_shift = False
+
     # Restoran ma'lumotlarini olish
     rest_res = await db.execute(select(Restaurant).where(Restaurant.id == restaurant_id))
     restaurant = rest_res.scalar_one_or_none()
@@ -193,9 +204,19 @@ async def create_shift_report(
 
     # Ushbu smenada yopilgan buyurtmalarni olish
     orders_res = await db.execute(
-        select(Order).where(
+        select(Order)
+        .options(
+            selectinload(Order.waiter),
+            selectinload(Order.items).selectinload(OrderItem.menu_item),
+        )
+        .where(
             Order.restaurant_id == restaurant_id,
-            Order.status.in_([OrderStatus.PAID, OrderStatus.SERVED]),
+            # Faqat haqiqatan to'langan buyurtmalar kassa smenasiga kiradi.
+            # "Berildi" (SERVED) holatidagi ochiq stollar hali to'lanmagan, shuning
+            # uchun ularni qo'shsak Z-hisobotdagi jami summa kassadagi pulga
+            # mos kelmay qoladi.
+            Order.status == OrderStatus.PAID,
+            Order.is_paid == True,
             Order.created_at >= opened_at,
         )
     )
@@ -236,11 +257,25 @@ async def create_shift_report(
             waiter_map[w_id]["orders_count"] += 1
             waiter_map[w_id]["earning"] += o.waiter_share_amount or 0.0
 
+        # Smena davomida sotilgan taomlar kesimi
+        for it in o.items:
+            key = str(it.menu_item_id)
+            if key not in items_map:
+                items_map[key] = {
+                    "menu_item_id": it.menu_item_id,
+                    "name": it.menu_item.name if it.menu_item else f"Taom #{it.menu_item_id}",
+                    "quantity": 0,
+                    "total": 0.0,
+                }
+            items_map[key]["quantity"] += it.quantity or 0
+            items_map[key]["total"] += it.total_price or 0.0
+
     waiter_breakdown = list(waiter_map.values())
+    items_breakdown = sorted(items_map.values(), key=lambda x: x["quantity"], reverse=True)
 
     # Xprinter uchun hisobot chekini formatlash
     raw_text = format_shift_report(
-        report_type=payload.report_type,
+        report_type=report_type,
         restaurant_name=rest_name,
         shift_number=shift_number,
         cashier_name=current_user.full_name or current_user.username,
@@ -262,9 +297,9 @@ async def create_shift_report(
         restaurant_id=restaurant_id,
         cashier_user_id=current_user.id,
         shift_number=shift_number,
-        report_type=payload.report_type,
+        report_type=report_type,
         opened_at=opened_at,
-        closed_at=now_dt if payload.close_shift else None,
+        closed_at=now_dt if close_shift else None,
         total_orders=total_orders,
         total_sales=total_sales,
         total_cash=total_cash,
@@ -274,8 +309,8 @@ async def create_shift_report(
         total_service_fee=total_service_fee,
         total_waiter_earnings=total_waiter_earnings,
         waiter_breakdown=waiter_breakdown,
-        items_breakdown=items_map,
-        is_closed=payload.close_shift,
+        items_breakdown=items_breakdown,
+        is_closed=close_shift,
     )
     db.add(shift_report)
     await db.flush()
@@ -284,8 +319,8 @@ async def create_shift_report(
     # Shuningdek cheklar arxiviga ham kiritish
     rec_archive = ReceiptArchive(
         restaurant_id=restaurant_id,
-        receipt_number=f"SHIFT-{payload.report_type.upper()}-{shift_number}",
-        receipt_type=payload.report_type,
+        receipt_number=f"SHIFT-{report_type.upper()}-{shift_number}",
+        receipt_type=report_type,
         waiter_name=current_user.full_name,
         subtotal=total_sales - total_service_fee,
         service_fee_percent=0.0,

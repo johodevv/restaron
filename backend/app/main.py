@@ -93,6 +93,14 @@ app.include_router(debts, prefix="/api/v1")
 app.include_router(receipts, prefix="/api/v1")
 
 
+# ─── Health Check ─────────────────────────────────────────
+# MUHIM: Bu endpoint SPA catch-all marshrutidan OLDIN ro'yxatdan o'tishi shart,
+# aks holda "/{full_path:path}" uni soyalab qo'yadi va /health 404 qaytaradi.
+@app.get("/health", tags=["🏥 Health Check"])
+async def health():
+    return {"status": "healthy", "app": settings.APP_NAME}
+
+
 # ─── Frontend Statik Fayllarini Taqdim Etish (Standalone Server Rejimi) ───
 from fastapi.responses import FileResponse
 from fastapi import HTTPException
@@ -109,14 +117,12 @@ if os.path.exists(frontend_dist) and os.path.exists(os.path.join(frontend_dist, 
 
     @app.get("/{full_path:path}", include_in_schema=False)
     async def serve_spa(full_path: str):
-        # Pass through all backend routes — only serve SPA for non-API paths
+        # Backend marshrutlari bu yerga tushmasligi kerak — ular yuqorida
+        # ro'yxatdan o'tgan, shuning uchun bu yerga faqat noma'lum yo'llar keladi.
         BACKEND_PREFIXES = (
-            "api/", "uploads/", "docs", "redoc", "openapi.json",
-            "health", "auth/", "users/", "stats/", "tables/",
-            "menu/", "orders/", "notifications/", "reviews/", "ws/",
-            "debts/", "receipts/",
+            "api/", "uploads/", "assets/", "docs", "redoc", "openapi.json", "health",
         )
-        if any(full_path.startswith(p) for p in BACKEND_PREFIXES) or full_path in ["health", "docs", "redoc", "openapi.json"]:
+        if any(full_path.startswith(p) for p in BACKEND_PREFIXES):
             raise HTTPException(status_code=404, detail="Not found")
         file_path = os.path.join(frontend_dist, full_path)
         if os.path.exists(file_path) and os.path.isfile(file_path):
@@ -131,8 +137,3 @@ else:
             "docs": "/docs",
             "status": "running ✅",
         }
-
-
-@app.get("/health", tags=["🏥 Health Check"])
-async def health():
-    return {"status": "healthy", "app": settings.APP_NAME}

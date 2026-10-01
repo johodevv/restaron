@@ -289,6 +289,10 @@ async def get_payments_report(
             Order.created_at >= dt_start,
             Order.created_at <= dt_end,
             Order.status != OrderStatus.CANCELLED,
+            # Faqat yopilgan (to'langan) buyurtmalar — bu kassa tushumi hisoboti.
+            # Ochiq stollar qo'shilsa "Jami Tushum" naqd/karta/nasiya yig'indisiga
+            # teng kelmay qoladi va kassani solishtirib bo'lmaydi.
+            Order.is_paid == True,
         )
     )
 

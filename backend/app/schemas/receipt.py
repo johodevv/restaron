@@ -36,7 +36,9 @@ class ReceiptArchiveResponse(BaseModel):
 class ShiftReportCreate(BaseModel):
     restaurant_id: int
     report_type: str = "z_report"  # "x_report" yoki "z_report"
-    close_shift: bool = True       # Agar true bo'lsa smena yopiladi
+    # X-hisobot — smenani YOPMAYDIGAN oraliq hisobot, Z-hisobot esa smenani yopadi.
+    # None bo'lsa report_type bo'yicha avtomatik aniqlanadi (x_report -> False, z_report -> True).
+    close_shift: Optional[bool] = None
 
 
 class ShiftReportResponse(BaseModel):

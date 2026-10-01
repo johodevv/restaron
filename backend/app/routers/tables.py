@@ -7,6 +7,8 @@ import random
 import qrcode
 import aiofiles
 from io import BytesIO
+from datetime import datetime, timezone
+from pydantic import BaseModel
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -376,9 +378,15 @@ async def get_table_bill(table_id: int, db: AsyncSession = Depends(get_db)):
     )
 
 
+class TableCheckoutRequest(BaseModel):
+    """Stolni yopishda to'lov turi (ko'rsatilmasa — naqd)"""
+    payment_method: str = "cash"
+
+
 @router.post("/{table_id}/checkout", response_model=TableResponse, summary="Stolni hisob-kitob qilish va bo'shatish")
 async def checkout_table(
     table_id: int,
+    payload: Optional[TableCheckoutRequest] = None,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_role("waiter", "admin", "developer")),
 ):
@@ -388,18 +396,55 @@ async def checkout_table(
     if not table:
         raise HTTPException(status_code=404, detail="Stol topilmadi")
 
+    method = (payload.payment_method if payload else "cash") or "cash"
+    if method not in ("cash", "card", "click"):
+        raise HTTPException(
+            status_code=400,
+            detail="Stolni yopishda faqat naqd, karta yoki Click qabul qilinadi. "
+                   "Nasiya uchun buyurtma kassasidan (checkout) foydalaning.",
+        )
+
+    set_res = await db.execute(
+        select(RestaurantSettings).where(RestaurantSettings.restaurant_id == table.restaurant_id)
+    )
+    rest_settings = set_res.scalar_one_or_none()
+    default_fee = rest_settings.service_fee_percent if rest_settings else 12.0
+
     # Ushbu stoldagi barcha to'lanmagan faol buyurtmalarni PAID qilish
     orders_res = await db.execute(
-        select(Order).where(
+        select(Order)
+        .options(selectinload(Order.items))
+        .where(
             Order.table_id == table.id,
             Order.is_paid == False,
             Order.status != OrderStatus.CANCELLED,
         )
     )
     active_orders = orders_res.scalars().all()
+    closed_at = datetime.now(timezone.utc)
     for o in active_orders:
+        # Summalarni qayta hisoblaymiz — hisobot va kassa mos kelishi uchun
+        subtotal = sum(i.total_price or 0.0 for i in o.items)
+        fee_pct = o.service_fee_percent if o.service_fee_percent is not None else default_fee
+        fee_amount = round(subtotal * ((fee_pct or 0.0) / 100.0), 2)
+        total = round(max(0.0, subtotal + fee_amount - (o.discount or 0.0)), 2)
+
+        o.subtotal = subtotal
+        o.service_fee_percent = fee_pct
+        o.service_fee_amount = fee_amount
+        o.total = total
+
+        # To'lovni kassaga yozamiz — aks holda buyurtma "to'langan" bo'lib
+        # ko'rinadi, lekin to'lovlar hisobotida 0 so'm bo'lib qoladi.
+        o.payment_method = method
+        o.cash_amount = total if method == "cash" else 0.0
+        o.card_amount = total if method == "card" else 0.0
+        o.click_amount = total if method == "click" else 0.0
+        o.debt_amount = 0.0
+
         o.is_paid = True
         o.status = OrderStatus.PAID
+        o.closed_at = closed_at
         if o.call_waiter:
             o.call_waiter = False
             o.call_status = CallStatus.COMPLETED
@@ -492,7 +537,7 @@ async def print_table_bill(
         if ord.waiter:
             waiter_names.add(ord.waiter.full_name or ord.waiter.username)
         for it in ord.items:
-            dish_name = getattr(it.menu_item, "name_cyrillic", None) or (it.menu_item.name if it.menu_item else "Ð¢Ð°Ð¾Ð¼")
+            dish_name = getattr(it.menu_item, "name_cyrillic", None) or (it.menu_item.name if it.menu_item else "Таом")
             items_for_receipt.append({
                 "name": dish_name,
                 "quantity": it.quantity,
@@ -522,7 +567,7 @@ async def print_table_bill(
         discount=0.0,
         total=grand_total,
         receipt_note=target_orders[0].receipt_note if target_orders else None,
-        footer_text=settings.receipt_footer if settings else "Ð¢Ð°ÑˆÑ€Ð¸Ñ„Ð¸Ð½Ð³Ð¸Ð· ÑƒÑ‡ÑƒÐ½ Ñ€Ð°Ò³Ð¼Ð°Ñ‚! Ð¯Ð½Ð° ÐºÐµÐ»Ð¸Ð½Ð³!",
+        footer_text=settings.receipt_footer if settings else "Ташрифингиз учун раҳмат! Яна келинг!",
         wifi_pass=settings.receipt_wifi_pass if settings else None,
         paper_width=paper_width,
     )
@@ -549,10 +594,17 @@ async def print_table_bill(
     db.add(archive)
     await db.commit()
 
+    printed_ok = bool(p_res.get("success", False))
     return {
-        "success": p_res.get("success", False),
+        "success": printed_ok,
         "printer_name": cust_printer,
-        "message": f"Chek {cust_printer} printeriga yuborildi",
+        "message": (
+            f"Chek {cust_printer} printeriga yuborildi"
+            if printed_ok else
+            f"Printerga ({cust_printer}) yuborib bo'lmadi: "
+            f"{p_res.get('message') or p_res.get('error') or 'printer topilmadi'}. "
+            f"Chek matni ekranda ko'rsatildi."
+        ),
         "raw_text": bill_text,
         "total": grand_total,
     }
