@@ -1,7 +1,7 @@
-﻿@echo off
+@echo off
 chcp 65001 >nul
 REM Delayed expansion: pastdagi `if exist (...)` bloki ichida
-REM `set /p` natijasi %URL% orqali ko'rinmaydi — !URL! kerak.
+REM `set /p` natijasi %URL% orqali ko'rinmaydi - !URL! kerak.
 setlocal enabledelayedexpansion
 title RestAron - Internet URL
 

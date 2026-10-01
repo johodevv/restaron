@@ -1,11 +1,11 @@
-﻿@echo off
+@echo off
 chcp 65001 >nul
 setlocal enabledelayedexpansion
 title RestAron - 1-QADAM: Dasturni Tayyorlash
 color 0B
 
 REM ===================================================================
-REM  RestAron — BIRINCHI O'RNATISH (1-qadam)
+REM  RestAron - BIRINCHI O'RNATISH (1-qadam)
 REM
 REM  Bu skript:
 REM    1. Python va Node.js borligini tekshiradi

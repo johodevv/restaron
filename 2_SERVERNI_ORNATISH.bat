@@ -1,11 +1,11 @@
-﻿@echo off
+@echo off
 chcp 65001 >nul
 setlocal enabledelayedexpansion
 title RestAron - Windows Server O'rnatish
 color 0A
 
 REM ===================================================================
-REM  RestAron — Windows ni DOIMIY SERVER qilib sozlash
+REM  RestAron - Windows ni DOIMIY SERVER qilib sozlash
 REM
 REM  Bu skript bir marta, ADMINISTRATOR sifatida ishga tushiriladi:
 REM    1. Kompyuter uyquga ketmasligini sozlaydi
@@ -90,7 +90,16 @@ schtasks /Run /TN "RestAron Server" >nul 2>&1
 timeout /t 20 /nobreak >nul
 
 REM --- Mahalliy IP ni aniqlash ---
-for /f "tokens=*" %%a in ('powershell -NoProfile -Command "(Get-NetIPAddress -AddressFamily IPv4 ^| Where-Object { $_.InterfaceAlias -notlike '*Loopback*' -and $_.IPAddress -notlike '169.254*' } ^| Select-Object -First 1).IPAddress"') do set LOCAL_IP=%%a
+REM IP ni aniqlash. `for /f` ichidagi PowerShell quvuri (^|) ishonchsiz --
+REM cmd uni PowerShell ga noto'g'ri uzatadi. Shuning uchun natijani
+REM vaqtinchalik faylga yozamiz: qo'shtirnoq ichidagi | quvur deb olinmaydi.
+set LOCAL_IP=
+powershell -NoProfile -ExecutionPolicy Bypass -Command "(Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.InterfaceAlias -notlike '*Loopback*' -and $_.IPAddress -notlike '169.254*' } | Select-Object -First 1).IPAddress" > "%TEMP%\restaron_ip.txt" 2>nul
+if exist "%TEMP%\restaron_ip.txt" (
+    set /p LOCAL_IP=<"%TEMP%\restaron_ip.txt"
+    del "%TEMP%\restaron_ip.txt" >nul 2>&1
+)
+for /f "tokens=* delims= " %%i in ("!LOCAL_IP!") do set LOCAL_IP=%%i
 if "!LOCAL_IP!"=="" set LOCAL_IP=127.0.0.1
 
 echo.

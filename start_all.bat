@@ -2,12 +2,19 @@
 title RestAron Asosiy Restoran Serveri
 color 0A
 echo =======================================================================
-echo          🍽️ RESTARON - SMART RESTAURANT SERVER (MAHALLIY SERVER)
+echo           RESTARON - SMART RESTAURANT SERVER (MAHALLIY SERVER)
 echo =======================================================================
 echo.
 echo 1. Kompyuter tarmog'i va IP manzili tekshirilmoqda...
 
-for /f "tokens=*" %%a in ('powershell -NoProfile -Command "(Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.InterfaceAlias -notlike '*Loopback*' -and $_.IPAddress -notlike '169.254*' } | Select-Object -First 1).IPAddress"') do set LOCAL_IP=%%a
+REM IP ni aniqlash: natijani faylga yozamiz, chunki `for /f` ichida
+REM PowerShell quvurini uzatish ishonchsiz.
+set LOCAL_IP=
+powershell -NoProfile -ExecutionPolicy Bypass -Command "(Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.InterfaceAlias -notlike '*Loopback*' -and $_.IPAddress -notlike '169.254*' } | Select-Object -First 1).IPAddress" > "%TEMP%\restaron_ip.txt" 2>nul
+if exist "%TEMP%\restaron_ip.txt" (
+    set /p LOCAL_IP=<"%TEMP%\restaron_ip.txt"
+    del "%TEMP%\restaron_ip.txt" >nul 2>&1
+)
 
 if "%LOCAL_IP%"=="" set LOCAL_IP=127.0.0.1
 
@@ -26,7 +33,7 @@ timeout /t 2 /nobreak >nul
 
 echo.
 echo =======================================================================
-echo               🎉 RESTARON SERVER ISHGA TUSHDI!
+echo                RESTARON SERVER ISHGA TUSHDI!
 echo =======================================================================
 echo.
 echo  * USHBU KOMPYUTERDA (Kassa / Admin):

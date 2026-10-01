@@ -1,4 +1,4 @@
-﻿@echo off
+@echo off
 chcp 65001 >nul
 REM Delayed expansion: `set /p` bilan o'qilgan qiymat `if (...)` bloki
 REM ichida %VAR% orqali ko'rinmaydi, shuning uchun !VAR! ishlatiladi.
