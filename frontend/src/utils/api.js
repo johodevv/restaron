@@ -25,14 +25,44 @@ async function request(endpoint, options = {}) {
   try {
     response = await fetch(url, config);
   } catch (netErr) {
-    // 1-marta avtomatik qayta urinish (Wi-Fi yoki backend uyg'onish kechikishi uchun)
-    try {
-      await new Promise((r) => setTimeout(r, 600));
-      response = await fetch(url, config);
-    } catch (secondErr) {
-      console.warn('Backend aloqasida uzilish:', secondErr);
-      throw new Error("Server bilan aloqa vaqtincha uzildi. Backend (port 8000) ishlayotganini yoki Wi-Fi tarmog'ini tekshiring.");
+    // Qayta urinish: Wi-Fi uzilishi yoki bepul hostingdagi backend "uyqudan"
+    // uyg'onishi uchun (Render free tier ~30-60 soniya ketishi mumkin).
+    let lastErr = netErr;
+    response = null;
+    for (const delay of [800, 3000]) {
+      try {
+        await new Promise((r) => setTimeout(r, delay));
+        response = await fetch(url, config);
+        break;
+      } catch (retryErr) {
+        lastErr = retryErr;
+      }
     }
+    if (!response) {
+      console.warn('Backend aloqasida uzilish:', lastErr, '| URL:', url);
+      const isMixed =
+        window.location.protocol === 'https:' && url.startsWith('http://');
+      if (isMixed) {
+        throw new Error(
+          "Sayt https orqali ochilgan, lekin API manzili http:// — brauzer bunday so'rovni bloklaydi. " +
+          "VITE_API_URL ni https manzilga o'zgartiring yoki saytni backend manzilidan oching."
+        );
+      }
+      throw new Error(
+        `Server bilan aloqa yo'q (${url}). Backend ishlayotganini, manzil to'g'riligini va Wi-Fi tarmog'ini tekshiring.`
+      );
+    }
+  }
+
+  // SPA fallback (masalan Vercel) API so'roviga HTML qaytarsa, quyidagi
+  // response.json() tushunarsiz "Unexpected token '<'" xatosini beradi.
+  // Shuning uchun buni alohida, aniq xabar bilan ushlaymiz.
+  const contentType = response.headers.get('content-type') || '';
+  if (response.ok && contentType.includes('text/html')) {
+    throw new Error(
+      `API manzili noto'g'ri sozlangan: ${url} manzilidan JSON o'rniga HTML sahifa qaytdi. ` +
+      "Frontend backend'ga ulanmagan — VITE_API_URL ni tekshiring."
+    );
   }
 
   if (!response.ok) {
