@@ -93,14 +93,33 @@ app.include_router(debts, prefix="/api/v1")
 app.include_router(receipts, prefix="/api/v1")
 
 
-@app.get("/", tags=["🏠 Asosiy"])
-async def root():
-    return {
-        "app": settings.APP_NAME,
-        "version": "1.0.0",
-        "docs": "/docs",
-        "status": "running ✅",
-    }
+# ─── Frontend Statik Fayllarini Taqdim Etish (Standalone Server Rejimi) ───
+from fastapi.responses import FileResponse
+from fastapi import HTTPException
+
+frontend_dist = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "frontend", "dist"))
+if os.path.exists(frontend_dist) and os.path.exists(os.path.join(frontend_dist, "index.html")):
+    assets_dir = os.path.join(frontend_dist, "assets")
+    if os.path.exists(assets_dir):
+        app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
+
+    @app.get("/{full_path:path}", include_in_schema=False)
+    async def serve_spa(full_path: str):
+        if full_path.startswith("api/") or full_path.startswith("uploads/") or full_path in ["health", "docs", "redoc", "openapi.json"]:
+            raise HTTPException(status_code=404, detail="Not found")
+        file_path = os.path.join(frontend_dist, full_path)
+        if os.path.exists(file_path) and os.path.isfile(file_path):
+            return FileResponse(file_path)
+        return FileResponse(os.path.join(frontend_dist, "index.html"))
+else:
+    @app.get("/", tags=["🏠 Asosiy"])
+    async def root():
+        return {
+            "app": settings.APP_NAME,
+            "version": "1.0.0",
+            "docs": "/docs",
+            "status": "running ✅",
+        }
 
 
 @app.get("/health", tags=["🏥 Health Check"])
