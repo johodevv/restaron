@@ -20,6 +20,50 @@ Faqat **bir marta** o'rnatiladi:
 
 ---
 
+## 0.1 — Kodni yuklab olish (MUHIM)
+
+Windows internetdan yuklangan `.bat` fayllarni **belgilab qo'yadi** ("Mark of
+the Web"). Shuning uchun skriptni ishga tushirganda quyidagi oyna chiqishi
+mumkin:
+
+> **Smart App Control blocked a file that may be unsafe**
+
+Bu kodda muammo borligini bildirmaydi — internetdan kelgan HAR QANDAY `.bat`
+fayl shunday belgilanadi. Uchta yechimdan birini tanlang.
+
+### Eng toza usul — `git clone` (tavsiya etiladi)
+
+Git orqali olingan fayllarda bu belgi umuman bo'lmaydi:
+
+```
+git clone -b claude/sharp-cerf-koy3wf https://github.com/johodevv/restaron C:\RestAron
+```
+
+Git yo'q bo'lsa: https://git-scm.com/download/win
+Keyinchalik yangilanish olish ham oson bo'ladi — `git pull` yetarli.
+
+### ZIP yuklasangiz — ochishdan OLDIN blokdan chiqaring
+
+1. Yuklangan **ZIP faylni** o'ng tugma → **Properties**
+2. Pastdagi **"Unblock"** katagiga belgi qo'ying → **OK**
+3. **Shundan keyin** ZIP'ni oching
+
+Shunda ichidagi barcha fayl toza bo'ladi.
+
+### Allaqachon ochib bo'lgan bo'lsangiz
+
+PowerShell'da bitta buyruq (papka yo'lini o'zingiznikiga almashtiring):
+
+```powershell
+Get-ChildItem -Path "C:\RestAron" -Recurse | Unblock-File
+```
+
+> **Smart App Control'ni O'CHIRMANG.** U bir marta o'chirilsa, Windows'ni
+> qayta o'rnatmaguningizcha qayta yoqib bo'lmaydi. Yuqoridagi usullar
+> xavfsizlikni pasaytirmasdan muammoni hal qiladi.
+
+---
+
 ## 1-QADAM — Dasturni tayyorlash
 
 Loyiha papkasida:
