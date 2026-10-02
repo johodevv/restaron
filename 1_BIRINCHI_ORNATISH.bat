@@ -108,7 +108,7 @@ echo        Tayyor.
 REM ---------- Tekshiruv ----------
 echo  [5/5] Natija tekshirilmoqda...
 if not exist "frontend\dist\index.html" (
-    echo        XATO: sayt yig'ilmadi (frontend\dist topilmadi).
+    echo        XATO: sayt yig'ilmadi ^(frontend\dist topilmadi^).
     pause
     exit /b 1
 )

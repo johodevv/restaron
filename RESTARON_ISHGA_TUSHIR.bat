@@ -48,7 +48,7 @@ if exist "%~dp0SERVER_ONLINE_URL.txt" (
     echo  RestAron Server TAYYOR!
     echo  ================================================================
     echo.
-    echo    Internet URL (4G/Wi-Fi):
+    echo    Internet URL ^(4G/Wi-Fi^):
     echo    !SERVER_URL!
     echo.
     echo    Lokal:  http://localhost:8000

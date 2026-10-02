@@ -11,7 +11,7 @@ if exist "SERVER_ONLINE_URL.txt" (
     set /p URL=<SERVER_ONLINE_URL.txt
     echo.
     echo  ================================================
-    echo  RestAron Internet URL (Ofitsianlarga bering):
+    echo  RestAron Internet URL ^(Ofitsianlarga bering^):
     echo.
     echo    !URL!
     echo.
