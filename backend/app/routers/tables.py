@@ -12,7 +12,7 @@ from pydantic import BaseModel
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, func
 from sqlalchemy.orm import selectinload
 from typing import List, Optional
 
@@ -750,6 +750,27 @@ async def delete_table(
     table = result.scalar_one_or_none()
     if not table:
         raise HTTPException(status_code=404, detail="Stol topilmadi")
+
+    # MUHIM: buyurtmalar -- moliyaviy yozuvlar, ular O'CHIRILMASLIGI kerak.
+    # Ilgari stolni o'chirishga urinilganda SQLAlchemy bog'liq buyurtmalarning
+    # table_id sini NULL qilishga harakat qilardi va server 500 qaytarardi:
+    #   IntegrityError: NOT NULL constraint failed: orders.table_id
+    # Endi bunday stolni o'chirmaymiz, faqat NOFAOL qilishni taklif qilamiz.
+    cnt_res = await db.execute(
+        select(func.count(Order.id)).where(Order.table_id == table.id)
+    )
+    orders_count = cnt_res.scalar() or 0
+    if orders_count > 0:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Stol #{table.number} ni o'chirib bo'lmaydi: unga bog'liq "
+                f"{orders_count} ta buyurtma bor va ular cheklar arxivi uchun "
+                f"saqlanishi kerak. Stolni ro'yxatdan yashirish uchun uni "
+                f"NOFAOL qiling (is_active = false)."
+            ),
+        )
+
     await db.delete(table)
 
 
