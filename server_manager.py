@@ -40,6 +40,7 @@ CLOUDFLARED_EXE = BASE_DIR / "cloudflared.exe"
 URL_FILE = BASE_DIR / "SERVER_ONLINE_URL.txt"
 PID_FILE = BASE_DIR / "server_pids.json"
 LOG_FILE = BASE_DIR / "server.log"
+UVICORN_LOG = BASE_DIR / "uvicorn.log"
 STATUS_FILE = BASE_DIR / "server_status.json"
 
 PORT = 8000
@@ -239,7 +240,8 @@ def start_server():
         cf_url_result = {"url": ""}
 
         def read_cf_output(stream):
-            url_pattern = re.compile(r"https://[a-z0-9\-]+\.trycloudflare\.com")
+            # api.trycloudflare.com -- cloudflared'ning o'z API manzili, tunnel manzili EMAS
+            url_pattern = re.compile(r"https://(?!api\.)[a-z0-9\-]+\.trycloudflare\.com")
             for line in stream:
                 line = line.strip()
                 if not line:
@@ -378,7 +380,8 @@ def _tunnel_supervisor(stop_event):
         log("  cloudflared.exe topilmadi - faqat lokal Wi-Fi rejimi")
         return
 
-    url_pattern = re.compile(r"https://[a-z0-9\-]+\.trycloudflare\.com")
+    # api.trycloudflare.com -- cloudflared API manzili, tunnel manzili EMAS
+    url_pattern = re.compile(r"https://(?!api\.)[a-z0-9\-]+\.trycloudflare\.com")
     flags = 0x08000000 if sys.platform == "win32" else 0
 
     while not stop_event.is_set():
@@ -462,10 +465,35 @@ def serve_forever():
 
     while True:
         started_at = time.time()
+
+        # Port band bo'lsa -- uvicorn "address already in use" bilan darhol
+        # qulaydi. Buni oldindan aniqlab, aniq xabar beramiz (aks holda
+        # cheksiz qayta urinish bo'lib ko'rinadi).
+        try:
+            chk = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            chk.settimeout(1.0)
+            busy = chk.connect_ex(("127.0.0.1", PORT)) == 0
+            chk.close()
+        except Exception:
+            busy = False
+        if busy:
+            log(f"  DIQQAT: {PORT}-port allaqachon band (boshqa RestAron nusxasi ishlayaptimi?).")
+            log(f"  Serverni to'xtatish: RESTARON_XIZMATNI_TOXTATISH.bat")
+            time.sleep(20)
+            continue
+
+        # MUHIM: uvicorn chiqishi ilgari DEVNULL ga yuborilardi, shuning uchun
+        # u qulab tushsa SABABINI bilish imkoni yo'q edi. Endi alohida
+        # faylga yoziladi va xato bo'lsa jurnalga ko'chiriladi.
+        try:
+            uvicorn_log = open(UVICORN_LOG, "w", encoding="utf-8", errors="replace")
+        except Exception:
+            uvicorn_log = subprocess.DEVNULL
+
         try:
             proc = subprocess.Popen(
                 cmd, cwd=str(BACKEND_DIR), env=env,
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                stdout=uvicorn_log, stderr=subprocess.STDOUT,
                 stdin=subprocess.DEVNULL, creationflags=flags,
             )
         except Exception as e:
@@ -480,7 +508,26 @@ def serve_forever():
         code = proc.wait()          # jarayon tugaguncha kutamiz
         uptime = time.time() - started_at
         restarts += 1
+        try:
+            if uvicorn_log is not subprocess.DEVNULL:
+                uvicorn_log.close()
+        except Exception:
+            pass
+
         log(f"  uvicorn to'xtadi (kod {code}, {uptime:.0f} sek ishladi). Qayta ishga tushirilmoqda...")
+
+        # Tez qulagan bo'lsa -- sababini jurnalga ko'chiramiz
+        if code != 0 and uptime < 30:
+            try:
+                tail = open(UVICORN_LOG, encoding="utf-8", errors="replace").read().strip().split("\n")
+                tail = [ln for ln in tail if ln.strip()][-15:]
+                if tail:
+                    log("  --- uvicorn xato xabari ---")
+                    for ln in tail:
+                        log("  | " + ln[:200])
+                    log("  --- (to'liq matn: uvicorn.log) ---")
+            except Exception:
+                pass
 
         # Juda tez-tez qulab tushsa, loglarni to'ldirmaslik uchun kutib turamiz
         delay = 5 if uptime > 60 else min(60, 5 * restarts)
