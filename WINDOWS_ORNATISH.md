@@ -64,6 +64,26 @@ Get-ChildItem -Path "C:\RestAron" -Recurse | Unblock-File
 
 ---
 
+## Skriptlarni ishga tushirish haqida
+
+Eng oson usul — **Explorer'da faylni ikki marta bosish** (administrator
+kerak bo'lsa: o'ng tugma → *Run as administrator*).
+
+Agar **PowerShell** oynasidan ishga tushirsangiz, fayl nomini `.\` bilan
+boshlash shart:
+
+```powershell
+cd C:\RestAron
+.\1_BIRINCHI_ORNATISH.bat
+```
+
+Shunchaki `1_BIRINCHI_ORNATISH.bat` deb yozsangiz PowerShell
+*"is not recognized as the name of a cmdlet"* xatosini beradi — bu kodda
+muammo emas, PowerShell joriy papkadagi fayllarni xavfsizlik uchun
+shunday yozishni talab qiladi. (`cmd.exe` da `.\` kerak emas.)
+
+---
+
 ## 1-QADAM — Dasturni tayyorlash
 
 Loyiha papkasida:
