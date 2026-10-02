@@ -498,3 +498,50 @@ def print_to_windows_printer(
         logger.error(f"Xprinter USB chop etishda xatolik: {e}")
         return {"success": False, "error": str(e)}
 
+
+def scan_network_printers(port: int = 9100, timeout: float = 0.35) -> List[Dict[str, Any]]:
+    """
+    Lokal tarmoqda (x.x.x.1-254) ochiq 9100-portga ega qurilmalarni qidiradi.
+
+    Termal (ESC/POS) printerlar deyarli har doim shu portda "RAW" chop
+    etishni qabul qiladi. Shuning uchun bu usul LAN kabeli bilan ulangan
+    printerning IP manzilini topishning eng oson yo'li -- foydalanuvchi
+    router sozlamalariga kirmasdan, tugma bosib topadi.
+    """
+    import concurrent.futures
+
+    # Serverning o'z IP manzilini aniqlaymiz
+    try:
+        probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        probe.connect(("8.8.8.8", 80))
+        local_ip = probe.getsockname()[0]
+        probe.close()
+    except Exception:
+        return []
+
+    parts = local_ip.split(".")
+    if len(parts) != 4:
+        return []
+    subnet = ".".join(parts[:3])
+
+    def check(host_num: int):
+        ip = f"{subnet}.{host_num}"
+        if ip == local_ip:
+            return None
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.settimeout(timeout)
+            if s.connect_ex((ip, port)) == 0:
+                s.close()
+                return {"ip": ip, "port": port}
+            s.close()
+        except Exception:
+            pass
+        return None
+
+    found = []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=120) as pool:
+        for r in pool.map(check, range(1, 255)):
+            if r:
+                found.append(r)
+    return found

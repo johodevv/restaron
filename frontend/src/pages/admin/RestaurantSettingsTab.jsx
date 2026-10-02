@@ -120,6 +120,8 @@ export const RestaurantSettingsTab = ({ restaurantId }) => {
   // Printer detection and test states
   const [detectedPrinters, setDetectedPrinters] = useState([]);
   const [detectingPrinters, setDetectingPrinters] = useState(false);
+  const [lanPrinters, setLanPrinters] = useState([]);
+  const [scanningLan, setScanningLan] = useState(false);
   const [testPrintLoading, setTestPrintLoading] = useState({});
 
   // Integrations
@@ -147,6 +149,29 @@ export const RestaurantSettingsTab = ({ restaurantId }) => {
       alert("Printerlarni aniqlashda xatolik: " + (e.message || ''));
     } finally {
       setDetectingPrinters(false);
+    }
+  };
+
+  // LAN kabeli bilan ulangan printerlarni tarmoqdan qidirish (9100-port)
+  const handleScanLan = async () => {
+    setScanningLan(true);
+    setLanPrinters([]);
+    try {
+      const res = await api.get('/receipts/printers/scan-network');
+      setLanPrinters(res?.printers || []);
+      if (!res?.printers?.length) {
+        alert(
+          "Tarmoqdan printer topilmadi.\n\n" +
+          "Tekshiring:\n" +
+          "- Printer yoqilganmi va LAN kabeli routerga ulanganmi?\n" +
+          "- Printer va server BIR XIL Wi-Fi/tarmoqda turibdimi?\n" +
+          "- Printerda tarmoq (Ethernet) moduli bormi?"
+        );
+      }
+    } catch (e) {
+      alert('Tarmoqni skanerlashda xatolik: ' + (e.message || ''));
+    } finally {
+      setScanningLan(false);
     }
   };
 
@@ -807,6 +832,48 @@ export const RestaurantSettingsTab = ({ restaurantId }) => {
               <span>{detectingPrinters ? 'Qidirilmoqda...' : 'Printerlarni aniqlash'}</span>
             </button>
           </div>
+
+          {/* LAN printerlarni qidirish */}
+          <div className="flex flex-wrap items-center justify-between gap-3 p-3.5 rounded-2xl bg-black/30 border border-theme-border/50">
+            <div className="min-w-0">
+              <div className="text-xs font-bold text-white">Tarmoqdagi (LAN) printerlarni qidirish</div>
+              <div className="text-[11px] text-theme-muted mt-0.5">
+                LAN kabeli bilan routerga ulangan printerlarning IP manzilini topadi (5-15 soniya).
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={handleScanLan}
+              disabled={scanningLan}
+              className="px-4 py-2 rounded-xl bg-sky-500 hover:bg-sky-400 text-slate-950 font-bold text-xs shrink-0 flex items-center gap-1.5 transition-all shadow-md disabled:opacity-50"
+            >
+              <Search className={`w-3.5 h-3.5 ${scanningLan ? 'animate-spin' : ''}`} />
+              <span>{scanningLan ? 'Tarmoq skanerlanmoqda...' : 'Tarmoqdan qidirish'}</span>
+            </button>
+          </div>
+
+          {lanPrinters.length > 0 && (
+            <div className="p-3.5 rounded-2xl bg-sky-500/10 border border-sky-500/30">
+              <span className="text-[11px] font-bold text-sky-300 block mb-2">
+                Tarmoqda topilgan printerlar (bosib nusxalang, so'ng pastdagi maydonga qo'ying):
+              </span>
+              <div className="flex flex-wrap gap-2">
+                {lanPrinters.map((p) => (
+                  <span
+                    key={p.ip}
+                    className="px-2.5 py-1 rounded-lg bg-sky-400/20 hover:bg-sky-400/30 text-white text-xs font-mono font-bold cursor-pointer border border-sky-400/30"
+                    title="Bosib IP manzilni nusxalang"
+                    onClick={() => {
+                      navigator.clipboard?.writeText(p.ip);
+                      alert(`'${p.ip}' nusxalandi! Endi printer maydoniga qo'ying.`);
+                    }}
+                  >
+                    🌐 {p.ip}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
 
           {detectedPrinters.length > 0 && (
             <div className="p-3.5 rounded-2xl bg-black/40 border border-theme-border/60">

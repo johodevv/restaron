@@ -20,6 +20,7 @@ from app.schemas.receipt import (
     ReceiptArchiveResponse, ShiftReportCreate, ShiftReportResponse
 )
 from app.core.printer_service import (
+    scan_network_printers,
     format_kitchen_ticket, format_pre_check, format_shift_report,
     get_installed_printers, print_to_windows_printer
 )
@@ -123,6 +124,19 @@ async def list_installed_printers(
     """Kompyuterdagi barcha drayveri o'rnatilgan printerlar"""
     printers = get_installed_printers()
     return {"printers": printers, "count": len(printers)}
+
+
+@router.get("/printers/scan-network", summary="Tarmoqdagi (LAN) printerlarni qidirish")
+async def scan_lan_printers(
+    current_user: User = Depends(require_role("admin", "developer")),
+):
+    """
+    Lokal tarmoqni skanerlab, 9100-port ochiq qurilmalarni qaytaradi.
+    LAN kabeli bilan ulangan termal printerning IP manzilini topish uchun.
+    Taxminan 5-15 soniya vaqt oladi.
+    """
+    found = scan_network_printers()
+    return {"printers": found, "count": len(found)}
 
 
 @router.post("/{receipt_id}/print-usb", summary="Arxivdagi chekni to'g'ridan-to'g'ri USB Xprinter'ga yuborish")
