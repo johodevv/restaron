@@ -46,11 +46,28 @@ STATUS_FILE = BASE_DIR / "server_status.json"
 PORT = 8000
 
 
+MAX_LOG_BYTES = 2 * 1024 * 1024   # 2 MB
+
+
+def _trim_log(path, max_bytes=MAX_LOG_BYTES):
+    """
+    Jurnal fayli juda kattalashib ketmasligi uchun eski qismini kesadi.
+    Server restoranda yillab ishlaydi -- cheklovsiz jurnal diskni to'ldiradi.
+    """
+    try:
+        if path.exists() and path.stat().st_size > max_bytes:
+            data = path.read_text(encoding="utf-8", errors="replace")
+            path.write_text(data[-(max_bytes // 2):], encoding="utf-8")
+    except Exception:
+        pass
+
+
 def log(msg: str):
     timestamp = datetime.now().strftime("%H:%M:%S")
     line = f"[{timestamp}] {msg}"
     print(line, flush=True)
     try:
+        _trim_log(LOG_FILE)
         with open(LOG_FILE, "a", encoding="utf-8") as f:
             f.write(line + "\n")
     except Exception:

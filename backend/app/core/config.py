@@ -21,7 +21,11 @@ class Settings(BaseSettings):
     APP_NAME: str = "RestAron"
     APP_HOST: str = "0.0.0.0"
     APP_PORT: int = 8000
-    DEBUG: bool = True
+    # Restoranda server 24/7 ishlaydi. DEBUG=True bo'lsa HAR BIR SQL
+    # so'rov jurnalga yoziladi va fayl gigabaytlarga o'sib diskni
+    # to'ldiradi. Shuning uchun sukut bo'yicha O'CHIRILGAN.
+    # Nosozlikni qidirish uchun .env da DEBUG=True qilinadi.
+    DEBUG: bool = False
 
     # CORS
     FRONTEND_URL: str = "http://localhost:5173"
