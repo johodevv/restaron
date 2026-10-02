@@ -91,6 +91,8 @@ export const RestaurantSettingsTab = ({ restaurantId }) => {
   // Settings fields
   const [serviceFeePercent, setServiceFeePercent] = useState(12);
   const [printerPaperWidth, setPrinterPaperWidth] = useState(80);
+  const [printerCodepage, setPrinterCodepage] = useState(17);
+  const [testingCodepage, setTestingCodepage] = useState(false);
   const [archiveRetentionYears, setArchiveRetentionYears] = useState(3);
   const [receiptHeader, setReceiptHeader] = useState('RestAron Restaurant');
   const [receiptFooter, setReceiptFooter] = useState('Tashrif buyurganingiz uchun rahmat!');
@@ -153,6 +155,28 @@ export const RestaurantSettingsTab = ({ restaurantId }) => {
   };
 
   // LAN kabeli bilan ulangan printerlarni tarmoqdan qidirish (9100-port)
+  // Qaysi kirill kod sahifasi to'g'ri ekanini aniqlash uchun sinov cheki
+  const handleCodepageTest = async () => {
+    setTestingCodepage(true);
+    try {
+      const res = await api.post('/receipts/printers/codepage-test', {});
+      if (res?.success) {
+        alert(
+          "Sinov cheki chiqarildi.\n\n" +
+          "Qog'ozga qarang: har qatorda [raqam] va kirill alifbosi bor.\n" +
+          "QAYSI QATOR TO'G'RI o'qilsa, o'sha raqamni pastdagi\n" +
+          "\"Kirill kod sahifasi\" maydoniga yozing va Saqlang."
+        );
+      } else {
+        alert('Chop etib bo\'lmadi: ' + (res?.message || ''));
+      }
+    } catch (e) {
+      alert('Xatolik: ' + (e.message || ''));
+    } finally {
+      setTestingCodepage(false);
+    }
+  };
+
   const handleScanLan = async () => {
     setScanningLan(true);
     setLanPrinters([]);
@@ -210,6 +234,7 @@ export const RestaurantSettingsTab = ({ restaurantId }) => {
       if (s) {
         setServiceFeePercent(s.service_fee_percent ?? 12);
         setPrinterPaperWidth(s.printer_paper_width ?? 80);
+        setPrinterCodepage(s.printer_codepage || 17);
         setArchiveRetentionYears(s.archive_retention_years ?? 3);
         setReceiptHeader(s.receipt_header || 'RestAron Restaurant');
         setReceiptFooter(s.receipt_footer || 'Tashrif buyurganingiz uchun rahmat!');
@@ -264,6 +289,7 @@ export const RestaurantSettingsTab = ({ restaurantId }) => {
       await api.patch(`/restaurants/${restaurantId}/settings`, {
         service_fee_percent: parseFloat(serviceFeePercent) || 12,
         printer_paper_width: parseInt(printerPaperWidth) || 80,
+        printer_codepage: parseInt(printerCodepage) || 17,
         archive_retention_years: parseInt(archiveRetentionYears) || 3,
         receipt_header: receiptHeader.trim() || undefined,
         receipt_footer: receiptFooter.trim() || undefined,
@@ -831,6 +857,33 @@ export const RestaurantSettingsTab = ({ restaurantId }) => {
               <Search className={`w-3.5 h-3.5 ${detectingPrinters ? 'animate-spin' : ''}`} />
               <span>{detectingPrinters ? 'Qidirilmoqda...' : 'Printerlarni aniqlash'}</span>
             </button>
+          </div>
+
+          {/* Kirill kod sahifasi */}
+          <div className="p-3.5 rounded-2xl bg-black/30 border border-theme-border/50 space-y-2.5">
+            <div className="text-xs font-bold text-white">Kirill kod sahifasi (chek harflari)</div>
+            <div className="text-[11px] text-theme-muted">
+              Chek tushunarsiz belgilar yoki ieroglif (yaponcha/xitoycha) bo'lib chiqsa,
+              shu raqamni o'zgartiring. Ko'pchilik printerlarda <b>17</b>. Qaysi raqam
+              to'g'ri ekanini bilish uchun sinov chekini chiqaring.
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <input
+                type="number"
+                value={printerCodepage}
+                onChange={(e) => setPrinterCodepage(e.target.value)}
+                className="w-24 px-3 py-2 rounded-xl bg-black/40 border border-theme-border text-sm text-white font-mono"
+              />
+              <button
+                type="button"
+                onClick={handleCodepageTest}
+                disabled={testingCodepage}
+                className="px-4 py-2 rounded-xl bg-purple-500 hover:bg-purple-400 text-white font-bold text-xs flex items-center gap-1.5 shadow-md disabled:opacity-50"
+              >
+                <Printer className={`w-3.5 h-3.5 ${testingCodepage ? 'animate-spin' : ''}`} />
+                <span>{testingCodepage ? 'Chiqarilmoqda...' : 'Kod sahifalarini sinash'}</span>
+              </button>
+            </div>
           </div>
 
           {/* LAN printerlarni qidirish */}

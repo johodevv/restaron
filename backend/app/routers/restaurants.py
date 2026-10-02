@@ -52,6 +52,7 @@ class SettingsUpdate(BaseModel):
     receipt_phone: Optional[str] = None
     receipt_wifi_pass: Optional[str] = None
     printer_paper_width: Optional[int] = None
+    printer_codepage: Optional[int] = None
     archive_retention_years: Optional[int] = None
     allow_debt_payment: Optional[bool] = None
     enable_telegram_notifications: Optional[bool] = None

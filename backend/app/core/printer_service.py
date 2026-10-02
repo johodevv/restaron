@@ -98,13 +98,20 @@ def clean_for_cp866(text: str) -> str:
 
 
 # ─── ESC/POS buyruqlari ────────────────────────────────────────────────
-ESC_INIT = b"\x1b\x40"          # ESC @  -- printerni boshlang'ich holatga keltirish
-ESC_CP866 = b"\x1b\x74\x11"     # ESC t 17 -- kod sahifasi: PC866 (kirill)
-ESC_FONT_A = b"\x1b\x21\x00"    # ESC ! 0  -- Font A, oddiy o'lcham (48 belgi / 80mm)
+ESC_INIT = b"\x1b\x40"          # ESC @   -- printerni boshlang'ich holatga keltirish
+FS_KANJI_OFF = b"\x1c\x2e"      # FS .    -- IEROGLIF (Kanji) rejimini O'CHIRISH
+FS_KANJI_OFF2 = b"\x1c\x43\x00"  # FS C 0 -- ko'p baytli belgilar rejimini o'chirish
+ESC_FONT_A = b"\x1b\x21\x00"    # ESC ! 0 -- Font A, oddiy o'lcham (48 belgi / 80mm)
 ESC_CUT = b"\n\n\n\n\x1d\x56\x42\x00"  # qog'ozni kesish
 
+# PC866 (kirill) kod sahifasining raqami. Epson standartida 17, lekin
+# ba'zi Xprinter modellarida boshqacha bo'lishi mumkin -- shuning uchun
+# sozlamalardan o'zgartirish mumkin.
+DEFAULT_CODEPAGE = 17
 
-def build_escpos_payload(raw_text: str, cut_paper: bool = True) -> bytes:
+
+def build_escpos_payload(raw_text: str, cut_paper: bool = True,
+                         codepage: int = DEFAULT_CODEPAGE) -> bytes:
     """
     Matnni termal printer tushunadigan baytlarga aylantiradi.
 
@@ -123,7 +130,14 @@ def build_escpos_payload(raw_text: str, cut_paper: bool = True) -> bytes:
     except Exception:
         body = (raw_text or "").encode("utf-8", errors="replace")
 
-    payload = ESC_INIT + ESC_CP866 + ESC_FONT_A + body
+    # MUHIM: Xitoyda ishlab chiqarilgan printerlarda ko'pincha IEROGLIF
+    # (Kanji/GB) rejimi yoqilgan bo'ladi -- har IKKI bayt bitta ieroglif
+    # deb o'qiladi va kirill matn YAPONCHA/XITOYCHA bo'lib chiqadi.
+    # Shuning uchun avval shu rejimni o'chiramiz, keyin kod sahifasini
+    # tanlaymiz.
+    esc_codepage = b"\x1b\x74" + bytes([max(0, min(255, int(codepage)))])
+    payload = (ESC_INIT + FS_KANJI_OFF + FS_KANJI_OFF2
+               + esc_codepage + ESC_FONT_A + body)
     if cut_paper:
         payload += ESC_CUT
     return payload
@@ -398,7 +412,8 @@ def print_to_network_printer(
     ip_or_host: str,
     port: int = 9100,
     raw_text: str = "",
-    cut_paper: bool = True
+    cut_paper: bool = True,
+    codepage: int = DEFAULT_CODEPAGE
 ) -> Dict[str, Any]:
     """
     Wi-Fi yoki Ethernet (LAN kabel) orqali ulangan Xprinterga
@@ -416,7 +431,7 @@ def print_to_network_printer(
 
     try:
         # Matnni ESC/POS baytlariga aylantirish (kod sahifasi bilan)
-        payload = build_escpos_payload(raw_text, cut_paper=cut_paper)
+        payload = build_escpos_payload(raw_text, cut_paper=cut_paper, codepage=codepage)
 
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         s.settimeout(3.5)
@@ -440,7 +455,8 @@ def print_to_network_printer(
 def print_to_windows_printer(
     raw_text: str,
     printer_name: Optional[str] = None,
-    cut_paper: bool = True
+    cut_paper: bool = True,
+    codepage: int = DEFAULT_CODEPAGE
 ) -> Dict[str, Any]:
     """
     USB, Windows Spooler yoki Tarmoq (LAN/Wi-Fi IP) orqali chop etish
@@ -449,7 +465,7 @@ def print_to_windows_printer(
 
     # Agar kiritilgan qiymat IP manzil bo'lsa -> Tarmoq orqali yuborish!
     if is_ip_address(target):
-        return print_to_network_printer(target, raw_text=raw_text, cut_paper=cut_paper)
+        return print_to_network_printer(target, raw_text=raw_text, cut_paper=cut_paper, codepage=codepage)
 
     if platform.system() != "Windows":
         return {"success": False, "error": "USB to'g'ridan-to'g'ri chop etish faqat Windows tizimida ishlaydi. Tarmoq printeri uchun IP manzil kiriting (masalan: 192.168.1.100)."}
@@ -479,7 +495,7 @@ def print_to_windows_printer(
             return {"success": False, "error": "Hech qanday printer topilmadi. Xprinter drayverini o'rnating."}
 
         # Matnni ESC/POS baytlariga aylantirish (kod sahifasi bilan)
-        payload = build_escpos_payload(raw_text, cut_paper=cut_paper)
+        payload = build_escpos_payload(raw_text, cut_paper=cut_paper, codepage=codepage)
 
         hPrinter = win32print.OpenPrinter(target)
         try:
@@ -545,3 +561,46 @@ def scan_network_printers(port: int = 9100, timeout: float = 0.35) -> List[Dict[
             if r:
                 found.append(r)
     return found
+
+
+def _send_raw_bytes(payload: bytes, target: str) -> Dict[str, Any]:
+    """
+    Tayyor ESC/POS baytlarni printerga yuboradi (USB nomi yoki LAN IP).
+    Kod sahifasi sinovi kabi maxsus holatlar uchun.
+    """
+    if is_ip_address(target):
+        host, port = target.strip(), 9100
+        if ":" in host:
+            host, _, prt = host.partition(":")
+            try:
+                port = int(prt)
+            except Exception:
+                pass
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.settimeout(4.0)
+            s.connect((host, port))
+            s.sendall(payload)
+            s.close()
+            return {"success": True, "message": f"{host}:{port} ga yuborildi"}
+        except Exception as e:
+            return {"success": False, "error": f"{host}:{port} ga ulanib bo'lmadi: {e}"}
+
+    if platform.system() != "Windows":
+        return {"success": False, "error": "USB chop etish faqat Windows'da ishlaydi"}
+    try:
+        import win32print
+        h = win32print.OpenPrinter(target)
+        try:
+            job = win32print.StartDocPrinter(h, 1, ("RestAron_CodepageTest", None, "RAW"))
+            try:
+                win32print.StartPagePrinter(h)
+                win32print.WritePrinter(h, payload)
+                win32print.EndPagePrinter(h)
+            finally:
+                win32print.EndDocPrinter(h)
+        finally:
+            win32print.ClosePrinter(h)
+        return {"success": True, "message": f"'{target}' printeriga yuborildi"}
+    except Exception as e:
+        return {"success": False, "error": str(e)}

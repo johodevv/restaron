@@ -57,6 +57,7 @@ def _sync_sqlite_migrations(sync_conn):
             ("receipt_phone", "VARCHAR(50)"),
             ("receipt_wifi_pass", "VARCHAR(100)"),
             ("printer_paper_width", "INTEGER DEFAULT 80"),
+            ("printer_codepage", "INTEGER DEFAULT 17"),
             ("archive_retention_years", "INTEGER DEFAULT 3"),
             ("allow_debt_payment", "BOOLEAN DEFAULT 1"),
             ("allow_orders_from_qr", "BOOLEAN DEFAULT 0"),

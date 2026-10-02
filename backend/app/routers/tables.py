@@ -505,6 +505,7 @@ async def print_table_bill(
     )
     settings = s_res.scalar_one_or_none()
     cust_printer = getattr(settings, "printer_customer_name", None) or "X-Q80A"
+    cp = getattr(settings, "printer_codepage", None) or 17
     paper_width = getattr(settings, "printer_paper_width", 80) or 80
 
     # Buyurtmalarni olish
@@ -573,7 +574,7 @@ async def print_table_bill(
     )
 
     # 1-Printer (USB yoki LAN IP) ga chop etish
-    p_res = print_to_windows_printer(bill_text, printer_name=cust_printer)
+    p_res = print_to_windows_printer(bill_text, printer_name=cust_printer, codepage=cp)
 
     archive = ReceiptArchive(
         restaurant_id=table.restaurant_id,

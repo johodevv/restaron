@@ -126,6 +126,57 @@ async def list_installed_printers(
     return {"printers": printers, "count": len(printers)}
 
 
+class CodepageTestRequest(BaseModel):
+    printer_name: Optional[str] = None
+    codepages: Optional[List[int]] = None
+
+
+@router.post("/printers/codepage-test", summary="Kirill kod sahifalarini sinab ko'rish")
+async def codepage_test(
+    payload: CodepageTestRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role("admin", "developer")),
+):
+    """
+    Bitta chekda bir nechta kod sahifasini sinab chiqaradi.
+
+    Chek tushunarsiz belgilar yoki IEROGLIF (yaponcha/xitoycha) bo'lib
+    chiqsa, qaysi raqam to'g'ri ekanini bilish qiyin. Bu funksiya har bir
+    raqam uchun bir xil kirill matnni chop etadi va yoniga raqamini
+    yozadi. Qog'ozdan qaysi qator TO'G'RI o'qilsa, o'sha raqamni
+    Sozlamalarda "Kirill kod sahifasi" maydoniga yozasiz.
+    """
+    from app.core.printer_service import build_escpos_payload, clean_for_cp866
+
+    pages = payload.codepages or [17, 6, 7, 55, 2, 16, 0]
+    sample = "АБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЪЫЬЭЮЯ"
+
+    set_res = await db.execute(select(RestaurantSettings))
+    st = set_res.scalars().first()
+    target = payload.printer_name or getattr(st, "printer_customer_name", None) or "X-Q80A"
+
+    chunks = [b"\x1b\x40\x1c\x2e\x1c\x43\x00"]   # init + ieroglif rejimini o'chirish
+    chunks.append("*** KOD SAHIFASI SINOVI ***\nQaysi qator TO'G'RI o'qilsa,\nraqamini Sozlamalarga yozing.\n\n".encode("cp866", errors="replace"))
+    for cp in pages:
+        body = clean_for_cp866(f"[{cp}] {sample}").encode("cp866", errors="replace")
+        chunks.append(b"\x1b\x74" + bytes([max(0, min(255, cp))]) + body + b"\n")
+    chunks.append(b"\n\n\n\n\x1d\x56\x42\x00")
+    raw_payload = b"".join(chunks)
+
+    try:
+        from app.core.printer_service import _send_raw_bytes
+        res = _send_raw_bytes(raw_payload, target)
+    except Exception as e:
+        res = {"success": False, "error": str(e)}
+
+    return {
+        "printer": target,
+        "codepages_tested": pages,
+        "success": res.get("success", False),
+        "message": res.get("message") or res.get("error"),
+    }
+
+
 @router.get("/printers/scan-network", summary="Tarmoqdagi (LAN) printerlarni qidirish")
 async def scan_lan_printers(
     current_user: User = Depends(require_role("admin", "developer")),

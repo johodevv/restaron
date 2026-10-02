@@ -746,6 +746,7 @@ async def send_to_kitchen(
     k1_printer = getattr(settings, "printer_kitchen1_name", None) or "X-Q80A"
     k2_printer = getattr(settings, "printer_kitchen2_name", None) or "X-Q80A"
     auto_print = getattr(settings, "auto_print_kitchen", True)
+    cp = getattr(settings, "printer_codepage", None) or 17
 
     generated_tickets = []
     combined_texts = []
@@ -768,7 +769,7 @@ async def send_to_kitchen(
         print_error = None
         if auto_print:
             try:
-                p_res = print_to_windows_printer(k1_text, printer_name=k1_printer)
+                p_res = print_to_windows_printer(k1_text, printer_name=k1_printer, codepage=cp)
                 print_status = p_res.get("success", False)
                 if not print_status:
                     print_error = p_res.get("error") or p_res.get("message")
@@ -823,7 +824,7 @@ async def send_to_kitchen(
         print_error = None
         if auto_print:
             try:
-                p_res = print_to_windows_printer(k2_text, printer_name=k2_printer)
+                p_res = print_to_windows_printer(k2_text, printer_name=k2_printer, codepage=cp)
                 print_status = p_res.get("success", False)
                 if not print_status:
                     print_error = p_res.get("error") or p_res.get("message")
@@ -1081,8 +1082,9 @@ async def checkout_order(
     # Avtomatik 1-Printer (Mijoz kassa cheki) ga chop etish
     if getattr(settings, "auto_print_customer_bill", True):
         cust_printer = getattr(settings, "printer_customer_name", None) or "X-Q80A"
+        cp = getattr(settings, "printer_codepage", None) or 17
         try:
-            print_to_windows_printer(bill_text, printer_name=cust_printer)
+            print_to_windows_printer(bill_text, printer_name=cust_printer, codepage=cp)
         except Exception:
             pass
 

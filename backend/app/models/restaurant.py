@@ -79,6 +79,10 @@ class RestaurantSettings(Base):
     receipt_address = Column(String(500), nullable=True)
     receipt_phone = Column(String(50), nullable=True)
     receipt_wifi_pass = Column(String(100), nullable=True)
+    # Kirill kod sahifasi raqami (ESC t n). Epson standartida PC866 = 17,
+    # lekin ba'zi Xprinter modellarida boshqacha. Chek tushunarsiz yoki
+    # ieroglif bo'lib chiqsa, shu raqamni o'zgartirib ko'riladi.
+    printer_codepage = Column(Integer, default=17)
     printer_paper_width = Column(Integer, default=80)  # 58 yoki 80 mm
 
     # Cheklar arxivini saqlash muddati (yillarda, default: 3 yil)
