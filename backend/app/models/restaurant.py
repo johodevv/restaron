@@ -72,7 +72,9 @@ class RestaurantSettings(Base):
     service_fee_percent = Column(Float, default=12.0)
 
     # Chek sozlamalari (Xprinter uchun)
-    receipt_header = Column(String(200), default="RestAron")
+    # Bo'sh bo'lsa chekda RESTORAN NOMI chiqadi (default "RestAron" edi va
+    # haqiqiy nom o'rniga shu yozilib qolardi)
+    receipt_header = Column(String(200), default=None, nullable=True)
     receipt_footer = Column(String(500), default="Tashrifingiz uchun rahmat!")
     receipt_address = Column(String(500), nullable=True)
     receipt_phone = Column(String(50), nullable=True)
@@ -97,8 +99,8 @@ class RestaurantSettings(Base):
 
     # 3 ta Chek Printerlari va Oshxona Routing Sozlamalari
     printer_customer_name = Column(String(100), default="X-Q80A", nullable=True)      # 1-Printer: Mijoz kassa cheki (USB)
-    printer_kitchen1_name = Column(String(100), default="192.168.1.201", nullable=True)  # 2-Printer: 1-Oshxona (statik IP, LAN)
-    printer_kitchen2_name = Column(String(100), default="192.168.1.202", nullable=True)  # 3-Printer: 2-Oshxona (statik IP, LAN)
+    printer_kitchen1_name = Column(String(100), default="X-Q80A", nullable=True)       # 2-Printer: 1-Oshxona (USB nomi yoki LAN IP)
+    printer_kitchen2_name = Column(String(100), default="X-Q80A", nullable=True)       # 3-Printer: 2-Oshxona (USB nomi yoki LAN IP)
     kitchen1_title = Column(String(100), default="1-Oshxona (Qozon taomlari)", nullable=True)
     kitchen2_title = Column(String(100), default="2-Oshxona (Baliq / Somsa)", nullable=True)
     auto_print_kitchen = Column(Boolean, default=True)            # Ofitsiant yuborganda avtomatik printerga chiqarish

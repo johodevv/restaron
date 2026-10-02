@@ -97,6 +97,38 @@ def clean_for_cp866(text: str) -> str:
     return t
 
 
+# ─── ESC/POS buyruqlari ────────────────────────────────────────────────
+ESC_INIT = b"\x1b\x40"          # ESC @  -- printerni boshlang'ich holatga keltirish
+ESC_CP866 = b"\x1b\x74\x11"     # ESC t 17 -- kod sahifasi: PC866 (kirill)
+ESC_FONT_A = b"\x1b\x21\x00"    # ESC ! 0  -- Font A, oddiy o'lcham (48 belgi / 80mm)
+ESC_CUT = b"\n\n\n\n\x1d\x56\x42\x00"  # qog'ozni kesish
+
+
+def build_escpos_payload(raw_text: str, cut_paper: bool = True) -> bytes:
+    """
+    Matnni termal printer tushunadigan baytlarga aylantiradi.
+
+    MUHIM: matnni CP866 ga kodlashning o'zi YETARLI EMAS. Printer sukut
+    bo'yicha CP437 (lotin) kod sahifasida o'qiydi, shuning uchun kirill
+    harflar tushunarsiz belgilarga aylanib chiqadi. Avval `ESC t 17`
+    buyrug'i bilan printerga PC866 kod sahifasini ishlatishini aytamiz.
+
+    Shuningdek `ESC @` bilan printerni tozalaymiz va `ESC ! 0` bilan
+    Font A (oddiy o'lcham) ni o'rnatamiz -- aks holda oldingi ishdan
+    qolgan kichik shrift (Font B) bilan chop etilishi mumkin.
+    """
+    clean_text = clean_for_cp866(raw_text or "")
+    try:
+        body = clean_text.encode("cp866", errors="replace")
+    except Exception:
+        body = (raw_text or "").encode("utf-8", errors="replace")
+
+    payload = ESC_INIT + ESC_CP866 + ESC_FONT_A + body
+    if cut_paper:
+        payload += ESC_CUT
+    return payload
+
+
 def receipt_columns(paper_width: int) -> int:
     """
     Termal printer uchun bir qatordagi belgilar soni.
@@ -383,15 +415,8 @@ def print_to_network_printer(
             pass
 
     try:
-        # Matnni CP866 (rus/o'zbek kirill termal) yoki UTF-8 kodlash
-        clean_text = clean_for_cp866(raw_text)
-        try:
-            payload = clean_text.encode("cp866", errors="replace")
-        except Exception:
-            payload = raw_text.encode("utf-8", errors="replace")
-
-        if cut_paper:
-            payload += b"\n\n\n\n\x1d\x56\x42\x00"
+        # Matnni ESC/POS baytlariga aylantirish (kod sahifasi bilan)
+        payload = build_escpos_payload(raw_text, cut_paper=cut_paper)
 
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         s.settimeout(3.5)
@@ -453,16 +478,8 @@ def print_to_windows_printer(
         if not target:
             return {"success": False, "error": "Hech qanday printer topilmadi. Xprinter drayverini o'rnating."}
 
-        # Matnni CP866 (rus/o'zbek kirill termal) yoki UTF-8 kodlash
-        clean_text = clean_for_cp866(raw_text)
-        try:
-            payload = clean_text.encode("cp866", errors="replace")
-        except Exception:
-            payload = raw_text.encode("utf-8", errors="replace")
-
-        if cut_paper:
-            # 4 qator bo'sh joy + ESC/POS pichoq kesish buyrug'i
-            payload += b"\n\n\n\n\x1d\x56\x42\x00"
+        # Matnni ESC/POS baytlariga aylantirish (kod sahifasi bilan)
+        payload = build_escpos_payload(raw_text, cut_paper=cut_paper)
 
         hPrinter = win32print.OpenPrinter(target)
         try:

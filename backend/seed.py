@@ -110,6 +110,7 @@ THEMES = [
 
 
 # Restoran egasining asosiy admin akkaunti
+RESTAURANT_NAME = "Dunyo Choyxonasi"
 ADMIN_USERNAME = "maqsad"
 ADMIN_PASSWORD = "01020307m"
 
@@ -168,7 +169,7 @@ async def seed():
         result = await db.execute(select(Restaurant).where(Restaurant.slug == "demo-restoran"))
         if not result.scalar_one_or_none():
             restaurant = Restaurant(
-                name="Demo Restoran",
+                name=RESTAURANT_NAME,
                 slug="demo-restoran",
                 description="RestAron tizimini sinab ko'rish uchun namuna restoran",
                 address="Toshkent, Chilonzor tumani",
@@ -347,6 +348,24 @@ async def seed():
             print("✅ Demo restoran yaratildi:")
             print("   Admin:     maqsad / 01020307m")
             print("   Ofitsiant: ofitsiant1 / waiter123")
+
+        # ─── 3.5. Namuna nomini to'g'rilash ───────────────────
+        # Eski o'rnatmalarda restoran "Demo Restoran" deb yaratilgan edi va
+        # bu nom CHEKLARDA ham chiqardi. Haqiqiy nomga o'zgartiramiz.
+        # (Egasi keyin Admin -> Sozlamalar da istalgan nomni qo'ya oladi.)
+        demo_res = await db.execute(select(Restaurant).where(Restaurant.name == "Demo Restoran"))
+        demo_rest = demo_res.scalar_one_or_none()
+        if demo_rest:
+            demo_rest.name = RESTAURANT_NAME
+            print(f"[OK] Restoran nomi yangilandi: {RESTAURANT_NAME}")
+
+        # Chek sarlavhasi "RestAron" bo'lib qolgan bo'lsa tozalaymiz --
+        # shunda chekda restoranning HAQIQIY nomi chiqadi.
+        hdr_res = await db.execute(
+            select(RestaurantSettings).where(RestaurantSettings.receipt_header == "RestAron")
+        )
+        for st in hdr_res.scalars().all():
+            st.receipt_header = None
 
         # ─── 4. Admin akkauntini KAFOLATLASH ──────────────────
         # MUHIM: yuqoridagi blok faqat restoran YANGI yaratilganda ishlaydi.

@@ -118,11 +118,9 @@ export const WaiterDashboard = () => {
         const ord = activeOrders[0];
         setActiveOrder(ord);
         setKitchenNote(ord.kitchen_note || '');
-        setReceiptNote(ord.receipt_note || '');
       } else {
         setActiveOrder(null);
         setKitchenNote('');
-        setReceiptNote('');
       }
     } catch (err) {
       console.error('Fetch table order error:', err);
@@ -249,7 +247,6 @@ export const WaiterDashboard = () => {
       });
       setActiveOrder(updated);
       setKitchenNoteModalOpen(false);
-      setReceiptNoteModalOpen(false);
     } catch (err) {
       alert(err.message || 'Xatolik');
     }
@@ -264,9 +261,27 @@ export const WaiterDashboard = () => {
     setSendingToKitchen(true);
     try {
       const res = await api.post(`/orders/${activeOrder.id}/send-to-kitchen`, {});
+
+      // Printerga chiqmagan begunoklar bormi?
+      const tickets = res.tickets || [];
+      const failed = tickets.filter((t) => !t.printed);
+
       if (res.raw_text) {
         setThermalReceiptText(res.raw_text);
-        setReceiptModalTitle(`Oshxona Begunogi (${selectedTable?.room || 'Zal'} N#${selectedTable?.number || ''})`);
+        setReceiptModalTitle(
+          `Oshxona Begunogi (${selectedTable?.room || 'Zal'} N#${selectedTable?.number || ''})`
+        );
+        // Printerdan chiqmagan bo'lsa -- chekni EKRANDA ko'rsatamiz, aks holda
+        // ofitsiant begunok chiqmaganini bilmay qoladi.
+        if (failed.length > 0) {
+          setReceiptModalOpen(true);
+          const sabab = failed[0].print_error || 'printer topilmadi';
+          alert(
+            `Begunok printerdan chiqmadi (${failed.map((t) => t.printer_name).join(', ')}).\n` +
+            `Sabab: ${sabab}\n\n` +
+            `Chek ekranda ochildi - "Chop etish" tugmasi orqali chiqarishingiz mumkin.`
+          );
+        }
       }
       setKitchenSendSuccess(true);
       setTimeout(() => setKitchenSendSuccess(false), 4000);

@@ -743,8 +743,8 @@ async def send_to_kitchen(
 
     k1_title = getattr(settings, "kitchen1_title", "1-Oshxona (Qozon taomlari)") or "1-Oshxona (Qozon taomlari)"
     k2_title = getattr(settings, "kitchen2_title", "2-Oshxona (Baliq / Somsa)") or "2-Oshxona (Baliq / Somsa)"
-    k1_printer = getattr(settings, "printer_kitchen1_name", None) or "192.168.1.201"
-    k2_printer = getattr(settings, "printer_kitchen2_name", None) or "192.168.1.202"
+    k1_printer = getattr(settings, "printer_kitchen1_name", None) or "X-Q80A"
+    k2_printer = getattr(settings, "printer_kitchen2_name", None) or "X-Q80A"
     auto_print = getattr(settings, "auto_print_kitchen", True)
 
     generated_tickets = []
@@ -765,12 +765,17 @@ async def send_to_kitchen(
         )
         combined_texts.append(k1_text)
         print_status = False
+        print_error = None
         if auto_print:
             try:
                 p_res = print_to_windows_printer(k1_text, printer_name=k1_printer)
                 print_status = p_res.get("success", False)
-            except Exception:
-                pass
+                if not print_status:
+                    print_error = p_res.get("error") or p_res.get("message")
+            except Exception as e:
+                print_error = str(e)
+        else:
+            print_error = "Avtomatik chop etish sozlamalarda o'chirilgan"
 
         archive1 = ReceiptArchive(
             restaurant_id=order.restaurant_id,
@@ -797,6 +802,7 @@ async def send_to_kitchen(
             "items": k1_items,
             "raw_text": k1_text,
             "printed": print_status,
+            "print_error": print_error,
         })
 
     # 2-Oshxona (Baliq / Somsa)
@@ -814,12 +820,17 @@ async def send_to_kitchen(
         )
         combined_texts.append(k2_text)
         print_status = False
+        print_error = None
         if auto_print:
             try:
                 p_res = print_to_windows_printer(k2_text, printer_name=k2_printer)
                 print_status = p_res.get("success", False)
-            except Exception:
-                pass
+                if not print_status:
+                    print_error = p_res.get("error") or p_res.get("message")
+            except Exception as e:
+                print_error = str(e)
+        else:
+            print_error = "Avtomatik chop etish sozlamalarda o'chirilgan"
 
         archive2 = ReceiptArchive(
             restaurant_id=order.restaurant_id,
@@ -846,6 +857,7 @@ async def send_to_kitchen(
             "items": k2_items,
             "raw_text": k2_text,
             "printed": print_status,
+            "print_error": print_error,
         })
 
     await db.flush()
