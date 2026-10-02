@@ -45,3 +45,9 @@ server.log
 
 # Xizmat ishga tushiruvchi fayli (o' rnatish skripti yaratadi)
 _xizmat_ishga_tushirish.cmd
+
+# Baza va zaxira nusxalar (hech qachon gitga tushmasin)
+*.db
+*.db-wal
+*.db-shm
+backend/zaxira/

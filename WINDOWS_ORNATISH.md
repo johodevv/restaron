@@ -171,6 +171,49 @@ Kompyuter o'chib yonsa, o'zi qayta ishga tushadi.
 
 ---
 
+## Ma'lumotlarni tozalash (noldan boshlash)
+
+Ikkita skript bor. Ikkisi ham **o'chirishdan oldin avtomatik zaxira nusxa**
+oladi: `backend\zaxira\restaron_<sana>.db`.
+
+### Faqat buyurtmalarni tozalash (tavsiya etiladi)
+
+**`RESTARON_TOZALASH_BUYURTMALAR.bat`** — o'ng tugma → *Run as administrator*.
+
+| O'chiriladi | Saqlanadi |
+|---|---|
+| buyurtmalar, cheklar arxivi | menyu (taomlar, kategoriyalar) |
+| qarzlar (nasiya) | stollar va ularning **QR kodlari** |
+| smena hisobotlari (X/Z) | xodimlar va parollar |
+| bildirishnomalar, izohlar | printer va restoran sozlamalari |
+
+Barcha stollar "bo'sh" holatiga o'tadi, buyurtma raqamlari yana
+`#R1-0001` dan boshlanadi. **Sinov uchun kiritilgan buyurtmalarni
+tozalab, haqiqiy ishni boshlash uchun shu skriptni ishlating.**
+
+### Hammasini tozalash
+
+**`RESTARON_TOZALASH_HAMMASI.bat`** — o'ng tugma → *Run as administrator*.
+Tasdiq uchun `TOZALA` deb yozish kerak.
+
+Butun baza o'chiriladi va noldan yaratiladi: menyu, stollar, xodimlar,
+sozlamalar — hammasi. Keyin admin logini yana `maqsad` / `01020307m`.
+
+> **DIQQAT:** stollarning **QR kodlari yangidan yaratiladi**, ya'ni
+> stollarda turgan eski chop etilgan QR kodlar ishlamay qoladi —
+> ularni qayta chop etishingiz kerak. Menyuni ham qaytadan kiritasiz.
+> Shuning uchun ko'pincha yuqoridagi "faqat buyurtmalarni tozalash"
+> yetarli bo'ladi.
+
+Ikkala skript ham serverni o'zi to'xtatadi, tozalaydi va qayta ishga
+tushiradi — qo'lda hech narsa qilish shart emas.
+
+Xato bilan tozalab qo'ysangiz: `backend\zaxira\` ichidagi kerakli faylni
+`backend\restaron.db` nomi bilan qaytarib qo'ying (avval serverni
+`RESTARON_XIZMATNI_TOXTATISH.bat` bilan to'xtatib oling).
+
+---
+
 ## Ma'lumotlar va zaxira nusxa
 
 Barcha ma'lumot bitta faylda: **`backend\restaron.db`**

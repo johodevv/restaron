@@ -291,8 +291,14 @@ async def get_table_bill(table_id: int, db: AsyncSession = Depends(get_db)):
     )
     orders = order_res.scalars().all()
 
-    # Agar to'lanmagan faol buyurtma bo'lmasa, so'nggi sessiya buyurtmalarini ko'rsatish
-    if not orders:
+    # Agar to'lanmagan faol buyurtma bo'lmasa, so'nggi sessiya buyurtmalarini
+    # ko'rsatamiz — LEKIN faqat stol hali bo'shatilmagan bo'lsa.
+    #
+    # Stol bo'shatilgandan keyin hisob BO'SH bo'lishi kerak. Aks holda
+    # "To'landi & Stolni Bo'shatish" bosilgandan keyin ham yopilgan chek
+    # ekranda qolib ketadi (va uni qayta-qayta to'lash mumkin bo'lib qoladi).
+    session_open = table.status != TableStatus.AVAILABLE
+    if not orders and session_open:
         recent_res = await db.execute(
             select(Order)
             .options(
@@ -317,6 +323,9 @@ async def get_table_bill(table_id: int, db: AsyncSession = Depends(get_db)):
     waiter_names = set()
     earliest_time = None
     is_all_paid = len(orders) > 0 and all(o.is_paid for o in orders)
+    # "Faol hisob" = kamida bitta to'lanmagan buyurtma. To'langan buyurtma
+    # faqat ko'rish (arxiv) uchun qaytariladi, u stolni band qilmaydi.
+    has_open_bill = any(not o.is_paid for o in orders)
 
     for o in orders:
         order_numbers.append(o.order_number)
@@ -372,7 +381,7 @@ async def get_table_bill(table_id: int, db: AsyncSession = Depends(get_db)):
         service_fee_amount=service_fee_amount,
         discount=0.0,
         grand_total=grand_total,
-        has_active_orders=len(orders) > 0,
+        has_active_orders=has_open_bill,
         is_paid=is_all_paid,
         created_at=earliest_time or table.created_at,
     )
@@ -526,7 +535,19 @@ async def print_table_bill(
         raise HTTPException(status_code=400, detail="Ushbu stolda hali buyurtma yo'q")
 
     active_orders = [o for o in orders if not o.is_paid]
-    target_orders = active_orders if active_orders else [orders[0]]
+    if active_orders:
+        target_orders = active_orders
+    elif table.status != TableStatus.AVAILABLE:
+        # Stol hali band — to'langan chekning nusxasini chiqarishga ruxsat
+        target_orders = [orders[0]]
+    else:
+        # Stol bo'shatilgan: yopilgan chekni qayta chiqarish kassada
+        # chalkashlik va ikki marta to'lovga olib keladi.
+        raise HTTPException(
+            status_code=400,
+            detail=f"Stol #{table.number} da ochiq hisob yo'q — stol allaqachon "
+                   f"bo'shatilgan. Eski cheklarni 'Cheklar arxivi' bo'limidan ko'rish mumkin.",
+        )
 
     items_for_receipt = []
     subtotal = 0.0

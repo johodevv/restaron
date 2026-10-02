@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import api from '../utils/api';
 import { useWebSocket } from '../context/WebSocketContext';
 import {
@@ -31,11 +31,15 @@ export const BillModal = ({
   const [callLoading, setCallLoading] = useState(false);
   const [callSuccess, setCallSuccess] = useState(false);
   const { addEventListener } = useWebSocket();
+  // Hisob yopilayotganda kelgan WebSocket xabari eski chekni qaytarib
+  // qo'ymasligi uchun qulf.
+  const closingRef = useRef(false);
 
   const fetchBill = async () => {
-    if (!tableId) return;
+    if (!tableId || closingRef.current) return;
     try {
       const data = await api.get(`/tables/${tableId}/bill`);
+      if (closingRef.current) return;
       setBill(data);
     } catch (err) {
       console.error('Bill load error:', err);
@@ -46,6 +50,7 @@ export const BillModal = ({
 
   useEffect(() => {
     if (isOpen) {
+      closingRef.current = false;
       setLoading(true);
       fetchBill();
     }
@@ -128,11 +133,16 @@ ${node.innerHTML}
     }
 
     setCheckoutLoading(true);
+    closingRef.current = true;
     try {
       await api.post(`/tables/${tableId}/checkout`);
+      // Chek ekranda qolib ketmasligi uchun holatni darhol tozalaymiz —
+      // keyin oyna qayta ochilsa yangi (bo'sh) hisob yuklanadi.
+      setBill(null);
       if (onTableCleared) onTableCleared(tableId);
       onClose();
     } catch (err) {
+      closingRef.current = false;
       alert(err.message || 'Hisobni yopishda xatolik yuz berdi');
     } finally {
       setCheckoutLoading(false);
@@ -331,7 +341,8 @@ ${node.innerHTML}
             {isStaff ? (
               <button
                 onClick={handleCheckoutAndClear}
-                disabled={checkoutLoading || !bill || bill.items.length === 0}
+                disabled={checkoutLoading || !bill || bill.items.length === 0 || bill.is_paid}
+                title={bill?.is_paid ? "Bu hisob allaqachon to'langan" : "Hisobni yopish va stolni bo'shatish"}
                 className="py-3 px-4 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white font-bold text-xs shadow-lg shadow-emerald-500/20 flex items-center justify-center gap-2 transition-all disabled:opacity-50 active:scale-98"
               >
                 {checkoutLoading ? (
@@ -339,7 +350,7 @@ ${node.innerHTML}
                 ) : (
                   <CheckCircle2 className="w-4 h-4" />
                 )}
-                <span>To'landi & Stolni Bo'shatish</span>
+                <span>{bill?.is_paid ? "To'langan (yopilgan)" : "To'landi & Stolni Bo'shatish"}</span>
               </button>
             ) : (
               <button
