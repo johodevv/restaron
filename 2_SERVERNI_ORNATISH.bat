@@ -112,17 +112,13 @@ REM --- 5. Hoziroq ishga tushirish ---
 echo  [5/5] Server ishga tushirilmoqda...
 schtasks /Run /TN "RestAron Server" >nul 2>&1
 
-REM Server haqiqatan javob berishini kutamiz (60 soniyagacha).
-REM Ilgari shunchaki 20 soniya kutilib, "tayyor" deb yozilardi -- server
-REM ko'tarilmagan bo'lsa ham. Endi haqiqiy holat tekshiriladi.
-set SERVER_OK=0
-for /l %%i in (1,1,20) do (
-    if !SERVER_OK!==0 (
-        timeout /t 3 /nobreak >nul
-        powershell -NoProfile -Command "try { if ((Invoke-WebRequest -Uri 'http://localhost:8000/health' -UseBasicParsing -TimeoutSec 3).StatusCode -eq 200) { exit 0 } else { exit 1 } } catch { exit 1 }" >nul 2>&1
-        if !errorLevel!==0 set SERVER_OK=1
-    )
-)
+REM Server haqiqatan javob berishini kutamiz (90 soniyagacha).
+REM Ilgari har tekshiruvda PowerShell qaytadan ishga tushardi -- bu sekin
+REM va kutish vaqtini oldindan aytib bo'lmasdi. Endi BITTA PowerShell
+REM jarayoni ichida tekshiramiz: tezroq va aniqroq.
+echo        Server javob berishi kutilmoqda (90 soniyagacha)...
+powershell -NoProfile -Command "$ok=$false; for($i=0;$i -lt 45;$i++){ try { if((Invoke-WebRequest -Uri 'http://localhost:8000/health' -UseBasicParsing -TimeoutSec 2).StatusCode -eq 200){ $ok=$true; break } } catch {}; Start-Sleep -Seconds 2 }; if($ok){ exit 0 } else { exit 1 }"
+if %errorLevel%==0 (set SERVER_OK=1) else (set SERVER_OK=0)
 
 if !SERVER_OK!==1 (
     echo        Tayyor: server javob bermoqda.
