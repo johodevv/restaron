@@ -19,7 +19,7 @@ from typing import List, Optional
 from app.core.database import get_db
 from app.core.security import require_role
 from app.core.config import settings
-from app.models.table import Table, TableStatus
+from app.models.table import Table, TableStatus, TableZone
 from app.models.user import User, UserRole
 from app.models.order import Order, OrderItem, OrderStatus, CallStatus
 from app.models.restaurant import Restaurant, RestaurantSettings
@@ -116,6 +116,210 @@ async def create_table(
     await db.flush()
     await db.refresh(table)
     return TableResponse.model_validate(table)
+
+
+# ═══════════════════════════════════════════════════════════════
+#  ZONALAR (Stol kategoriyalari): Zal, Terrassa, 2-qavat, VIP
+#  DIQQAT: bu yo'llar "/{table_id}" dan OLDIN turishi shart,
+#  aks holda "zones" so'zi stol ID deb o'qiladi.
+# ═══════════════════════════════════════════════════════════════
+
+class TableZoneCreate(BaseModel):
+    restaurant_id: int = 1
+    name: str
+
+
+class TableZoneUpdate(BaseModel):
+    name: Optional[str] = None
+    sort_order: Optional[int] = None
+
+
+class TableZoneResponse(BaseModel):
+    id: int
+    restaurant_id: int
+    name: str
+    sort_order: int = 0
+    tables_count: int = 0
+
+    model_config = {"from_attributes": True}
+
+
+async def _zone_rows(db: AsyncSession, restaurant_id: int) -> List[TableZoneResponse]:
+    """Zonalar ro'yxati + har birida nechta stol borligi"""
+    z_res = await db.execute(
+        select(TableZone)
+        .where(TableZone.restaurant_id == restaurant_id, TableZone.is_active == True)
+        .order_by(TableZone.sort_order.asc(), TableZone.id.asc())
+    )
+    zones = z_res.scalars().all()
+
+    cnt_res = await db.execute(
+        select(Table.room, func.count(Table.id))
+        .where(Table.restaurant_id == restaurant_id)
+        .group_by(Table.room)
+    )
+    counts = {(r or "").strip(): c for r, c in cnt_res.all()}
+
+    return [
+        TableZoneResponse(
+            id=z.id,
+            restaurant_id=z.restaurant_id,
+            name=z.name,
+            sort_order=z.sort_order or 0,
+            tables_count=counts.get((z.name or "").strip(), 0),
+        )
+        for z in zones
+    ]
+
+
+@router.get("/zones", response_model=List[TableZoneResponse], summary="Zonalar (stol kategoriyalari) ro'yxati")
+async def list_zones(restaurant_id: int = 1, db: AsyncSession = Depends(get_db)):
+    """Zonalar ro'yxati.
+
+    Eski stollarda zona nomi faqat matn sifatida saqlangan edi. Shuning
+    uchun bu yerda ular bir marta ro'yxatga ham qo'shiladi — shunda admin
+    ularni panelda ko'radi va boshqara oladi. Amal takrorlansa ham yangi
+    yozuv yaratmaydi.
+    """
+    existing_res = await db.execute(
+        select(TableZone.name).where(TableZone.restaurant_id == restaurant_id)
+    )
+    existing = {(n or "").strip().lower() for n in existing_res.scalars().all()}
+
+    rooms_res = await db.execute(
+        select(Table.room).where(Table.restaurant_id == restaurant_id).distinct()
+    )
+    added = False
+    for room in rooms_res.scalars().all():
+        name = (room or "").strip()
+        if not name or name.lower() in existing:
+            continue
+        db.add(TableZone(restaurant_id=restaurant_id, name=name, sort_order=0))
+        existing.add(name.lower())
+        added = True
+    if added:
+        await db.flush()
+
+    return await _zone_rows(db, restaurant_id)
+
+
+@router.post("/zones", response_model=TableZoneResponse, status_code=201, summary="Yangi zona qo'shish")
+async def create_zone(
+    payload: TableZoneCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role("admin", "developer")),
+):
+    name = (payload.name or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Zona nomi bo'sh bo'lishi mumkin emas")
+    if len(name) > 100:
+        raise HTTPException(status_code=400, detail="Zona nomi juda uzun (100 belgidan ko'p)")
+
+    dup_res = await db.execute(
+        select(TableZone).where(
+            TableZone.restaurant_id == payload.restaurant_id,
+            func.lower(TableZone.name) == name.lower(),
+        )
+    )
+    if dup_res.scalar_one_or_none():
+        raise HTTPException(status_code=400, detail=f"\"{name}\" nomli zona allaqachon mavjud")
+
+    max_res = await db.execute(
+        select(func.max(TableZone.sort_order)).where(TableZone.restaurant_id == payload.restaurant_id)
+    )
+    next_order = (max_res.scalar() or 0) + 1
+
+    zone = TableZone(restaurant_id=payload.restaurant_id, name=name, sort_order=next_order)
+    db.add(zone)
+    await db.flush()
+    return TableZoneResponse(
+        id=zone.id, restaurant_id=zone.restaurant_id, name=zone.name,
+        sort_order=zone.sort_order or 0, tables_count=0,
+    )
+
+
+@router.patch("/zones/{zone_id}", response_model=TableZoneResponse, summary="Zona nomini o'zgartirish")
+async def update_zone(
+    zone_id: int,
+    payload: TableZoneUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role("admin", "developer")),
+):
+    res = await db.execute(select(TableZone).where(TableZone.id == zone_id))
+    zone = res.scalar_one_or_none()
+    if not zone:
+        raise HTTPException(status_code=404, detail="Zona topilmadi")
+
+    if payload.name is not None:
+        new_name = payload.name.strip()
+        if not new_name:
+            raise HTTPException(status_code=400, detail="Zona nomi bo'sh bo'lishi mumkin emas")
+        dup_res = await db.execute(
+            select(TableZone).where(
+                TableZone.restaurant_id == zone.restaurant_id,
+                func.lower(TableZone.name) == new_name.lower(),
+                TableZone.id != zone.id,
+            )
+        )
+        if dup_res.scalar_one_or_none():
+            raise HTTPException(status_code=400, detail=f"\"{new_name}\" nomli zona allaqachon mavjud")
+
+        old_name = zone.name
+        zone.name = new_name
+        # Shu zonadagi stollarning nomi ham yangilanadi, aks holda
+        # ular zonasiz qolib ketadi.
+        if old_name and old_name != new_name:
+            t_res = await db.execute(
+                select(Table).where(
+                    Table.restaurant_id == zone.restaurant_id,
+                    Table.room == old_name,
+                )
+            )
+            for t in t_res.scalars().all():
+                t.room = new_name
+
+    if payload.sort_order is not None:
+        zone.sort_order = payload.sort_order
+
+    await db.flush()
+    rows = await _zone_rows(db, zone.restaurant_id)
+    for r in rows:
+        if r.id == zone.id:
+            return r
+    return TableZoneResponse(
+        id=zone.id, restaurant_id=zone.restaurant_id, name=zone.name,
+        sort_order=zone.sort_order or 0, tables_count=0,
+    )
+
+
+@router.delete("/zones/{zone_id}", status_code=204, summary="Zonani o'chirish")
+async def delete_zone(
+    zone_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role("admin", "developer")),
+):
+    res = await db.execute(select(TableZone).where(TableZone.id == zone_id))
+    zone = res.scalar_one_or_none()
+    if not zone:
+        raise HTTPException(status_code=404, detail="Zona topilmadi")
+
+    cnt_res = await db.execute(
+        select(func.count(Table.id)).where(
+            Table.restaurant_id == zone.restaurant_id,
+            Table.room == zone.name,
+        )
+    )
+    used = cnt_res.scalar() or 0
+    if used > 0:
+        raise HTTPException(
+            status_code=400,
+            detail=f"\"{zone.name}\" zonasini o'chirib bo'lmaydi: unda {used} ta stol bor. "
+                   f"Avval stollarni boshqa zonaga ko'chiring yoki o'chiring.",
+        )
+
+    await db.delete(zone)
+    await db.flush()
+    return None
 
 
 @router.get("/", response_model=List[TableResponse], summary="Stollar ro'yxati")
@@ -337,19 +541,24 @@ async def get_table_bill(table_id: int, db: AsyncSession = Depends(get_db)):
         for item in o.items:
             m_id = item.menu_item_id
             name = item.menu_item.name if item.menu_item else f"Taom #{m_id}"
-            if m_id not in items_map:
-                items_map[m_id] = {
+            size = (item.portion_size or "").strip() or None
+            # Hajmi har xil bo'lgan taomlar (1 L va 1.5 L kola) alohida
+            # qatorda turishi kerak — aks holda mijoz nima olganini bilmaydi.
+            key = (m_id, size)
+            if key not in items_map:
+                items_map[key] = {
                     "menu_item_id": m_id,
                     "name": name,
+                    "portion_size": size,
                     "quantity": 0,
                     "unit_price": item.unit_price,
                     "total_price": 0.0,
                     "special_notes": [],
                 }
-            items_map[m_id]["quantity"] += item.quantity
-            items_map[m_id]["total_price"] += item.total_price
+            items_map[key]["quantity"] += item.quantity
+            items_map[key]["total_price"] += item.total_price
             if item.special_note:
-                items_map[m_id]["special_notes"].append(item.special_note)
+                items_map[key]["special_notes"].append(item.special_note)
             subtotal += item.total_price
 
     service_fee_percent = 10.0
@@ -565,6 +774,7 @@ async def print_table_bill(
                 "quantity": it.quantity,
                 "unit_price": it.unit_price,
                 "total_price": it.total_price,
+                "size": it.portion_size,
             })
             subtotal += it.total_price
 

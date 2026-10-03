@@ -17,6 +17,28 @@ class TableStatus(str, enum.Enum):
     MAINTENANCE = "maintenance"   # Ta'mirat
 
 
+class TableZone(Base):
+    """Stollar zonasi (kategoriyasi): Zal, Terrassa, 2-qavat, VIP xona.
+
+    Stolning `room` ustuni shu zonaning nomini saqlaydi — shuning uchun
+    eski ma'lumotlar o'zgarishsiz ishlayveradi.
+    """
+    __tablename__ = "table_zones"
+
+    id = Column(Integer, primary_key=True, index=True)
+    restaurant_id = Column(Integer, ForeignKey("restaurants.id", ondelete="CASCADE"), nullable=False)
+
+    name = Column(String(100), nullable=False)      # "Zal", "Terrassa", "VIP"
+    sort_order = Column(Integer, default=0)
+    is_active = Column(Boolean, default=True)
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+    def __repr__(self):
+        return f"<TableZone {self.name} ({self.restaurant_id})>"
+
+
 class Table(Base):
     __tablename__ = "tables"
 

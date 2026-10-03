@@ -54,6 +54,11 @@ export const WaiterDashboard = () => {
   const [activeOrder, setActiveOrder] = useState(null);
   const [orderLoading, setOrderLoading] = useState(false);
 
+  // O'lchanadigan taom hajmi (1.5 L kola, 1.4 kg baliq) uchun oyna
+  const [sizeModalItem, setSizeModalItem] = useState(null);
+  const [sizeValue, setSizeValue] = useState('');
+  const [savingSize, setSavingSize] = useState(false);
+
   // POS Order items in local state (for fast reactive UI before sync)
   const [kitchenNote, setKitchenNote] = useState('');
   const [kitchenNoteModalOpen, setKitchenNoteModalOpen] = useState(false);
@@ -189,8 +194,13 @@ export const WaiterDashboard = () => {
         );
       } else {
         // Mavjud buyurtmaga qo'shish
-        // Agar taom savatda allaqachon bo'lsa -> sonini +1 qilamiz
-        const existingItem = (activeOrder.items || []).find((i) => i.menu_item_id === menuItem.id);
+        // Agar taom savatda allaqachon bo'lsa -> sonini +1 qilamiz.
+        // LEKIN hajmi belgilangan qator (masalan "Kola 1.5 L") birlashtirilmaydi —
+        // aks holda 1 L kola 1.5 L qatoriga qo'shilib ketadi va oshxona
+        // qaysi hajm kerakligini bilmay qoladi. Shunday holda yangi qator ochiladi.
+        const existingItem = (activeOrder.items || []).find(
+          (i) => i.menu_item_id === menuItem.id && !i.portion_size
+        );
         if (existingItem) {
           const updated = await api.patch(
             `/orders/${activeOrder.id}/items/${existingItem.id}/quantity`,
@@ -235,6 +245,25 @@ export const WaiterDashboard = () => {
       setActiveOrder(updated);
     } catch (err) {
       alert(err.message || 'Xatolik');
+    }
+  };
+
+  // O'lchanadigan taom hajmini saqlash ("1.5 L", "1.4 kg")
+  const handleSaveSize = async (value) => {
+    if (!activeOrder || !sizeModalItem) return;
+    setSavingSize(true);
+    try {
+      const updated = await api.patch(
+        `/orders/${activeOrder.id}/items/${sizeModalItem.id}/size`,
+        { portion_size: (value ?? sizeValue).trim() || null }
+      );
+      setActiveOrder(updated);
+      setSizeModalItem(null);
+      setSizeValue('');
+    } catch (err) {
+      alert(err.message || 'Hajmni saqlashda xatolik');
+    } finally {
+      setSavingSize(false);
     }
   };
 
@@ -633,6 +662,24 @@ export const WaiterDashboard = () => {
                         <p className="font-extrabold text-white text-sm sm:text-base leading-snug">
                           {it.menu_item_name || 'Taom'}
                         </p>
+
+                        {/* O'lchanadigan taom hajmi: 1.5 L kola, 1.4 kg baliq.
+                            Oshxona begunogida va mijoz chekida shu ko'rinadi. */}
+                        <button
+                          onClick={() => {
+                            setSizeModalItem(it);
+                            setSizeValue(it.portion_size || '');
+                          }}
+                          title="Hajm / o'lchamni kiritish"
+                          className={`mt-1 mb-0.5 px-2 py-1 rounded-lg text-[11px] font-black transition-all active:scale-95 ${
+                            it.portion_size
+                              ? 'bg-amber-500/25 text-amber-300 border border-amber-500/50'
+                              : 'bg-slate-800 text-slate-400 border border-dashed border-slate-600 hover:text-amber-300 hover:border-amber-500/50'
+                          }`}
+                        >
+                          {it.portion_size ? `📏 ${it.portion_size}` : '📏 Hajm'}
+                        </button>
+
                         <p className="text-xs font-semibold text-slate-400 font-mono mt-0.5">
                           {it.quantity} dona • {it.item_time || '12:00'} •{' '}
                           <span className={it.sent_to_kitchen ? 'text-amber-400 font-bold' : 'text-emerald-400'}>
@@ -829,6 +876,101 @@ export const WaiterDashboard = () => {
                   );
                 })}
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ─── Hajm / O'lcham oynasi (1.5 L kola, 1.4 kg baliq) ───────── */}
+      {sizeModalItem && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm animate-in fade-in">
+          <div className="bg-slate-900 border-2 border-slate-800 rounded-3xl max-w-md w-full p-5 shadow-2xl">
+            <div className="flex items-start justify-between mb-1">
+              <div>
+                <h3 className="text-base font-black text-white">Hajm / O'lcham</h3>
+                <p className="text-xs font-bold text-amber-300 mt-0.5">
+                  {sizeModalItem.menu_item_name || 'Taom'}
+                </p>
+              </div>
+              <button
+                onClick={() => setSizeModalItem(null)}
+                className="text-slate-400 hover:text-white p-1"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <p className="text-[11px] text-slate-400 mb-3">
+              Oshxona va mijoz chekida shu yozuv chiqadi — masalan "Kola 1.5 L"
+              yoki "Baliq 1.4 kg".
+            </p>
+
+            {/* Tez tanlash tugmalari */}
+            <div className="mb-3">
+              <span className="text-[10px] font-black text-slate-400 uppercase tracking-wider block mb-1.5">
+                Ichimliklar:
+              </span>
+              <div className="grid grid-cols-4 gap-1.5 mb-2.5">
+                {['0.5 L', '1 L', '1.5 L', '2 L'].map((v) => (
+                  <button
+                    key={v}
+                    type="button"
+                    onClick={() => handleSaveSize(v)}
+                    disabled={savingSize}
+                    className="py-2.5 rounded-xl bg-slate-800 hover:bg-amber-600 hover:text-slate-950 border border-slate-700 text-sm font-black text-white transition-all active:scale-95 disabled:opacity-40"
+                  >
+                    {v}
+                  </button>
+                ))}
+              </div>
+              <span className="text-[10px] font-black text-slate-400 uppercase tracking-wider block mb-1.5">
+                Tortiladigan (baliq, go'sht):
+              </span>
+              <div className="grid grid-cols-4 gap-1.5">
+                {['0.5 kg', '1 kg', '1.5 kg', '2 kg'].map((v) => (
+                  <button
+                    key={v}
+                    type="button"
+                    onClick={() => handleSaveSize(v)}
+                    disabled={savingSize}
+                    className="py-2.5 rounded-xl bg-slate-800 hover:bg-amber-600 hover:text-slate-950 border border-slate-700 text-sm font-black text-white transition-all active:scale-95 disabled:opacity-40"
+                  >
+                    {v}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Qo'lda yozish */}
+            <label className="text-[10px] font-black text-slate-400 uppercase tracking-wider block mb-1.5">
+              Yoki o'zingiz yozing:
+            </label>
+            <input
+              type="text"
+              value={sizeValue}
+              onChange={(e) => setSizeValue(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') handleSaveSize(sizeValue);
+              }}
+              placeholder="Masalan: 1.75 kg, katta kosa, 0.33 L"
+              maxLength={50}
+              className="w-full p-3 rounded-xl bg-slate-950 border-2 border-slate-800 text-sm text-white font-bold focus:outline-none focus:border-amber-500 mb-4"
+            />
+
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => handleSaveSize('')}
+                disabled={savingSize}
+                className="px-3 py-2.5 rounded-xl bg-slate-800 hover:bg-red-900/60 text-xs font-bold text-slate-300 disabled:opacity-40"
+              >
+                Tozalash
+              </button>
+              <button
+                onClick={() => handleSaveSize(sizeValue)}
+                disabled={savingSize}
+                className="flex-1 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-sm disabled:opacity-40 active:scale-95 transition-all"
+              >
+                {savingSize ? 'Saqlanmoqda...' : 'Saqlash'}
+              </button>
             </div>
           </div>
         </div>

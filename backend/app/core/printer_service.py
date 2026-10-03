@@ -201,6 +201,11 @@ def format_kitchen_ticket(
     for item in items:
         raw_name = item.get("name_cyrillic") or item.get("name") or "Таом"
         name = latin_to_cyrillic(raw_name)
+        # O'lchanadigan taom hajmi (1.5 L / 1.4 kg) nom bilan birga chiqadi —
+        # oshpaz qaysi hajm kerakligini begunokdan ko'radi.
+        size = (item.get("size") or "").strip()
+        if size:
+            name = f"{name} [{latin_to_cyrillic(size)}]"
         qty = item.get("quantity") or 1
         lines.append(_pad_line(name, f"{qty} та", col_width))
         if item.get("note"):
@@ -266,6 +271,9 @@ def format_pre_check(
     for idx, it in enumerate(items, 1):
         raw_name = it.get("name_cyrillic") or it.get("name") or "Таом"
         name = latin_to_cyrillic(raw_name)
+        size = (it.get("size") or "").strip()
+        if size:
+            name = f"{name} [{latin_to_cyrillic(size)}]"
         qty = it.get("quantity") or 1
         unit_price = it.get("unit_price") or it.get("price") or 0.0
         line_total = it.get("total_price") or (qty * unit_price)

@@ -259,11 +259,19 @@ ${node.innerHTML}
 
                 <div className="divide-y divide-theme-border/30 bg-black/10 rounded-2xl border border-theme-border/40 p-3">
                   {bill.items.map((item, index) => (
-                    <div key={item.menu_item_id || index} className="py-2.5 flex items-start justify-between gap-3 text-xs">
+                    <div
+                      key={`${item.menu_item_id}-${item.portion_size || ''}-${index}`}
+                      className="py-2.5 flex items-start justify-between gap-3 text-xs"
+                    >
                       <div className="flex-1">
                         <div className="font-semibold text-white">
                           <span className="font-bold text-theme-primary mr-1.5">{item.quantity}x</span>
                           {item.name}
+                          {item.portion_size && (
+                            <span className="ml-1.5 px-1.5 py-0.5 rounded-md bg-amber-500/20 text-amber-300 text-[10px] font-bold">
+                              {item.portion_size}
+                            </span>
+                          )}
                         </div>
                         <div className="text-[11px] text-theme-muted">
                           {(item.unit_price || 0).toLocaleString()} so'm / dona

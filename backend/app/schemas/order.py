@@ -12,6 +12,8 @@ class OrderItemCreate(BaseModel):
     menu_item_id: int
     quantity: int = Field(..., gt=0, le=50)
     special_note: Optional[str] = None
+    # O'lchanadigan taom hajmi: "1.5 L", "1.4 kg" (ixtiyoriy)
+    portion_size: Optional[str] = Field(default=None, max_length=50)
 
 
 class OrderItemResponse(BaseModel):
@@ -21,6 +23,7 @@ class OrderItemResponse(BaseModel):
     unit_price: float
     total_price: float
     special_note: Optional[str] = None
+    portion_size: Optional[str] = None
     item_time: Optional[str] = None
     sent_to_kitchen: bool = False
     sent_to_kitchen_at: Optional[datetime] = None
@@ -63,6 +66,11 @@ class WaiterAddItemsRequest(BaseModel):
 class UpdateItemQtyRequest(BaseModel):
     """Taom sonini o'zgartirish [- 1 +]"""
     quantity: int = Field(..., gt=0)
+
+
+class UpdateItemSizeRequest(BaseModel):
+    """O'lchanadigan taom hajmini belgilash: 1.5 L, 1.4 kg"""
+    portion_size: Optional[str] = Field(default=None, max_length=50)
 
 
 class OrderNoteUpdate(BaseModel):
@@ -169,6 +177,7 @@ class OrderSummary(BaseModel):
 class BillItemSummary(BaseModel):
     menu_item_id: int
     name: str
+    portion_size: Optional[str] = None
     quantity: int
     unit_price: float
     total_price: float

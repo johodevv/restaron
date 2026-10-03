@@ -24,6 +24,7 @@ from app.schemas.order import (
     OrderStatusUpdate, CallWaiterRequest, OrderDeliverRequest,
     OrderItemResponse, WaiterCallResponse,
     WaiterOrderCreate, WaiterAddItemsRequest, UpdateItemQtyRequest,
+    UpdateItemSizeRequest,
     OrderNoteUpdate, OrderCheckoutRequest
 )
 from app.core.printer_service import format_kitchen_ticket, format_pre_check, print_to_windows_printer
@@ -135,6 +136,7 @@ def build_order_response(order: Order, table_number: Optional[int] = None, waite
                 unit_price=item.unit_price,
                 total_price=item.total_price,
                 special_note=item.special_note,
+                portion_size=item.portion_size,
                 item_time=item.item_time,
                 sent_to_kitchen=bool(item.sent_to_kitchen),
                 sent_to_kitchen_at=item.sent_to_kitchen_at,
@@ -259,6 +261,7 @@ async def create_order(payload: OrderCreate, db: AsyncSession = Depends(get_db))
             unit_price=menu_item.price,
             total_price=total_price,
             special_note=item_data.special_note,
+            portion_size=(item_data.portion_size or None),
         )
         db.add(order_item)
         menu_item.total_ordered += item_data.quantity
@@ -268,6 +271,7 @@ async def create_order(payload: OrderCreate, db: AsyncSession = Depends(get_db))
             "quantity": item_data.quantity,
             "price": menu_item.price,
             "note": item_data.special_note,
+            "size": item_data.portion_size,
         })
 
     order.subtotal = subtotal
@@ -426,6 +430,7 @@ async def waiter_create_order(
             unit_price=menu_item.price,
             total_price=tot_price,
             special_note=item_data.special_note,
+            portion_size=(item_data.portion_size or None),
             item_time=now_time_str,
             sent_to_kitchen=False,
         )
@@ -436,6 +441,7 @@ async def waiter_create_order(
             "quantity": item_data.quantity,
             "price": menu_item.price,
             "note": item_data.special_note,
+            "size": item_data.portion_size,
             "item_time": now_time_str,
         })
 
@@ -527,6 +533,7 @@ async def waiter_add_items(
             unit_price=menu_item.price,
             total_price=tot_price,
             special_note=item_data.special_note,
+            portion_size=(item_data.portion_size or None),
             item_time=now_time_str,
             sent_to_kitchen=payload.send_to_kitchen_immediately,
             sent_to_kitchen_at=datetime.now(timezone.utc) if payload.send_to_kitchen_immediately else None,
@@ -538,6 +545,7 @@ async def waiter_add_items(
             "quantity": item_data.quantity,
             "price": menu_item.price,
             "note": item_data.special_note,
+            "size": item_data.portion_size,
             "item_time": now_time_str,
         })
 
@@ -600,6 +608,43 @@ async def update_item_quantity(
 
     await db.flush()
     order = await load_order_full(db, order.id) or order
+    return build_order_response(order)
+
+
+# ─── O'lchanadigan taom hajmini belgilash (1.5 L / 1.4 kg) ─────
+@router.patch("/{order_id}/items/{item_id}/size", response_model=OrderResponse,
+              summary="Taom hajmini (o'lchamini) belgilash")
+async def update_item_size(
+    order_id: int,
+    item_id: int,
+    payload: UpdateItemSizeRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role("waiter", "admin", "developer")),
+):
+    """Ofitsiant o'lchanadigan taomning hajmini kiritadi: "1.5 L", "1.4 kg".
+
+    Bu oshxona begunogida va mijoz chekida ko'rinadi — shunda oshpaz
+    qaysi hajmdagi ichimlik yoki necha kilogramm baliq kerakligini biladi.
+    """
+    item_res = await db.execute(
+        select(OrderItem).where(OrderItem.id == item_id, OrderItem.order_id == order_id)
+    )
+    order_item = item_res.scalar_one_or_none()
+    if not order_item:
+        raise HTTPException(status_code=404, detail="Taom topilmadi")
+
+    order_res = await db.execute(select(Order).where(Order.id == order_id))
+    order = order_res.scalar_one_or_none()
+    if not order:
+        raise HTTPException(status_code=404, detail="Buyurtma topilmadi")
+    if order.status in (OrderStatus.PAID, OrderStatus.CANCELLED):
+        raise HTTPException(status_code=400, detail="Yopilgan buyurtmani o'zgartirib bo'lmaydi")
+
+    size = (payload.portion_size or "").strip()
+    order_item.portion_size = size or None
+
+    await db.flush()
+    order = await load_order_full(db, order_id) or order
     return build_order_response(order)
 
 
@@ -727,6 +772,9 @@ async def send_to_kitchen(
             "name": dish_name,
             "quantity": it.quantity,
             "note": it.special_note,
+            # O'lchanadigan taomning hajmi — oshxona nechchi litr/kg
+            # ekanini begunokdan ko'rishi uchun.
+            "size": it.portion_size,
         }
 
         # Stansiya bo'yicha saralash
@@ -1032,6 +1080,7 @@ async def checkout_order(
             "quantity": it.quantity,
             "unit_price": it.unit_price,
             "total_price": it.total_price,
+            "size": it.portion_size,
         }
         for it in order.items
     ]

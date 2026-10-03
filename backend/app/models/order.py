@@ -107,6 +107,11 @@ class OrderItem(Base):
     special_note = Column(Text, nullable=True)          # Maxsus talab (masalan: "qalampir kam")
     item_time = Column(String(20), nullable=True)       # Urilgan vaqti (masalan: "19:36")
 
+    # O'lchanadigan taomlar uchun hajm / og'irlik.
+    # Ofitsiant kiritadi: "1.5 L", "1.4 kg", "katta kosa".
+    # Bo'sh bo'lsa — taom o'lchanmaydi (osh, shashlik va h.k.).
+    portion_size = Column(String(50), nullable=True)
+
     # Oshxona yuborilganlik holati (Oshxona begunogi)
     sent_to_kitchen = Column(Boolean, default=False)
     sent_to_kitchen_at = Column(DateTime(timezone=True), nullable=True)

@@ -1,7 +1,7 @@
 from app.core.database import Base
 from app.models.user import User
 from app.models.restaurant import Restaurant, RestaurantSettings, Theme
-from app.models.table import Table
+from app.models.table import Table, TableZone
 from app.models.menu import Category, MenuItem
 from app.models.order import Order, OrderItem
 from app.models.review import Review
@@ -17,6 +17,7 @@ __all__ = [
     "RestaurantSettings",
     "Theme",
     "Table",
+    "TableZone",
     "Category",
     "MenuItem",
     "Order",

@@ -98,6 +98,7 @@ def _sync_sqlite_migrations(sync_conn):
         ],
         "order_items": [
             ("item_time", "VARCHAR(20)"),
+            ("portion_size", "VARCHAR(50)"),
             ("sent_to_kitchen", "BOOLEAN DEFAULT 0"),
             ("sent_to_kitchen_at", "TIMESTAMP"),
         ],

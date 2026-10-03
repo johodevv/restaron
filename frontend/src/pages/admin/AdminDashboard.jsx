@@ -50,7 +50,8 @@ import {
   FileSpreadsheet,
   Trophy,
   Palette,
-  CreditCard
+  CreditCard,
+  MapPin
 } from 'lucide-react';
 
 export const AdminDashboard = () => {
@@ -109,6 +110,13 @@ export const AdminDashboard = () => {
   const [newStaffPassword, setNewStaffPassword] = useState('');
   const [newStaffRole, setNewStaffRole] = useState('waiter');
 
+  // Zonalar (stol kategoriyalari): Zal, Terrassa, 2-qavat, VIP
+  const [zones, setZones] = useState([]);
+  const [newZoneName, setNewZoneName] = useState('');
+  const [zoneBusy, setZoneBusy] = useState(false);
+  const [editingZoneId, setEditingZoneId] = useState(null);
+  const [editingZoneName, setEditingZoneName] = useState('');
+
   // Category Modal States (Add & Edit)
   const [showCategoryModal, setShowCategoryModal] = useState(false);
   const [editingCategory, setEditingCategory] = useState(null);
@@ -138,7 +146,7 @@ export const AdminDashboard = () => {
 
   const loadAll = async () => {
     try {
-      const [statsData, menuData, tablesData, staffData, callsData, reviewsData, lanData] = await Promise.all([
+      const [statsData, menuData, tablesData, staffData, callsData, reviewsData, lanData, zonesData] = await Promise.all([
         api.get(`/stats/dashboard?restaurant_id=${restaurantId}`).catch(() => null),
         api.get(`/menu/full/${restaurantId}`).catch(() => []),
         api.get(`/tables/?restaurant_id=${restaurantId}`).catch(() => []),
@@ -146,11 +154,13 @@ export const AdminDashboard = () => {
         api.get(`/orders/calls?restaurant_id=${restaurantId}`).catch(() => []),
         api.get(`/reviews/?restaurant_id=${restaurantId}`).catch(() => []),
         api.get('/stats/lan-info').catch(() => null),
+        api.get(`/tables/zones?restaurant_id=${restaurantId}`).catch(() => []),
       ]);
 
       setStats(statsData);
       setCategories(menuData || []);
       setTables(tablesData || []);
+      setZones(zonesData || []);
       setStaff(staffData || []);
       setWaiterCalls(callsData || []);
       setReviews(reviewsData || []);
@@ -348,6 +358,61 @@ export const AdminDashboard = () => {
   }, [addEventListener, playChime]);
 
   // ─── TABLES MANAGEMENT ──────────────────────────────────────────
+  // ─── Zonalar (stol kategoriyalari) ───────────────────────────
+  const reloadZones = async () => {
+    try {
+      setZones(await api.get(`/tables/zones?restaurant_id=${restaurantId}`));
+    } catch (err) {
+      console.error('Zonalarni yuklashda xatolik:', err);
+    }
+  };
+
+  const handleCreateZone = async (e) => {
+    e.preventDefault();
+    const name = newZoneName.trim();
+    if (!name) return;
+    setZoneBusy(true);
+    try {
+      await api.post('/tables/zones', { restaurant_id: restaurantId, name });
+      setNewZoneName('');
+      await reloadZones();
+    } catch (err) {
+      alert(err.message || "Zona qo'shishda xatolik");
+    } finally {
+      setZoneBusy(false);
+    }
+  };
+
+  const handleRenameZone = async (zoneId) => {
+    const name = editingZoneName.trim();
+    if (!name) return;
+    setZoneBusy(true);
+    try {
+      await api.patch(`/tables/zones/${zoneId}`, { name });
+      setEditingZoneId(null);
+      setEditingZoneName('');
+      // Stollarning zona nomi ham o'zgargani uchun hammasini qayta yuklaymiz
+      await loadAll();
+    } catch (err) {
+      alert(err.message || 'Zona nomini o\'zgartirishda xatolik');
+    } finally {
+      setZoneBusy(false);
+    }
+  };
+
+  const handleDeleteZone = async (zone) => {
+    if (!window.confirm(`"${zone.name}" zonasini o'chirasizmi?`)) return;
+    setZoneBusy(true);
+    try {
+      await api.delete(`/tables/zones/${zone.id}`);
+      await reloadZones();
+    } catch (err) {
+      alert(err.message || "Zonani o'chirishda xatolik");
+    } finally {
+      setZoneBusy(false);
+    }
+  };
+
   const handleCreateTable = async (e) => {
     e.preventDefault();
     if (!newTableNumber) return;
@@ -627,6 +692,23 @@ export const AdminDashboard = () => {
       }
     }
   };
+
+  // Stollarni zonalar bo'yicha guruhlash. Zonalar ro'yxatidagi tartib
+  // saqlanadi; zonasiz stollar oxirida alohida guruhda chiqadi.
+  const tableGroups = (() => {
+    const groups = [];
+    const used = new Set();
+    for (const z of zones) {
+      const items = tables.filter((t) => (t.room || '') === z.name);
+      items.forEach((t) => used.add(t.id));
+      groups.push({ key: `z${z.id}`, name: z.name, items });
+    }
+    const rest = tables.filter((t) => !used.has(t.id));
+    if (rest.length > 0) {
+      groups.push({ key: 'nozone', name: 'Zonasiz stollar', items: rest });
+    }
+    return groups.filter((g) => g.items.length > 0);
+  })();
 
   return (
     <div className="max-w-7xl mx-auto px-4 py-6 space-y-6 animate-fade-in pb-24">
@@ -1254,6 +1336,111 @@ export const AdminDashboard = () => {
             )}
           </div>
 
+          {/* ─── Zonalar (Stol kategoriyalari): Zal, Terrassa, 2-qavat ─── */}
+          <div className="p-5 rounded-3xl glass-card border border-theme-border bg-theme-surface/80 shadow-lg space-y-3.5">
+            <div>
+              <h3 className="text-sm font-black text-white flex items-center gap-2">
+                <MapPin className="w-4 h-4 text-theme-primary" />
+                <span>Zonalar (stollar kategoriyasi)</span>
+              </h3>
+              <p className="text-[11px] text-theme-muted mt-1">
+                Restorandagi joylar: Zal, Terrassa, 2-qavat, VIP xona. Har bir
+                stolni o'z zonasiga biriktirasiz — chek va oshxona begunogida
+                zona nomi chiqadi.
+              </p>
+            </div>
+
+            <form onSubmit={handleCreateZone} className="flex flex-col sm:flex-row gap-2.5">
+              <input
+                type="text"
+                value={newZoneName}
+                onChange={(e) => setNewZoneName(e.target.value)}
+                placeholder="Yangi zona nomi (masalan: Terrassa)"
+                maxLength={100}
+                className="w-full sm:flex-1 px-3.5 py-2.5 rounded-xl bg-black/30 border border-theme-border text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-theme-primary"
+              />
+              <button
+                type="submit"
+                disabled={zoneBusy || !newZoneName.trim()}
+                className="w-full sm:w-auto px-5 py-2.5 rounded-xl bg-theme-primary hover:bg-theme-primary-hover disabled:opacity-40 text-white text-xs font-bold shadow-glow whitespace-nowrap"
+              >
+                + Zona qo'shish
+              </button>
+            </form>
+
+            {zones.length === 0 ? (
+              <p className="text-[11px] text-theme-muted italic">
+                Hali zona qo'shilmagan. Yuqoridagi maydonga nom yozib qo'shing.
+              </p>
+            ) : (
+              <div className="flex flex-wrap gap-2">
+                {zones.map((z) => (
+                  <div
+                    key={z.id}
+                    className="flex items-center gap-2 px-3 py-2 rounded-xl bg-black/30 border border-theme-border"
+                  >
+                    {editingZoneId === z.id ? (
+                      <>
+                        <input
+                          type="text"
+                          value={editingZoneName}
+                          onChange={(e) => setEditingZoneName(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') handleRenameZone(z.id);
+                            if (e.key === 'Escape') setEditingZoneId(null);
+                          }}
+                          autoFocus
+                          maxLength={100}
+                          className="w-36 px-2 py-1 rounded-lg bg-black/50 border border-theme-primary/60 text-xs text-white focus:outline-none"
+                        />
+                        <button
+                          onClick={() => handleRenameZone(z.id)}
+                          disabled={zoneBusy}
+                          title="Saqlash"
+                          className="text-emerald-400 hover:text-emerald-300 disabled:opacity-40"
+                        >
+                          <CheckCircle className="w-4 h-4" />
+                        </button>
+                        <button
+                          onClick={() => setEditingZoneId(null)}
+                          title="Bekor qilish"
+                          className="text-zinc-500 hover:text-white"
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <span className="text-xs font-bold text-white">{z.name}</span>
+                        <span className="text-[10px] font-bold text-theme-muted px-1.5 py-0.5 rounded-md bg-white/5">
+                          {z.tables_count} stol
+                        </span>
+                        <button
+                          onClick={() => {
+                            setEditingZoneId(z.id);
+                            setEditingZoneName(z.name);
+                          }}
+                          title="Nomini o'zgartirish"
+                          className="text-zinc-500 hover:text-theme-primary"
+                        >
+                          <Edit2 className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          onClick={() => handleDeleteZone(z)}
+                          disabled={zoneBusy}
+                          title="Zonani o'chirish"
+                          className="text-zinc-500 hover:text-red-400 disabled:opacity-40"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
           {/* Add Table Form */}
           <form
             onSubmit={handleCreateTable}
@@ -1267,13 +1454,19 @@ export const AdminDashboard = () => {
               className="w-full sm:w-36 px-3.5 py-2.5 rounded-xl bg-black/30 border border-theme-border text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-theme-primary"
               required
             />
-            <input
-              type="text"
-              placeholder="Xona / Zal (ixtiyoriy, masalan: VIP 1)"
+            <select
               value={newTableRoom}
               onChange={(e) => setNewTableRoom(e.target.value)}
-              className="w-full sm:flex-1 px-3.5 py-2.5 rounded-xl bg-black/30 border border-theme-border text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-theme-primary"
-            />
+              title="Stol qaysi zonada turadi"
+              className="w-full sm:flex-1 px-3.5 py-2.5 rounded-xl bg-black/30 border border-theme-border text-xs text-white focus:outline-none focus:border-theme-primary"
+            >
+              <option value="">— Zonasiz —</option>
+              {zones.map((z) => (
+                <option key={z.id} value={z.name}>
+                  {z.name}
+                </option>
+              ))}
+            </select>
             <input
               type="number"
               placeholder="Sig'imi"
@@ -1289,9 +1482,22 @@ export const AdminDashboard = () => {
             </button>
           </form>
 
-          {/* Tables Grid */}
+          {/* Tables Grid — zonalar bo'yicha guruhlangan */}
+          {tableGroups.map((group) => (
+          <div key={group.key} className="space-y-3">
+            <div className="flex items-center gap-2 pt-2">
+              <MapPin className="w-4 h-4 text-theme-primary shrink-0" />
+              <h3 className="text-sm font-black text-white uppercase tracking-wide">
+                {group.name}
+              </h3>
+              <span className="text-[10px] font-bold text-theme-muted px-2 py-0.5 rounded-md bg-white/5">
+                {group.items.length} stol
+              </span>
+              <div className="flex-1 h-px bg-theme-border/60" />
+            </div>
+
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
-            {tables.map((t) => {
+            {group.items.map((t) => {
               const qrLink = `${qrBaseUrl}/?table=${t.qr_token}`;
               const qrImageSrc = `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(qrLink)}`;
 
@@ -1471,6 +1677,8 @@ export const AdminDashboard = () => {
               );
             })}
           </div>
+          </div>
+          ))}
         </div>
       )}
 
