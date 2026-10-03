@@ -272,9 +272,15 @@ ${node.innerHTML}
                               {item.portion_size}
                             </span>
                           )}
+                          {item.weight > 0 && (
+                            <span className="ml-1.5 px-1.5 py-0.5 rounded-md bg-cyan-500/20 text-cyan-300 text-[10px] font-bold">
+                              {item.weight} {item.unit || 'kg'}
+                            </span>
+                          )}
                         </div>
                         <div className="text-[11px] text-theme-muted">
-                          {(item.unit_price || 0).toLocaleString()} so'm / dona
+                          {(item.unit_price || 0).toLocaleString()} so'm /{' '}
+                          {item.weight > 0 ? (item.unit || 'kg') : 'dona'}
                         </div>
                         {item.special_notes?.length > 0 && (
                           <div className="text-[10px] text-amber-400/90 italic mt-0.5">

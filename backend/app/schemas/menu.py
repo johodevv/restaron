@@ -63,6 +63,9 @@ class MenuItemBase(BaseModel):
     calories: Optional[int] = None
     weight_grams: Optional[int] = None
     kitchen_station: Optional[str] = "hot_kitchen"
+    # Tortiladigan taom (baliq, go'sht): price = 1 birlik narxi
+    is_weighted: bool = False
+    unit: str = "dona"                       # "kg", "l", "dona"
     sort_order: int = 0
 
 
@@ -89,6 +92,8 @@ class MenuItemUpdate(BaseModel):
     calories: Optional[int] = None
     weight_grams: Optional[int] = None
     kitchen_station: Optional[str] = None
+    is_weighted: Optional[bool] = None
+    unit: Optional[str] = None
     category_id: Optional[int] = None
     sort_order: Optional[int] = None
 

@@ -54,6 +54,12 @@ class MenuItem(Base):
     price = Column(Float, nullable=False)
     image_url = Column(String(500), nullable=True)
 
+    # Tortiladigan (o'lchanadigan) taom: baliq, go'sht, tovuq.
+    # is_weighted=True bo'lsa `price` — 1 BIRLIK narxi (masalan 1 kg narxi),
+    # va chek summasi aniq tortilgan og'irlikka ko'paytiriladi.
+    is_weighted = Column(Boolean, default=False, nullable=False)
+    unit = Column(String(10), default="dona", nullable=False)   # "kg", "l", "dona"
+
     # Sozlamalar
     is_available = Column(Boolean, default=True)      # Mavjudmi
     is_stop_list = Column(Boolean, default=False)     # Stop-List (1 bosish bilan to'xtatish)

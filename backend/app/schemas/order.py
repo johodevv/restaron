@@ -14,6 +14,8 @@ class OrderItemCreate(BaseModel):
     special_note: Optional[str] = None
     # O'lchanadigan taom hajmi: "1.5 L", "1.4 kg" (ixtiyoriy)
     portion_size: Optional[str] = Field(default=None, max_length=50)
+    # Tortiladigan taomning aniq og'irligi (kg/l). Narx shunga ko'paytiriladi.
+    weight: Optional[float] = Field(default=None, gt=0, le=1000)
 
 
 class OrderItemResponse(BaseModel):
@@ -25,6 +27,11 @@ class OrderItemResponse(BaseModel):
     special_note: Optional[str] = None
     portion_size: Optional[str] = None
     item_time: Optional[str] = None
+
+    # Tortiladigan taom (baliq, go'sht) ma'lumotlari
+    weight: Optional[float] = None          # aniq tortilgan og'irlik
+    is_weighted: bool = False               # bu taom tortiladimi
+    unit: str = "dona"                      # "kg", "l", "dona"
     sent_to_kitchen: bool = False
     sent_to_kitchen_at: Optional[datetime] = None
     is_prepared: bool = False
@@ -66,6 +73,11 @@ class WaiterAddItemsRequest(BaseModel):
 class UpdateItemQtyRequest(BaseModel):
     """Taom sonini o'zgartirish [- 1 +]"""
     quantity: int = Field(..., gt=0)
+
+
+class UpdateItemWeightRequest(BaseModel):
+    """Tortilgan aniq og'irlikni kiritish (1.35 kg). Narx qayta hisoblanadi."""
+    weight: Optional[float] = Field(default=None, gt=0, le=1000)
 
 
 class UpdateItemSizeRequest(BaseModel):
@@ -178,6 +190,8 @@ class BillItemSummary(BaseModel):
     menu_item_id: int
     name: str
     portion_size: Optional[str] = None
+    weight: Optional[float] = None
+    unit: str = "dona"
     quantity: int
     unit_price: float
     total_price: float

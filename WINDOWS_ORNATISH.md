@@ -191,6 +191,58 @@ Kompyuter o'chib yonsa, o'zi qayta ishga tushadi.
 
 ---
 
+## Tortiladigan taomlar (baliq, go'sht)
+
+Baliq 1 kg deb buyurtma qilinadi, lekin aniq 1 kg baliq topilmaydi —
+1.35 kg chiqadi. Agar chekda "1 kg" yozilsa, mijoz "men 1 kg uchun
+to'layman" deydi. Shuning uchun tizim **tortmaguncha chek chiqarmaydi**.
+
+### 1. Admin: taomni "tortiladigan" deb belgilash
+
+**Menyu & Taomlar** → taomni tahrirlash → **⚖️ Tortiladigan taom** katagiga
+belgi qo'ying → o'lchov birligini tanlang (kg / l / g).
+
+Shundan keyin **narx 1 kg uchun** bo'ladi. Masalan baliq 1 kg = 120 000 so'm.
+
+### 2. Ofitsiant: tarozida tortish
+
+Ofitsiant baliqni bosganda **"⚖️ Tarozida tortish"** oynasi o'zi ochiladi:
+
+- Aniq og'irlikni kiritadi (masalan `1.35`)
+- Narx shu zahoti ko'rinadi: `1.35 kg × 120 000 = 162 000 so'm`
+- Saqlanadi va hisob yangilanadi
+
+Hali tortilmagan bo'lsa qator qizil **"TORTILMAGAN — bosing!"** bo'lib
+yonib turadi, pastda ham ogohlantirish chiqadi.
+
+### 3. Tizim nimani bloklaydi
+
+Tortilmagan taom bo'lsa quyidagilar **ishlamaydi** (tushunarli xato chiqadi):
+
+- Mijoz chekini chiqarish (`Chek — Printer 1`)
+- Kassada to'lovni qabul qilish
+- Stolni bo'shatish
+
+Oshxona begunogi esa chiqadi — unda taom yonida **"ТОРТИЛСИН!"** deb yoziladi,
+shunda oshxona tortishi kerakligini biladi.
+
+### 4. Chek qanday chiqadi
+
+```
+1. Балиқ (тирик)
+   1.35 кг x 120 000                     162 000
+2. Ош (Плов)
+   1 x 35 000                             35 000
+```
+
+Mijoz nechchi kilogramm olganini va aynan shuning pulini chekdan ko'radi —
+nizo chiqmaydi.
+
+> Og'irlikni oshxonaga yuborgandan keyin ham o'zgartirish mumkin
+> (to'lov qilinmaguncha). Narx avtomatik qayta hisoblanadi.
+
+---
+
 ## Ma'lumotlarni tozalash (noldan boshlash)
 
 Ikkita skript bor. Ikkisi ham **o'chirishdan oldin avtomatik zaxira nusxa**

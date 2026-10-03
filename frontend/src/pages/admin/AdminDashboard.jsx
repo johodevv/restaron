@@ -134,6 +134,9 @@ export const AdminDashboard = () => {
   const [dishPrice, setDishPrice] = useState('');
   const [dishCategory, setDishCategory] = useState('');
   const [dishKitchenStation, setDishKitchenStation] = useState('hot_kitchen');
+  // Tortiladigan taom (baliq, go'sht): narx 1 kg uchun
+  const [dishIsWeighted, setDishIsWeighted] = useState(false);
+  const [dishUnit, setDishUnit] = useState('kg');
   const [dishDescription, setDishDescription] = useState('');
   const [dishDescriptionCyrillic, setDishDescriptionCyrillic] = useState('');
   const [dishPrepTime, setDishPrepTime] = useState(15);
@@ -539,6 +542,8 @@ export const AdminDashboard = () => {
     setDishPrice('');
     setDishCategory(defaultCatId ? defaultCatId.toString() : (categories[0]?.id?.toString() || ''));
     setDishKitchenStation('hot_kitchen');
+    setDishIsWeighted(false);
+    setDishUnit('kg');
     setDishDescription('');
     setDishDescriptionCyrillic('');
     setDishPrepTime(15);
@@ -557,6 +562,8 @@ export const AdminDashboard = () => {
     setDishPrice(dish.price ? dish.price.toString() : '');
     setDishCategory(dish.category_id ? dish.category_id.toString() : '');
     setDishKitchenStation(dish.kitchen_station || 'hot_kitchen');
+    setDishIsWeighted(Boolean(dish.is_weighted));
+    setDishUnit(dish.unit && dish.unit !== 'dona' ? dish.unit : 'kg');
     setDishDescription(dish.description || '');
     setDishDescriptionCyrillic(dish.description_cyrillic || '');
     setDishPrepTime(dish.prep_time_minutes || 15);
@@ -587,6 +594,8 @@ export const AdminDashboard = () => {
           price: parseFloat(dishPrice),
           category_id: parseInt(dishCategory),
           kitchen_station: dishKitchenStation,
+          is_weighted: dishIsWeighted,
+          unit: dishIsWeighted ? dishUnit : 'dona',
           description: dishDescription.trim() || undefined,
           description_cyrillic: dishDescriptionCyrillic.trim() || undefined,
           prep_time_minutes: parseInt(dishPrepTime) || 15,
@@ -604,6 +613,8 @@ export const AdminDashboard = () => {
           price: parseFloat(dishPrice),
           category_id: parseInt(dishCategory),
           kitchen_station: dishKitchenStation,
+          is_weighted: dishIsWeighted,
+          unit: dishIsWeighted ? dishUnit : 'dona',
           description: dishDescription.trim() || undefined,
           description_cyrillic: dishDescriptionCyrillic.trim() || undefined,
           prep_time_minutes: parseInt(dishPrepTime) || 15,
@@ -2093,16 +2104,59 @@ export const AdminDashboard = () => {
                   </span>
                 </div>
 
+                {/* Tortiladigan taom: baliq, go'sht, tovuq */}
+                <div className="sm:col-span-2 p-3 rounded-2xl bg-cyan-500/10 border border-cyan-500/30">
+                  <label className="flex items-start gap-2.5 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={dishIsWeighted}
+                      onChange={(e) => setDishIsWeighted(e.target.checked)}
+                      className="mt-0.5 w-4 h-4 accent-cyan-500 shrink-0"
+                    />
+                    <span>
+                      <span className="block text-xs font-bold text-cyan-300">
+                        ⚖️ Tortiladigan taom (baliq, go'sht, tovuq)
+                      </span>
+                      <span className="block text-[10px] text-theme-muted mt-0.5">
+                        Belgilansa, narx 1 kg uchun bo'ladi. Ofitsiant aniq og'irlikni
+                        kiritmaguncha chek chiqmaydi — shunda mijoz chekda nechchi kg
+                        olganini va aynan shuning pulini ko'radi.
+                      </span>
+                    </span>
+                  </label>
+
+                  {dishIsWeighted && (
+                    <div className="mt-2.5 pl-6.5">
+                      <label className="block text-[10px] font-bold text-cyan-300 mb-1">
+                        O'lchov birligi:
+                      </label>
+                      <select
+                        value={dishUnit}
+                        onChange={(e) => setDishUnit(e.target.value)}
+                        className="w-full sm:w-48 px-3 py-2 rounded-xl bg-slate-900 border border-cyan-500/40 text-xs text-white font-bold focus:outline-none focus:border-cyan-400"
+                      >
+                        <option value="kg">kg — kilogramm (baliq, go'sht)</option>
+                        <option value="l">l — litr (quyma ichimlik)</option>
+                        <option value="g">g — gramm</option>
+                      </select>
+                    </div>
+                  )}
+                </div>
+
                 <div>
                   <label className="block text-xs font-semibold text-theme-muted mb-1">
-                    Narxi (so'm): *
+                    {dishIsWeighted ? `Narxi — 1 ${dishUnit} uchun (so'm): *` : "Narxi (so'm): *"}
                   </label>
                   <input
                     type="number"
                     value={dishPrice}
                     onChange={(e) => setDishPrice(e.target.value)}
-                    placeholder="masalan: 45000"
-                    className="w-full px-3.5 py-2.5 rounded-xl bg-black/30 border border-theme-border text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-theme-primary"
+                    placeholder={dishIsWeighted ? `1 ${dishUnit} narxi, masalan: 120000` : 'masalan: 45000'}
+                    className={`w-full px-3.5 py-2.5 rounded-xl bg-black/30 border text-xs text-white placeholder-zinc-500 focus:outline-none ${
+                      dishIsWeighted
+                        ? 'border-cyan-500/40 focus:border-cyan-400'
+                        : 'border-theme-border focus:border-theme-primary'
+                    }`}
                     required
                   />
                 </div>

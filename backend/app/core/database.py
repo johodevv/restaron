@@ -99,6 +99,7 @@ def _sync_sqlite_migrations(sync_conn):
         "order_items": [
             ("item_time", "VARCHAR(20)"),
             ("portion_size", "VARCHAR(50)"),
+            ("weight", "FLOAT"),
             ("sent_to_kitchen", "BOOLEAN DEFAULT 0"),
             ("sent_to_kitchen_at", "TIMESTAMP"),
         ],
@@ -107,6 +108,8 @@ def _sync_sqlite_migrations(sync_conn):
             ("name_cyrillic", "VARCHAR(200)"),
             ("description_cyrillic", "TEXT"),
             ("kitchen_station", "VARCHAR(50) DEFAULT 'hot_kitchen'"),
+            ("is_weighted", "BOOLEAN DEFAULT 0"),
+            ("unit", "VARCHAR(10) DEFAULT 'dona'"),
         ],
         "users": [
             ("commission_percent", "FLOAT DEFAULT 0.0"),

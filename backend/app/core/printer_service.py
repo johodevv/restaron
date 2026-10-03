@@ -207,6 +207,18 @@ def format_kitchen_ticket(
         if size:
             name = f"{name} [{latin_to_cyrillic(size)}]"
         qty = item.get("quantity") or 1
+
+        # Tortiladigan taom: og'irligi ko'rsatiladi, tortilmagan bo'lsa
+        # oshxona ko'rib turishi uchun ogohlantirish chiqadi.
+        if item.get("is_weighted"):
+            wt = item.get("weight")
+            unit_cyr = latin_to_cyrillic(item.get("unit") or "kg")
+            if wt:
+                lines.append(_pad_line(name, f"{wt:g} {unit_cyr}", col_width))
+            else:
+                lines.append(_pad_line(name, "ТОРТИЛСИН!", col_width))
+            continue
+
         lines.append(_pad_line(name, f"{qty} та", col_width))
         if item.get("note"):
             note_cyr = latin_to_cyrillic(item['note'])
@@ -279,8 +291,19 @@ def format_pre_check(
         line_total = it.get("total_price") or (qty * unit_price)
 
         lines.append(f"{idx}. {name}")
-        calc_str = f"   {qty} x {unit_price:,.0f}".replace(",", " ")
         tot_str = f"{line_total:,.0f}".replace(",", " ")
+
+        # Tortiladigan taomda hisob "og'irlik x 1 kg narxi" ko'rinishida
+        # yoziladi — mijoz nechchi kg olganini va nega shuncha pul
+        # ekanini chekning o'zidan ko'radi.
+        wt = it.get("weight")
+        if it.get("is_weighted") and wt:
+            unit_cyr = latin_to_cyrillic(it.get("unit") or "kg")
+            calc_str = f"   {wt:g} {unit_cyr} x {unit_price:,.0f}".replace(",", " ")
+            if qty > 1:
+                calc_str = f"   {qty} x {wt:g} {unit_cyr} x {unit_price:,.0f}".replace(",", " ")
+        else:
+            calc_str = f"   {qty} x {unit_price:,.0f}".replace(",", " ")
         lines.append(_pad_line(calc_str, tot_str, col_width))
 
     lines.append(sep)

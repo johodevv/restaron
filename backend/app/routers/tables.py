@@ -542,14 +542,19 @@ async def get_table_bill(table_id: int, db: AsyncSession = Depends(get_db)):
             m_id = item.menu_item_id
             name = item.menu_item.name if item.menu_item else f"Taom #{m_id}"
             size = (item.portion_size or "").strip() or None
-            # Hajmi har xil bo'lgan taomlar (1 L va 1.5 L kola) alohida
-            # qatorda turishi kerak — aks holda mijoz nima olganini bilmaydi.
-            key = (m_id, size)
+            wt = item.weight if (item.weight and item.weight > 0) else None
+            unit = (getattr(item.menu_item, "unit", None) or "dona") if item.menu_item else "dona"
+            # Hajmi/og'irligi har xil bo'lgan taomlar (1 L va 1.5 L kola,
+            # 1.35 kg va 2.1 kg baliq) alohida qatorda turishi kerak —
+            # aks holda mijoz nima olganini bilmaydi.
+            key = (m_id, size, wt)
             if key not in items_map:
                 items_map[key] = {
                     "menu_item_id": m_id,
                     "name": name,
                     "portion_size": size,
+                    "weight": wt,
+                    "unit": unit,
                     "quantity": 0,
                     "unit_price": item.unit_price,
                     "total_price": 0.0,
@@ -631,7 +636,7 @@ async def checkout_table(
     # Ushbu stoldagi barcha to'lanmagan faol buyurtmalarni PAID qilish
     orders_res = await db.execute(
         select(Order)
-        .options(selectinload(Order.items))
+        .options(selectinload(Order.items).selectinload(OrderItem.menu_item))
         .where(
             Order.table_id == table.id,
             Order.is_paid == False,
@@ -639,6 +644,22 @@ async def checkout_table(
         )
     )
     active_orders = orders_res.scalars().all()
+
+    # Tortilmagan taom bo'lsa stolni yopib bo'lmaydi — summa noto'g'ri
+    # bo'lib qoladi (tortiladigan taom narxi 0 bo'lib hisoblanadi).
+    not_weighed = []
+    for o in active_orders:
+        for it in o.items:
+            mi = it.menu_item
+            if mi and getattr(mi, "is_weighted", False) and (not it.weight or it.weight <= 0):
+                not_weighed.append(mi.name)
+    if not_weighed:
+        raise HTTPException(
+            status_code=400,
+            detail="Stolni yopib bo'lmaydi: " + ", ".join(sorted(set(not_weighed))) +
+                   " hali tortilmagan. Avval aniq og'irlikni kiriting.",
+        )
+
     closed_at = datetime.now(timezone.utc)
     for o in active_orders:
         # Summalarni qayta hisoblaymiz — hisobot va kassa mos kelishi uchun
@@ -743,6 +764,23 @@ async def print_table_bill(
     if not orders:
         raise HTTPException(status_code=400, detail="Ushbu stolda hali buyurtma yo'q")
 
+    # Tortiladigan taom tortilmagan bo'lsa chek chiqarilmaydi — aks holda
+    # chekda "1 kg" yozilib, aslida 1.35 kg berilgan bo'lib chiqadi.
+    not_weighed = []
+    for o in orders:
+        if o.is_paid:
+            continue
+        for it in o.items:
+            mi = it.menu_item
+            if mi and getattr(mi, "is_weighted", False) and (not it.weight or it.weight <= 0):
+                not_weighed.append(mi.name)
+    if not_weighed:
+        raise HTTPException(
+            status_code=400,
+            detail="Chek chiqarib bo'lmaydi: " + ", ".join(sorted(set(not_weighed))) +
+                   " hali tortilmagan. Ofitsiant panelida aniq og'irlikni kiriting.",
+        )
+
     active_orders = [o for o in orders if not o.is_paid]
     if active_orders:
         target_orders = active_orders
@@ -775,6 +813,9 @@ async def print_table_bill(
                 "unit_price": it.unit_price,
                 "total_price": it.total_price,
                 "size": it.portion_size,
+                "weight": it.weight,
+                "unit": (getattr(it.menu_item, "unit", None) or "kg") if it.menu_item else "kg",
+                "is_weighted": bool(getattr(it.menu_item, "is_weighted", False)) if it.menu_item else False,
             })
             subtotal += it.total_price
 

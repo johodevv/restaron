@@ -54,6 +54,11 @@ export const WaiterDashboard = () => {
   const [activeOrder, setActiveOrder] = useState(null);
   const [orderLoading, setOrderLoading] = useState(false);
 
+  // Tortiladigan taom (baliq, go'sht) og'irligini kiritish oynasi
+  const [weightModalItem, setWeightModalItem] = useState(null);
+  const [weightValue, setWeightValue] = useState('');
+  const [savingWeight, setSavingWeight] = useState(false);
+
   // O'lchanadigan taom hajmi (1.5 L kola, 1.4 kg baliq) uchun oyna
   const [sizeModalItem, setSizeModalItem] = useState(null);
   const [sizeValue, setSizeValue] = useState('');
@@ -164,6 +169,18 @@ export const WaiterDashboard = () => {
     return () => unsub();
   }, [addEventListener, selectedTable, soundEnabled, playChime]);
 
+  // Tortiladigan taom qo'shilsa — og'irlik oynasini darhol ochamiz.
+  // Ofitsiant baliqni tarozida tortib, aniq og'irligini kiritadi.
+  const openWeightModalIfNeeded = (order, menuItemId) => {
+    const line = (order?.items || [])
+      .filter((i) => i.menu_item_id === menuItemId && i.is_weighted && !i.weight)
+      .pop();
+    if (line) {
+      setWeightModalItem(line);
+      setWeightValue('');
+    }
+  };
+
   // Add Item to Table (Click on food card)
   const handleAddItem = async (menuItem) => {
     if (menuItem.is_stop_list || menuItem.is_available === false) {
@@ -188,6 +205,7 @@ export const WaiterDashboard = () => {
         };
         const newOrd = await api.post('/orders/waiter-create', payload);
         setActiveOrder(newOrd);
+        openWeightModalIfNeeded(newOrd, menuItem.id);
         // Refresh tables to show OCCUPIED
         setTables((prev) =>
           prev.map((t) => (t.id === selectedTable?.id ? { ...t, status: 'occupied' } : t))
@@ -198,8 +216,10 @@ export const WaiterDashboard = () => {
         // LEKIN hajmi belgilangan qator (masalan "Kola 1.5 L") birlashtirilmaydi —
         // aks holda 1 L kola 1.5 L qatoriga qo'shilib ketadi va oshxona
         // qaysi hajm kerakligini bilmay qoladi. Shunday holda yangi qator ochiladi.
+        // Tortiladigan taom (har baliq o'z og'irligiga ega) ham,
+        // hajmi belgilangan qator ham birlashtirilmaydi.
         const existingItem = (activeOrder.items || []).find(
-          (i) => i.menu_item_id === menuItem.id && !i.portion_size
+          (i) => i.menu_item_id === menuItem.id && !i.portion_size && !i.is_weighted
         );
         if (existingItem) {
           const updated = await api.patch(
@@ -213,6 +233,7 @@ export const WaiterDashboard = () => {
             send_to_kitchen_immediately: false,
           });
           setActiveOrder(updated);
+          openWeightModalIfNeeded(updated, menuItem.id);
         }
       }
     } catch (err) {
@@ -245,6 +266,30 @@ export const WaiterDashboard = () => {
       setActiveOrder(updated);
     } catch (err) {
       alert(err.message || 'Xatolik');
+    }
+  };
+
+  // Tortilgan aniq og'irlikni saqlash — narx shu zahoti qayta hisoblanadi
+  const handleSaveWeight = async () => {
+    if (!activeOrder || !weightModalItem) return;
+    const w = parseFloat(String(weightValue).replace(',', '.'));
+    if (!w || w <= 0) {
+      alert("Og'irlikni kiriting (masalan: 1.35)");
+      return;
+    }
+    setSavingWeight(true);
+    try {
+      const updated = await api.patch(
+        `/orders/${activeOrder.id}/items/${weightModalItem.id}/weight`,
+        { weight: w }
+      );
+      setActiveOrder(updated);
+      setWeightModalItem(null);
+      setWeightValue('');
+    } catch (err) {
+      alert(err.message || "Og'irlikni saqlashda xatolik");
+    } finally {
+      setSavingWeight(false);
     }
   };
 
@@ -663,8 +708,30 @@ export const WaiterDashboard = () => {
                           {it.menu_item_name || 'Taom'}
                         </p>
 
+                        {/* Tortiladigan taom (baliq, go'sht): aniq og'irlik.
+                            Kiritilmaguncha chek chiqmaydi. */}
+                        {it.is_weighted && (
+                          <button
+                            onClick={() => {
+                              setWeightModalItem(it);
+                              setWeightValue(it.weight ? String(it.weight) : '');
+                            }}
+                            title="Tortilgan aniq og'irlikni kiritish"
+                            className={`mt-1 mb-0.5 px-2 py-1 rounded-lg text-[11px] font-black transition-all active:scale-95 block ${
+                              it.weight
+                                ? 'bg-cyan-500/25 text-cyan-300 border border-cyan-500/50'
+                                : 'bg-red-600 text-white border border-red-400 animate-pulse'
+                            }`}
+                          >
+                            {it.weight
+                              ? `⚖️ ${it.weight} ${it.unit || 'kg'}`
+                              : '⚖️ TORTILMAGAN — bosing!'}
+                          </button>
+                        )}
+
                         {/* O'lchanadigan taom hajmi: 1.5 L kola, 1.4 kg baliq.
                             Oshxona begunogida va mijoz chekida shu ko'rinadi. */}
+                        {!it.is_weighted && (
                         <button
                           onClick={() => {
                             setSizeModalItem(it);
@@ -679,6 +746,7 @@ export const WaiterDashboard = () => {
                         >
                           {it.portion_size ? `📏 ${it.portion_size}` : '📏 Hajm'}
                         </button>
+                        )}
 
                         <p className="text-xs font-semibold text-slate-400 font-mono mt-0.5">
                           {it.quantity} dona • {it.item_time || '12:00'} •{' '}
@@ -731,6 +799,21 @@ export const WaiterDashboard = () => {
                 <div className="p-3 mb-3 rounded-2xl bg-emerald-500/20 border-2 border-emerald-500/50 text-emerald-300 font-black text-xs sm:text-sm text-center flex items-center justify-center gap-2 animate-bounce-subtle shadow-lg">
                   <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />
                   <span>✅ Buyurtma tasdiqlandi va oshxona printerlariga avtomatik chop etildi!</span>
+                </div>
+              )}
+
+              {/* Tortilmagan taom ogohlantirishi — chek chiqmaydi */}
+              {(activeOrder?.items || []).some((i) => i.is_weighted && !i.weight) && (
+                <div className="p-3 mb-3 rounded-2xl bg-red-950/70 border-2 border-red-600 text-red-200 font-black text-xs sm:text-sm flex items-start gap-2 shadow-lg">
+                  <span className="text-lg shrink-0 leading-none">⚖️</span>
+                  <span>
+                    Tortilmagan taom bor:{' '}
+                    {(activeOrder?.items || [])
+                      .filter((i) => i.is_weighted && !i.weight)
+                      .map((i) => i.menu_item_name)
+                      .join(', ')}
+                    . Og'irligi kiritilmaguncha chek chiqmaydi.
+                  </span>
                 </div>
               )}
 
@@ -876,6 +959,94 @@ export const WaiterDashboard = () => {
                   );
                 })}
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ─── Tortilgan og'irlikni kiritish (baliq 1.35 kg) ──────────── */}
+      {weightModalItem && (
+        <div className="fixed inset-0 z-[55] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in">
+          <div className="bg-slate-900 border-2 border-cyan-600/60 rounded-3xl max-w-md w-full p-5 shadow-2xl">
+            <div className="flex items-start justify-between mb-1">
+              <div>
+                <h3 className="text-base font-black text-white">⚖️ Tarozida tortish</h3>
+                <p className="text-xs font-bold text-cyan-300 mt-0.5">
+                  {weightModalItem.menu_item_name || 'Taom'}
+                </p>
+              </div>
+              <button
+                onClick={() => setWeightModalItem(null)}
+                className="text-slate-400 hover:text-white p-1"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <p className="text-[11px] text-slate-400 mb-3">
+              Mahsulotni tarozida torting va <b className="text-white">aniq</b> og'irligini
+              kiriting. Narx shu zahoti qayta hisoblanadi, chekda ham shu og'irlik
+              yoziladi — mijoz bilan nizo chiqmaydi.
+            </p>
+
+            <div className="p-3 rounded-2xl bg-cyan-500/10 border border-cyan-500/30 mb-3">
+              <div className="flex justify-between text-xs text-slate-300 font-semibold">
+                <span>1 {weightModalItem.unit || 'kg'} narxi:</span>
+                <span className="font-mono font-black text-white">
+                  {(weightModalItem.unit_price || 0).toLocaleString('uz-UZ')} so'm
+                </span>
+              </div>
+            </div>
+
+            <label className="block text-[10px] font-black text-slate-400 uppercase tracking-wider mb-1.5">
+              Tortilgan og'irlik ({weightModalItem.unit || 'kg'}):
+            </label>
+            <input
+              type="number"
+              step="0.01"
+              min="0"
+              inputMode="decimal"
+              autoFocus
+              value={weightValue}
+              onChange={(e) => setWeightValue(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') handleSaveWeight();
+              }}
+              placeholder="masalan: 1.35"
+              className="w-full p-3.5 rounded-xl bg-slate-950 border-2 border-cyan-700 text-2xl text-white font-mono font-black text-center focus:outline-none focus:border-cyan-400 mb-3"
+            />
+
+            {/* Jonli narx hisobi */}
+            {(() => {
+              const w = parseFloat(String(weightValue).replace(',', '.')) || 0;
+              const unitPrice = weightModalItem.unit_price || 0;
+              if (w <= 0) return null;
+              return (
+                <div className="p-3 rounded-2xl bg-emerald-500/15 border border-emerald-500/40 mb-4 text-center">
+                  <p className="text-[11px] font-bold text-slate-300 font-mono">
+                    {w} {weightModalItem.unit || 'kg'} × {unitPrice.toLocaleString('uz-UZ')}
+                  </p>
+                  <p className="text-2xl font-black text-emerald-400 font-mono mt-0.5">
+                    {Math.round(w * unitPrice).toLocaleString('uz-UZ')} so'm
+                  </p>
+                </div>
+              );
+            })()}
+
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setWeightModalItem(null)}
+                className="px-3 py-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-bold text-slate-300"
+              >
+                Keyinroq
+              </button>
+              <button
+                onClick={handleSaveWeight}
+                disabled={savingWeight}
+                className="flex-1 py-3 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-black text-sm disabled:opacity-40 active:scale-95 transition-all"
+              >
+                {savingWeight ? 'Saqlanmoqda...' : 'Saqlash va narxni hisoblash'}
+              </button>
             </div>
           </div>
         </div>

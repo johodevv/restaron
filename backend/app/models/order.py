@@ -112,6 +112,11 @@ class OrderItem(Base):
     # Bo'sh bo'lsa — taom o'lchanmaydi (osh, shashlik va h.k.).
     portion_size = Column(String(50), nullable=True)
 
+    # Tortiladigan taomning ANIQ og'irligi (1.35 kg). Narx shunga
+    # ko'paytiriladi — chekda mijoz nechchi kg olganini va aynan shuning
+    # puli yozilganini ko'radi.
+    weight = Column(Float, nullable=True)
+
     # Oshxona yuborilganlik holati (Oshxona begunogi)
     sent_to_kitchen = Column(Boolean, default=False)
     sent_to_kitchen_at = Column(DateTime(timezone=True), nullable=True)

@@ -25,6 +25,7 @@ from app.schemas.order import (
     OrderItemResponse, WaiterCallResponse,
     WaiterOrderCreate, WaiterAddItemsRequest, UpdateItemQtyRequest,
     UpdateItemSizeRequest,
+    UpdateItemWeightRequest,
     OrderNoteUpdate, OrderCheckoutRequest
 )
 from app.core.printer_service import format_kitchen_ticket, format_pre_check, print_to_windows_printer
@@ -124,6 +125,42 @@ async def load_order_full(db: AsyncSession, order_id: int) -> Optional[Order]:
     return res.scalar_one_or_none()
 
 
+def line_total(menu_item: MenuItem, quantity: int, weight: Optional[float]) -> float:
+    """Bitta qator summasi.
+
+    Tortiladigan taom (baliq, go'sht) uchun `price` — 1 kg narxi, shuning
+    uchun summa ANIQ tortilgan og'irlikka ko'paytiriladi. Og'irlik hali
+    kiritilmagan bo'lsa 0 qaytariladi — narxni taxmin qilib yozib qo'yish
+    mijoz bilan nizoga olib keladi.
+    """
+    price = menu_item.price or 0.0
+    if getattr(menu_item, "is_weighted", False):
+        if not weight or weight <= 0:
+            return 0.0
+        return round(price * float(weight) * max(1, quantity), 2)
+    return round(price * quantity, 2)
+
+
+def missing_weight_items(order: Order) -> List[str]:
+    """Tortilishi kerak, lekin hali tortilmagan taomlar ro'yxati"""
+    names = []
+    for it in order.items:
+        mi = it.menu_item
+        if mi and getattr(mi, "is_weighted", False) and (not it.weight or it.weight <= 0):
+            names.append(mi.name)
+    return names
+
+
+async def recalc_order_totals(db: AsyncSession, order: Order) -> None:
+    """Buyurtma summalarini qatorlardan qayta hisoblash"""
+    res = await db.execute(select(OrderItem).where(OrderItem.order_id == order.id))
+    subtotal = sum((i.total_price or 0.0) for i in res.scalars().all())
+    fee_pct = order.service_fee_percent or 12.0
+    order.subtotal = subtotal
+    order.service_fee_amount = round(subtotal * (fee_pct / 100.0), 2)
+    order.total = round(subtotal + order.service_fee_amount - (order.discount or 0.0), 2)
+
+
 def build_order_response(order: Order, table_number: Optional[int] = None, waiter_name: Optional[str] = None) -> OrderResponse:
     """OrderResponse obyektini xavfsiz va to'liq yaratish"""
     items_response = []
@@ -138,6 +175,9 @@ def build_order_response(order: Order, table_number: Optional[int] = None, waite
                 special_note=item.special_note,
                 portion_size=item.portion_size,
                 item_time=item.item_time,
+                weight=item.weight,
+                is_weighted=bool(getattr(item.menu_item, "is_weighted", False)) if item.menu_item else False,
+                unit=(getattr(item.menu_item, "unit", "dona") or "dona") if item.menu_item else "dona",
                 sent_to_kitchen=bool(item.sent_to_kitchen),
                 sent_to_kitchen_at=item.sent_to_kitchen_at,
                 is_prepared=bool(item.is_prepared),
@@ -251,7 +291,7 @@ async def create_order(payload: OrderCreate, db: AsyncSession = Depends(get_db))
                 detail=f"Taom #{item_data.menu_item_id} topilmadi yoki mavjud emas",
             )
 
-        total_price = menu_item.price * item_data.quantity
+        total_price = line_total(menu_item, item_data.quantity, item_data.weight)
         subtotal += total_price
 
         order_item = OrderItem(
@@ -262,6 +302,7 @@ async def create_order(payload: OrderCreate, db: AsyncSession = Depends(get_db))
             total_price=total_price,
             special_note=item_data.special_note,
             portion_size=(item_data.portion_size or None),
+            weight=item_data.weight,
         )
         db.add(order_item)
         menu_item.total_ordered += item_data.quantity
@@ -420,7 +461,7 @@ async def waiter_create_order(
         if not menu_item:
             continue
 
-        tot_price = menu_item.price * item_data.quantity
+        tot_price = line_total(menu_item, item_data.quantity, item_data.weight)
         subtotal += tot_price
 
         order_item = OrderItem(
@@ -431,6 +472,7 @@ async def waiter_create_order(
             total_price=tot_price,
             special_note=item_data.special_note,
             portion_size=(item_data.portion_size or None),
+            weight=item_data.weight,
             item_time=now_time_str,
             sent_to_kitchen=False,
         )
@@ -523,7 +565,7 @@ async def waiter_add_items(
         if not menu_item:
             continue
 
-        tot_price = menu_item.price * item_data.quantity
+        tot_price = line_total(menu_item, item_data.quantity, item_data.weight)
         new_subtotal += tot_price
 
         order_item = OrderItem(
@@ -534,6 +576,7 @@ async def waiter_add_items(
             total_price=tot_price,
             special_note=item_data.special_note,
             portion_size=(item_data.portion_size or None),
+            weight=item_data.weight,
             item_time=now_time_str,
             sent_to_kitchen=payload.send_to_kitchen_immediately,
             sent_to_kitchen_at=datetime.now(timezone.utc) if payload.send_to_kitchen_immediately else None,
@@ -591,23 +634,75 @@ async def update_item_quantity(
         raise HTTPException(status_code=404, detail="Taom topilmadi")
 
     order_item.quantity = payload.quantity
-    order_item.total_price = order_item.unit_price * payload.quantity
-
-    all_items_res = await db.execute(select(OrderItem).where(OrderItem.order_id == order_id))
-    all_items = all_items_res.scalars().all()
-    subtotal = sum(i.total_price for i in all_items)
+    # Tortiladigan taomda narx og'irlikka bog'liq, shuning uchun
+    # oddiy "narx x soni" emas, umumiy hisoblagichdan foydalanamiz.
+    mi_res = await db.execute(select(MenuItem).where(MenuItem.id == order_item.menu_item_id))
+    menu_item = mi_res.scalar_one_or_none()
+    if menu_item:
+        order_item.total_price = line_total(menu_item, payload.quantity, order_item.weight)
+    else:
+        order_item.total_price = round((order_item.unit_price or 0.0) * payload.quantity, 2)
 
     order_res = await db.execute(
         select(Order).options(selectinload(Order.items).selectinload(OrderItem.menu_item), selectinload(Order.table), selectinload(Order.waiter)).where(Order.id == order_id)
     )
     order = order_res.scalar_one()
-    order.subtotal = subtotal
-    fee_pct = order.service_fee_percent or 12.0
-    order.service_fee_amount = subtotal * (fee_pct / 100.0)
-    order.total = subtotal + order.service_fee_amount - (order.discount or 0.0)
+    await recalc_order_totals(db, order)
 
     await db.flush()
     order = await load_order_full(db, order.id) or order
+    return build_order_response(order)
+
+
+# ─── Tortilgan ANIQ og'irlikni kiritish (baliq 1.35 kg) ────────
+@router.patch("/{order_id}/items/{item_id}/weight", response_model=OrderResponse,
+              summary="Tortilgan aniq og'irlikni kiritish va narxni qayta hisoblash")
+async def update_item_weight(
+    order_id: int,
+    item_id: int,
+    payload: UpdateItemWeightRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role("waiter", "admin", "developer")),
+):
+    """Baliq/go'sht tortilgandan keyin aniq og'irligi kiritiladi.
+
+    Narx shu zahoti qayta hisoblanadi (1 kg narxi x og'irlik), shuning
+    uchun chekda mijoz ko'rgan og'irlik va summa bir-biriga mos keladi.
+    """
+    item_res = await db.execute(
+        select(OrderItem)
+        .options(selectinload(OrderItem.menu_item))
+        .where(OrderItem.id == item_id, OrderItem.order_id == order_id)
+    )
+    order_item = item_res.scalar_one_or_none()
+    if not order_item:
+        raise HTTPException(status_code=404, detail="Taom topilmadi")
+
+    order_res = await db.execute(
+        select(Order).options(selectinload(Order.items)).where(Order.id == order_id)
+    )
+    order = order_res.scalar_one_or_none()
+    if not order:
+        raise HTTPException(status_code=404, detail="Buyurtma topilmadi")
+    if order.status in (OrderStatus.PAID, OrderStatus.CANCELLED):
+        raise HTTPException(status_code=400, detail="Yopilgan buyurtmani o'zgartirib bo'lmaydi")
+
+    menu_item = order_item.menu_item
+    if not menu_item:
+        raise HTTPException(status_code=400, detail="Taom menyuda topilmadi")
+    if not getattr(menu_item, "is_weighted", False):
+        raise HTTPException(
+            status_code=400,
+            detail=f"\"{menu_item.name}\" tortiladigan taom emas. Uni admin panelda "
+                   f"\"Tortiladigan taom\" deb belgilang.",
+        )
+
+    order_item.weight = payload.weight if (payload.weight and payload.weight > 0) else None
+    order_item.total_price = line_total(menu_item, order_item.quantity, order_item.weight)
+
+    await recalc_order_totals(db, order)
+    await db.flush()
+    order = await load_order_full(db, order_id) or order
     return build_order_response(order)
 
 
@@ -775,6 +870,11 @@ async def send_to_kitchen(
             # O'lchanadigan taomning hajmi — oshxona nechchi litr/kg
             # ekanini begunokdan ko'rishi uchun.
             "size": it.portion_size,
+            # Tortiladigan taom: begunokda "1.35 кг" yoki tortilmagan
+            # bo'lsa "ТОРТИЛСИН!" deb chiqadi.
+            "weight": it.weight,
+            "unit": (getattr(it.menu_item, "unit", None) or "kg") if it.menu_item else "kg",
+            "is_weighted": bool(getattr(it.menu_item, "is_weighted", False)) if it.menu_item else False,
         }
 
         # Stansiya bo'yicha saralash
@@ -967,6 +1067,18 @@ async def checkout_order(
     if not order:
         raise HTTPException(status_code=404, detail="Buyurtma topilmadi")
 
+    # Tortiladigan taom hali tortilmagan bo'lsa chek chiqarib bo'lmaydi.
+    # Aks holda chekda noto'g'ri og'irlik va noto'g'ri summa yoziladi —
+    # mijoz "men 1 kg uchun to'layman" deb nizolashadi.
+    not_weighed = missing_weight_items(order)
+    if not_weighed:
+        raise HTTPException(
+            status_code=400,
+            detail="Chek chiqarib bo'lmaydi: " + ", ".join(not_weighed) +
+                   " hali tortilmagan. Ofitsiant panelida aniq og'irlikni "
+                   "kiriting — shundan keyin narx va chek to'g'ri bo'ladi.",
+        )
+
     set_res = await db.execute(select(RestaurantSettings).where(RestaurantSettings.restaurant_id == order.restaurant_id))
     settings = set_res.scalar_one_or_none()
 
@@ -1081,6 +1193,9 @@ async def checkout_order(
             "unit_price": it.unit_price,
             "total_price": it.total_price,
             "size": it.portion_size,
+            "weight": it.weight,
+            "unit": (getattr(it.menu_item, "unit", None) or "kg") if it.menu_item else "kg",
+            "is_weighted": bool(getattr(it.menu_item, "is_weighted", False)) if it.menu_item else False,
         }
         for it in order.items
     ]
