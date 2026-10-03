@@ -626,16 +626,38 @@ export const AdminDashboard = () => {
         savedDishId = created.id;
       }
 
-      // If a file was selected, upload image
+      // Rasm tanlangan bo'lsa yuklaymiz.
+      // MUHIM: ilgari bu yerda javob tekshirilmasdi — rasm yuklanmasa ham
+      // oyna yopilib ketardi va admin "tahrirlash ishlamadi" deb o'ylardi.
       if (dishImageFile && savedDishId) {
         const formData = new FormData();
         formData.append('file', dishImageFile);
         const token = localStorage.getItem('restaron_token');
-        await fetch(`${import.meta.env.VITE_API_URL || '/api/v1'}/menu/items/${savedDishId}/image`, {
-          method: 'POST',
-          headers: token ? { Authorization: `Bearer ${token}` } : {},
-          body: formData,
-        });
+        const res = await fetch(
+          `${import.meta.env.VITE_API_URL || '/api/v1'}/menu/items/${savedDishId}/image`,
+          {
+            method: 'POST',
+            headers: token ? { Authorization: `Bearer ${token}` } : {},
+            body: formData,
+          }
+        );
+        if (!res.ok) {
+          let sabab = `Server ${res.status} qaytardi`;
+          try {
+            const data = await res.json();
+            if (data?.detail) sabab = typeof data.detail === 'string' ? data.detail : sabab;
+          } catch (_) {
+            /* javob JSON emas — status kodining o'zi yetarli */
+          }
+          // Taom saqlandi, faqat rasm yuklanmadi — shuni aniq aytamiz.
+          alert(
+            `Taom saqlandi, lekin RASM yuklanmadi.\n\n${sabab}\n\n` +
+            `Boshqa rasm tanlab, qaytadan saqlab ko'ring.`
+          );
+          setDishImageFile(null);
+          loadAll();
+          return;
+        }
       }
 
       setShowDishModal(false);

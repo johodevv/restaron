@@ -566,9 +566,21 @@ async def get_table_bill(table_id: int, db: AsyncSession = Depends(get_db)):
                 items_map[key]["special_notes"].append(item.special_note)
             subtotal += item.total_price
 
-    service_fee_percent = 10.0
+    # Xizmat haqi foizi buyurtmaning o'zidan olinadi. Ilgari bu yerda 10%
+    # qattiq yozilgan edi: ofitsiant panelida 12%, chekda 10% chiqib,
+    # ikki xil summa ko'rinardi (masalan 705 600 va 693 000).
+    fee_candidates = [o.service_fee_percent for o in orders if o.service_fee_percent is not None]
+    if fee_candidates:
+        service_fee_percent = fee_candidates[0]
+    else:
+        set_res = await db.execute(
+            select(RestaurantSettings).where(RestaurantSettings.restaurant_id == table.restaurant_id)
+        )
+        rsettings = set_res.scalar_one_or_none()
+        service_fee_percent = (rsettings.service_fee_percent if rsettings else None) or 12.0
+
     service_fee_amount = round(subtotal * (service_fee_percent / 100.0), 2)
-    grand_total = subtotal + service_fee_amount
+    grand_total = round(subtotal + service_fee_amount, 2)
 
     restaurant = table.restaurant
     restaurant_name = restaurant.name if restaurant else "RestAron"

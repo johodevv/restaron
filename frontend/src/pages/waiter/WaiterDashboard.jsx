@@ -144,7 +144,17 @@ export const WaiterDashboard = () => {
     if (selectedTable) {
       fetchTableActiveOrder(selectedTable);
     }
-  }, [selectedTable]);
+  }, [selectedTable?.id]);
+
+  // Stollar ro'yxati yangilanganda tanlangan stolning holatini ham
+  // yangilab turamiz (boshqa qurilmada stol yopilgan bo'lishi mumkin).
+  useEffect(() => {
+    if (!selectedTable) return;
+    const fresh = tables.find((t) => t.id === selectedTable.id);
+    if (fresh && fresh.status !== selectedTable.status) {
+      setSelectedTable(fresh);
+    }
+  }, [tables]);
 
   // WebSocket real-time updates
   useEffect(() => {
@@ -206,10 +216,13 @@ export const WaiterDashboard = () => {
         const newOrd = await api.post('/orders/waiter-create', payload);
         setActiveOrder(newOrd);
         openWeightModalIfNeeded(newOrd, menuItem.id);
-        // Refresh tables to show OCCUPIED
+        // Stol endi band. Sarlavhadagi belgi ham yangilanishi uchun
+        // selectedTable ni ham yangilaymiz — aks holda ro'yxatda "Band",
+        // sarlavhada esa "Bo'sh" deb turib, ofitsiantni chalg'itadi.
         setTables((prev) =>
           prev.map((t) => (t.id === selectedTable?.id ? { ...t, status: 'occupied' } : t))
         );
+        setSelectedTable((prev) => (prev ? { ...prev, status: 'occupied' } : prev));
       } else {
         // Mavjud buyurtmaga qo'shish
         // Agar taom savatda allaqachon bo'lsa -> sonini +1 qilamiz.

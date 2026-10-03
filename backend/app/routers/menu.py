@@ -22,19 +22,77 @@ from app.schemas.menu import (
 
 router = APIRouter(prefix="/menu", tags=["🍽️ Menyu"])
 
-ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp", "image/gif"}
+# Telefon va Mac'dan kelgan suratlar ko'pincha HEIC bo'ladi, ba'zi
+# brauzerlar esa turini umuman yubormaydi. Shuning uchun ro'yxat keng
+# va tur noma'lum bo'lsa fayl kengaytmasiga qaraymiz.
+ALLOWED_IMAGE_TYPES = {
+    "image/jpeg", "image/jpg", "image/pjpeg",
+    "image/png", "image/webp", "image/gif",
+    "image/heic", "image/heif", "image/bmp", "image/avif",
+}
+ALLOWED_IMAGE_EXTS = {
+    "jpg", "jpeg", "png", "webp", "gif", "heic", "heif", "bmp", "avif",
+}
+MAX_IMAGE_BYTES = 12 * 1024 * 1024   # 12 MB
 
 
-async def save_upload_file(upload_file: UploadFile, subfolder: str) -> str:
+def _image_ext(filename: Optional[str]) -> str:
+    """Fayl kengaytmasini xavfsiz aniqlash ("photo.JPG" -> "jpg")"""
+    name = (filename or "").strip()
+    if "." not in name:
+        return ""
+    ext = name.rsplit(".", 1)[-1].lower()
+    # Faqat harf va raqam qoldiramiz — fayl nomi orqali papkadan
+    # chiqib ketishning oldini oladi.
+    ext = "".join(ch for ch in ext if ch.isalnum())
+    return ext[:8]
+
+
+def check_image_upload(upload_file: UploadFile) -> str:
+    """Yuklangan fayl rasm ekanini tekshirib, kengaytmasini qaytaradi.
+
+    Tur (content_type) ba'zi brauzerlarda bo'sh yoki "application/octet-stream"
+    bo'ladi — bunda kengaytmaga qaraymiz. Aks holda telefondan yuklangan
+    oddiy surat ham rad etilib, admin sababni bilmay qoladi.
+    """
+    ext = _image_ext(upload_file.filename)
+    ctype = (upload_file.content_type or "").lower().split(";")[0].strip()
+
+    if ctype in ALLOWED_IMAGE_TYPES:
+        return ext or (ctype.split("/")[-1] if "/" in ctype else "jpg")
+    if ext in ALLOWED_IMAGE_EXTS:
+        return ext
+
+    raise HTTPException(
+        status_code=400,
+        detail=(
+            f"Bu fayl rasm emas (turi: {ctype or 'nomalum'}, "
+            f"kengaytmasi: {ext or 'yoq'}). "
+            f"Ruxsat etilgan: JPG, PNG, WEBP, GIF, HEIC."
+        ),
+    )
+
+
+async def save_upload_file(upload_file: UploadFile, subfolder: str, ext: str = "") -> str:
     """Rasm saqlash"""
     upload_dir = os.path.join(settings.UPLOAD_DIR, subfolder)
     os.makedirs(upload_dir, exist_ok=True)
 
-    ext = upload_file.filename.rsplit(".", 1)[-1].lower()
+    ext = ext or _image_ext(upload_file.filename) or "jpg"
     file_name = f"{uuid.uuid4()}.{ext}"
     file_path = os.path.join(upload_dir, file_name)
 
     content = await upload_file.read()
+    if not content:
+        raise HTTPException(status_code=400, detail="Fayl bo'sh — qaytadan tanlang")
+    if len(content) > MAX_IMAGE_BYTES:
+        mb = len(content) / (1024 * 1024)
+        raise HTTPException(
+            status_code=400,
+            detail=f"Rasm juda katta ({mb:.1f} MB). Eng ko'pi 12 MB. "
+                   f"Telefonda rasmni kichraytirib qayta yuklang.",
+        )
+
     async with aiofiles.open(file_path, "wb") as f:
         await f.write(content)
 
@@ -154,15 +212,14 @@ async def upload_item_image(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_role("admin", "developer")),
 ):
-    if file.content_type not in ALLOWED_IMAGE_TYPES:
-        raise HTTPException(status_code=400, detail="Faqat rasm fayllari qabul qilinadi")
+    ext = check_image_upload(file)
 
     result = await db.execute(select(MenuItem).where(MenuItem.id == item_id))
     item = result.scalar_one_or_none()
     if not item:
         raise HTTPException(status_code=404, detail="Taom topilmadi")
 
-    image_url = await save_upload_file(file, "menu_items")
+    image_url = await save_upload_file(file, "menu_items", ext)
     item.image_url = image_url
     await db.flush()
     await db.refresh(item)

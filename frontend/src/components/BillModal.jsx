@@ -277,6 +277,13 @@ ${node.innerHTML}
                               {item.weight} {item.unit || 'kg'}
                             </span>
                           )}
+                          {/* Tortilmagan taom — kassir 0 so'm ko'rib
+                              chalkashmasligi uchun sababi aytiladi. */}
+                          {!item.weight && item.unit && item.unit !== 'dona' && (
+                            <span className="ml-1.5 px-1.5 py-0.5 rounded-md bg-red-600 text-white text-[10px] font-bold">
+                              TORTILMAGAN
+                            </span>
+                          )}
                         </div>
                         <div className="text-[11px] text-theme-muted">
                           {(item.unit_price || 0).toLocaleString()} so'm /{' '}
