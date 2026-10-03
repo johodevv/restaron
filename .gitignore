@@ -51,3 +51,6 @@ _xizmat_ishga_tushirish.cmd
 *.db-wal
 *.db-shm
 backend/zaxira/
+
+# O'rnatish skripti yaratadigan sayt ochuvchi fayl
+_saytni_ochish.cmd

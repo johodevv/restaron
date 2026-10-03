@@ -36,9 +36,15 @@ echo.
 REM start /b: yangi jarayon sifatida (cmd dan alohida), lekin bir xil konsolda
 start "RestAron-Backend" /min "%PYTHON_PATH%" "%~dp0server_manager.py" start
 
-REM Server tayyor bo'lishini kutish
-echo  Server tayyor bo'lishi kutilmoqda (30 sekund)...
-timeout /t 30 /nobreak >nul
+REM Server tayyor bo'lishini kutish (javob berishi bilan davom etamiz)
+echo  Server tayyor bo'lishi kutilmoqda...
+powershell -NoProfile -Command "$ok=$false; for($i=0;$i -lt 45;$i++){ try { if((Invoke-WebRequest -Uri 'http://localhost:8000/health' -UseBasicParsing -TimeoutSec 2).StatusCode -eq 200){ $ok=$true; break } } catch {}; Start-Sleep -Seconds 2 }; if($ok){ exit 0 } else { exit 1 }"
+if errorlevel 1 (
+    echo  DIQQAT: Server javob bermadi. server.log ni tekshiring.
+) else (
+    echo  Server tayyor. Sayt brauzerda ochilmoqda...
+    start "" "http://localhost:8000"
+)
 
 REM URL ni ko'rsatish
 if exist "%~dp0SERVER_ONLINE_URL.txt" (

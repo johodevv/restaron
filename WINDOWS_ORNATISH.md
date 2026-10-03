@@ -109,7 +109,8 @@ U quyidagilarni bajaradi:
 - Firewall'da **8000-port**ni ochadi (ofitsiant telefonlari uchun)
 - Kompyuter yonganda server **avtomatik** ishga tushishini sozlaydi
   (tizimga kirmasangiz ham)
-- Serverni darhol ishga tushiradi
+- Kompyuter yonganda **sayt brauzerda o'zi ochilishini** sozlaydi
+- Serverni darhol ishga tushiradi va **saytni brauzerda ochadi**
 
 Oxirida kirish manzillari ko'rsatiladi.
 
@@ -178,10 +179,36 @@ yozadi. Internet bo'lmasa ham lokal Wi-Fi rejimi ishlashda davom etadi.
 
 ---
 
+## Sayt o'zi ochilishi
+
+Noutbukni yoqqaningizda hech narsa bosish shart emas:
+
+1. Windows yuklanadi → **server o'zi ishga tushadi** (tizimga kirmasangiz ham)
+2. Siz tizimga kirasiz → kichik oyna chiqadi: *"RestAron server kutilmoqda..."*
+3. Server javob berishi bilan **brauzer o'zi ochiladi**: `http://localhost:8000`
+
+Oyna serverni 3 daqiqagacha kutadi (kompyuter sekin yuklansa ham yetadi).
+Server ko'tarilmasa, oyna buni aytadi va `server.log` ga yo'naltiradi.
+
+`2_SERVERNI_ORNATISH.bat` ni bosganingizda ham sayt shu zahoti brauzerda
+ochiladi.
+
+> **Internet manzili** (`...trycloudflare.com`) alohida — u 1-2 daqiqada
+> tayyor bo'ladi. Ko'rish uchun `RESTARON_URL_KOR.bat`, yoki admin panel
+> yuqorisidagi yashil chiziqdan nusxalab oling. Brauzer esa doim
+> `localhost` orqali ochiladi — u internetsiz ham ishlaydi va hech qachon
+> o'zgarmaydi.
+
+Saytning o'zi ochilishini **o'chirish** uchun: Windows qidiruviga
+`shell:startup` yozing va ochilgan papkadan **"RestAron saytni ochish.cmd"**
+faylini o'chiring. (`RESTARON_XIZMATNI_TOXTATISH.bat` ham uni olib tashlaydi.)
+
+---
+
 ## Kundalik ishlatish
 
 Server **fonda doimiy** ishlaydi — hech narsa qilish shart emas.
-Kompyuter o'chib yonsa, o'zi qayta ishga tushadi.
+Kompyuter o'chib yonsa, o'zi qayta ishga tushadi va sayt o'zi ochiladi.
 
 | Amal | Fayl |
 |---|---|

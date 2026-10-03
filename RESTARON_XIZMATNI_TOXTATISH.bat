@@ -32,6 +32,11 @@ for /f "tokens=2" %%p in ('tasklist /FI "IMAGENAME eq python.exe" /FO LIST ^| fi
 )
 taskkill /F /IM cloudflared.exe /T >nul 2>&1
 
+REM Kompyuter yonganda saytni ochadigan yozuvni ham olib tashlaymiz,
+REM aks holda server o'chiq bo'lsa ham brauzer har safar ochilaveradi.
+set "STARTUP_FILE=%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\RestAron saytni ochish.cmd"
+if exist "%STARTUP_FILE%" del /f /q "%STARTUP_FILE%" >nul 2>&1
+
 echo  Xizmat to'xtatildi va avtomatik ishga tushish o'chirildi.
 echo.
 echo  Ma'lumotlar saqlanib qoldi: backend\restaron.db

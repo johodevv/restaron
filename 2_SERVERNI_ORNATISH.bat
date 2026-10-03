@@ -50,10 +50,10 @@ if not exist "%PYTHON_PATH%" (
     pause
     exit /b 1
 )
-echo  [1/5] Python muhiti topildi.
+echo  [1/6] Python muhiti topildi.
 
 REM --- 2. Uyqu rejimini o'chirish ---
-echo  [2/5] Uyqu rejimi o'chirilmoqda (server uzluksiz ishlashi uchun)...
+echo  [2/6] Uyqu rejimi o'chirilmoqda (server uzluksiz ishlashi uchun)...
 powercfg /change standby-timeout-ac 0      >nul 2>&1
 powercfg /change hibernate-timeout-ac 0    >nul 2>&1
 powercfg /change disk-timeout-ac 0         >nul 2>&1
@@ -66,13 +66,13 @@ powercfg /setactive SCHEME_CURRENT         >nul 2>&1
 echo        Tayyor: kompyuter endi uyquga ketmaydi.
 
 REM --- 3. Firewall ---
-echo  [3/5] Firewall da 8000-port ochilmoqda...
+echo  [3/6] Firewall da 8000-port ochilmoqda...
 netsh advfirewall firewall delete rule name="RestAron Server (8000)" >nul 2>&1
 netsh advfirewall firewall add rule name="RestAron Server (8000)" dir=in action=allow protocol=TCP localport=8000 profile=any >nul 2>&1
 echo        Tayyor: ofitsiant telefonlari ulanishi mumkin.
 
 REM --- 4. Avtomatik ishga tushish (Scheduled Task) ---
-echo  [4/5] Avtomatik ishga tushish sozlanmoqda...
+echo  [4/6] Avtomatik ishga tushish sozlanmoqda...
 REM Eski xizmat ishlab turgan bo'lsa to'xtatamiz, aks holda 8000-port band
 REM qolib, yangi server ishga tushmaydi (masalan boshqa papkadan qayta
 REM o'rnatilayotgan bo'lsa).
@@ -108,8 +108,41 @@ if %errorLevel% neq 0 (
     echo        Tayyor: kompyuter yonganda server o'zi ishga tushadi.
 )
 
-REM --- 5. Hoziroq ishga tushirish ---
-echo  [5/5] Server ishga tushirilmoqda...
+REM --- 5. Kompyuter yonganda saytni brauzerda avtomatik ochish ---
+REM  Server vazifasi SYSTEM nomidan ishlaydi -- u brauzer ocha olmaydi
+REM  (SYSTEM da ish stoli yo'q). Shuning uchun saytni ochish ALOHIDA,
+REM  foydalanuvchi tizimga kirganda ishlaydigan fayl orqali qilinadi.
+echo  [5/6] Kompyuter yonganda sayt avtomatik ochilishi sozlanmoqda...
+
+set OPENER=%BASE_DIR%_saytni_ochish.cmd
+> "%OPENER%" echo @echo off
+>>"%OPENER%" echo chcp 65001 ^>nul
+>>"%OPENER%" echo title RestAron - sayt ochilmoqda...
+>>"%OPENER%" echo echo.
+>>"%OPENER%" echo echo  RestAron server kutilmoqda, biroz sabr qiling...
+>>"%OPENER%" echo powershell -NoProfile -Command "$ok=$false; for($i=0;$i -lt 90;$i++){ try { if((Invoke-WebRequest -Uri 'http://localhost:8000/health' -UseBasicParsing -TimeoutSec 2).StatusCode -eq 200){ $ok=$true; break } } catch {}; Start-Sleep -Seconds 2 }; if($ok){ exit 0 } else { exit 1 }"
+>>"%OPENER%" echo if errorlevel 1 goto :xato
+>>"%OPENER%" echo start "" "http://localhost:8000"
+>>"%OPENER%" echo exit /b 0
+>>"%OPENER%" echo :xato
+>>"%OPENER%" echo echo  Server 3 daqiqada javob bermadi. server.log ni tekshiring.
+>>"%OPENER%" echo timeout /t 10 /nobreak ^>nul
+>>"%OPENER%" echo exit /b 1
+
+REM  Startup papkasiga qo'yamiz: foydalanuvchi tizimga kirganda ishlaydi.
+REM  Rejalashtirilgan vazifa emas, chunki vazifa parol so'rashi mumkin,
+REM  Startup esa parolsiz va har doim foydalanuvchi seansida ishlaydi.
+set STARTUP_DIR=%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup
+if exist "%STARTUP_DIR%" (
+    > "%STARTUP_DIR%\RestAron saytni ochish.cmd" echo @echo off
+    >>"%STARTUP_DIR%\RestAron saytni ochish.cmd" echo call "%OPENER%"
+    echo        Tayyor: kompyuter yonganda sayt o'zi ochiladi.
+) else (
+    echo        OGOHLANTIRISH: Startup papkasi topilmadi, sayt qo'lda ochiladi.
+)
+
+REM --- 6. Hoziroq ishga tushirish ---
+echo  [6/6] Server ishga tushirilmoqda...
 schtasks /Run /TN "RestAron Server" >nul 2>&1
 
 REM Server haqiqatan javob berishini kutamiz (90 soniyagacha).
@@ -122,6 +155,8 @@ if %errorLevel%==0 (set SERVER_OK=1) else (set SERVER_OK=0)
 
 if !SERVER_OK!==1 (
     echo        Tayyor: server javob bermoqda.
+    echo        Sayt brauzerda ochilmoqda...
+    start "" "http://localhost:8000"
 ) else (
     echo.
     echo        XATO: Server 60 soniyada ko'tarilmadi!
@@ -169,7 +204,8 @@ echo    Admin parol:  01020307m
 echo.
 echo  ----------------------------------------------------------------
 echo   Server endi FONDA doimiy ishlaydi.
-echo   Kompyuter o'chib yonsa - o'zi qayta ishga tushadi.
+echo   Kompyuter o'chib yonsa - server o'zi qayta ishga tushadi
+echo   va sayt brauzerda o'zi ochiladi.
 echo   Bu oynani yopsangiz ham server to'xtamaydi.
 echo.
 echo   To'xtatish:  RESTARON_XIZMATNI_TOXTATISH.bat
