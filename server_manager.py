@@ -37,6 +37,10 @@ if not VENV_PYTHON.exists():
     VENV_PYTHON = Path(sys.executable)
 
 CLOUDFLARED_EXE = BASE_DIR / "cloudflared.exe"
+
+# Doimiy (o'zgarmaydigan) internet manzili sozlamasi.
+# Bo'sh bo'lsa — bepul trycloudflare ishlatiladi va manzil har safar o'zgaradi.
+TUNNEL_CONFIG = BASE_DIR / "tunnel_sozlama.txt"
 URL_FILE = BASE_DIR / "SERVER_ONLINE_URL.txt"
 PID_FILE = BASE_DIR / "server_pids.json"
 LOG_FILE = BASE_DIR / "server.log"
@@ -226,12 +230,20 @@ def start_server():
     if CLOUDFLARED_EXE.exists():
         log("Cloudflare Tunnel ishga tushmoqda...")
 
-        cf_cmd = [
-            str(CLOUDFLARED_EXE),
-            "tunnel",
-            "--url", f"http://localhost:{PORT}",
-            "--no-autoupdate",
-        ]
+        cf_token, cf_fixed_url = read_tunnel_config()
+        if cf_token:
+            log("  Doimiy tunnel rejimi (manzil o'zgarmaydi)")
+            cf_cmd = [
+                str(CLOUDFLARED_EXE), "tunnel", "--no-autoupdate",
+                "run", "--token", cf_token,
+            ]
+        else:
+            cf_cmd = [
+                str(CLOUDFLARED_EXE),
+                "tunnel",
+                "--url", f"http://localhost:{PORT}",
+                "--no-autoupdate",
+            ]
 
         # cloudflared for URL capture — start with PIPE (not detached) first
         # so we can read its stdout/stderr to find the tunnel URL.
@@ -273,7 +285,15 @@ def start_server():
         t_out.start()
         t_err.start()
 
-        if url_found.wait(timeout=40):
+        if cf_token:
+            # Doimiy rejimda manzil sozlamadan olinadi — cloudflared uni
+            # chop etmaydi, chunki u Cloudflare panelida belgilangan.
+            public_url = cf_fixed_url
+            if public_url:
+                log(f"  Doimiy internet manzili: {public_url}")
+            else:
+                log("  OGOHLANTIRISH: tunnel_sozlama.txt da MANZIL yozilmagan")
+        elif url_found.wait(timeout=40):
             public_url = cf_url_result["url"]
             log(f"  Cloudflare URL: {public_url}")
         else:
@@ -385,17 +405,83 @@ def show_url():
 
 
 
+def read_tunnel_config():
+    """Doimiy tunnel sozlamasini o'qish.
+
+    tunnel_sozlama.txt ikki qatordan iborat:
+        TOKEN=eyJhIjoi...
+        MANZIL=https://restoran.mening-domenim.uz
+
+    TOKEN — Cloudflare Zero Trust panelida tunnel yaratilganda beriladi.
+    MANZIL — o'sha tunnelga biriktirilgan doimiy manzil.
+
+    Qaytaradi: (token, manzil). Sozlama bo'lmasa (None, None) —
+    u holda bepul trycloudflare ishlatiladi (manzil har safar o'zgaradi).
+    """
+    if not TUNNEL_CONFIG.exists():
+        return None, None
+    token = url = ""
+    try:
+        for raw in TUNNEL_CONFIG.read_text(encoding="utf-8", errors="replace").splitlines():
+            line = raw.strip()
+            if not line or line.startswith("#"):
+                continue
+            if "=" not in line:
+                continue
+            key, _, val = line.partition("=")
+            key = key.strip().upper()
+            val = val.strip().strip('"').strip("'")
+            if key == "TOKEN":
+                token = val
+            elif key in ("MANZIL", "URL", "HOSTNAME"):
+                url = val
+    except Exception as e:
+        log(f"  tunnel_sozlama.txt o'qilmadi: {e}")
+        return None, None
+
+    if not token:
+        return None, None
+    if url and not url.startswith("http"):
+        url = "https://" + url
+    return token, url.rstrip("/")
+
+
 def _tunnel_supervisor(stop_event):
     """
     Cloudflare Tunnel ni fonda ushlab turadi (alohida oqimda).
 
+    tunnel_sozlama.txt da TOKEN bo'lsa — DOIMIY manzil ishlatiladi
+    (har safar bir xil, stollardagi QR kodlar buzilmaydi).
+    Bo'lmasa — bepul trycloudflare: manzil har safar o'zgaradi.
+
     Tunnel ishga tushgach internet manzilini SERVER_ONLINE_URL.txt ga
-    yozadi. Tunnel uzilsa qayta ko'taradi va YANGI manzilni qayta yozadi
-    (bepul trycloudflare manzili har safar o'zgaradi).
+    yozadi. Tunnel uzilsa qayta ko'taradi.
     """
     if not CLOUDFLARED_EXE.exists():
         log("  cloudflared.exe topilmadi - faqat lokal Wi-Fi rejimi")
         return
+
+    token, fixed_url = read_tunnel_config()
+    named = bool(token)
+
+    if named:
+        cf_cmd = [str(CLOUDFLARED_EXE), "tunnel", "--no-autoupdate",
+                  "run", "--token", token]
+        log("  Doimiy tunnel rejimi (manzil o'zgarmaydi)")
+        if fixed_url:
+            # Doimiy manzil oldindan ma'lum — stollardagi QR kodlar
+            # shu manzilga ishora qiladi va hech qachon buzilmaydi.
+            try:
+                URL_FILE.write_text(fixed_url, encoding="utf-8")
+                log(f"  INTERNET MANZILI (doimiy): {fixed_url}")
+            except Exception:
+                pass
+        else:
+            log("  OGOHLANTIRISH: tunnel_sozlama.txt da MANZIL yozilmagan — "
+                "QR kodlar lokal manzilda qoladi")
+    else:
+        cf_cmd = [str(CLOUDFLARED_EXE), "tunnel", "--url",
+                  f"http://localhost:{PORT}", "--no-autoupdate"]
 
     # api.trycloudflare.com -- cloudflared API manzili, tunnel manzili EMAS
     url_pattern = re.compile(r"https://(?!api\.)[a-z0-9\-]+\.trycloudflare\.com")
@@ -404,8 +490,7 @@ def _tunnel_supervisor(stop_event):
     while not stop_event.is_set():
         try:
             cf = subprocess.Popen(
-                [str(CLOUDFLARED_EXE), "tunnel", "--url",
-                 f"http://localhost:{PORT}", "--no-autoupdate"],
+                cf_cmd,
                 cwd=str(BASE_DIR),
                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                 stdin=subprocess.DEVNULL, text=True,
@@ -423,6 +508,10 @@ def _tunnel_supervisor(stop_event):
             for line in cf.stdout:
                 if stop_event.is_set():
                     break
+                if named:
+                    # Doimiy rejimda manzil sozlamadan olinadi, cloudflared
+                    # uni chop etmaydi. Shunchaki jurnal uchun o'qiymiz.
+                    continue
                 m = url_pattern.search(line or "")
                 if m and not found:
                     found = True

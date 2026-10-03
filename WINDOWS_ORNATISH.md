@@ -173,9 +173,65 @@ skanerlasa, internetdan ham, Wi-Fi'dan ham menyu ochiladi.
 Tunnel uzilib qolsa, tizim o'zi qayta ulanadi va yangi manzilni faylga
 yozadi. Internet bo'lmasa ham lokal Wi-Fi rejimi ishlashda davom etadi.
 
-> Bepul tunnel manzili har safar qayta ishga tushganda **o'zgaradi**.
-> Stollardagi QR kodlar doimiy bo'lishi kerak bo'lsa, o'z domeningiz bilan
-> Cloudflare named tunnel sozlang yoki QR'ni LAN manziliga qo'ying.
+> Bepul tunnel manzili har safar qayta ishga tushganda **o'zgaradi** —
+> ya'ni stollardagi chop etilgan QR kodlar buziladi. Buni hal qilish
+> uchun pastdagi bo'limga qarang.
+
+---
+
+## Internet manzilini doimiy qilish
+
+Bepul `...trycloudflare.com` manzili server har qayta yonganda o'zgaradi.
+Stollardagi QR kodlar doimiy bo'lishi uchun ikki yo'l bor.
+
+### Yo'l 1 — QR kodlarni lokal manzilga bog'lash (BEPUL, eng oson)
+
+Mijozlar restoran Wi-Fi'ida bo'lsa, bu yetarli:
+
+1. Routerda kompyuterga **statik IP** bering (DHCP reservation) —
+   masalan `192.168.1.50`. Shunda IP hech qachon o'zgarmaydi.
+2. Admin panel → **Stollar & QR** → **"Manzilni o'zgartirish"** →
+   `http://192.168.1.50:8000`
+3. QR kodlarni chop eting — ular **doimiy** bo'ladi.
+
+Kamchiligi: QR faqat restoran Wi-Fi'ida ishlaydi (4G da ochilmaydi).
+Ko'pchilik restoran uchun shu yetarli — mijoz baribir restoranda o'tiradi.
+
+### Yo'l 2 — O'z domeningiz bilan doimiy internet manzili
+
+Manzil hamma joyda ishlaydi va hech qachon o'zgarmaydi:
+`https://restoran.sizningdomen.uz`
+
+**Kerak bo'ladi:**
+
+| Nima | Narxi |
+|---|---|
+| Cloudflare hisobi | **bepul** |
+| O'z domeningiz (Cloudflare'ga qo'shilgan) | ~10–15 $ / yil |
+| Cloudflare Tunnel | **bepul** |
+
+**Qadamlar:**
+
+1. [dash.cloudflare.com](https://dash.cloudflare.com) da hisob oching va
+   domeningizni qo'shing.
+2. **Zero Trust → Networks → Tunnels → Create a tunnel**
+   - Connector: **Cloudflared**
+   - Chiqqan **TOKEN** ni nusxalang
+3. O'sha tunnelda **Public hostname** qo'shing:
+   - Subdomain: `restoran` , Domain: `sizningdomen.uz`
+   - Service: **HTTP** → `localhost:8000`
+4. Kompyuterda **`RESTARON_DOIMIY_MANZIL.bat`** ni ishga tushiring,
+   TOKEN va manzilni kiriting.
+5. Admin panelga kirib **QR kodlarni qayta chop eting** — endi ular
+   hech qachon buzilmaydi.
+
+Orqaga qaytish uchun `tunnel_sozlama.txt` faylini o'chiring —
+yana bepul, o'zgaruvchan manzilga qaytadi.
+
+> **Nega port forwarding emas?** O'zbekistondagi ko'p provayderlar
+> CGNAT ishlatadi — bunda routerda port ochish ishlamaydi. Cloudflare
+> Tunnel esa har qanday tarmoqda ishlaydi, chunki ulanish ichkaridan
+> tashqariga qiladi.
 
 ---
 
@@ -213,6 +269,7 @@ Kompyuter o'chib yonsa, o'zi qayta ishga tushadi va sayt o'zi ochiladi.
 | Amal | Fayl |
 |---|---|
 | Serverni to'xtatish | `RESTARON_XIZMATNI_TOXTATISH.bat` (administrator) |
+| Doimiy internet manzili | `RESTARON_DOIMIY_MANZIL.bat` |
 | Qayta yoqish | `2_SERVERNI_ORNATISH.bat` (administrator) |
 | Jurnal (xatolarni ko'rish) | `server.log` |
 

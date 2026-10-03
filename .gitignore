@@ -54,3 +54,6 @@ backend/zaxira/
 
 # O'rnatish skripti yaratadigan sayt ochuvchi fayl
 _saytni_ochish.cmd
+
+# Doimiy tunnel sozlamasi (TOKEN maxfiy - gitga tushmasin!)
+tunnel_sozlama.txt
