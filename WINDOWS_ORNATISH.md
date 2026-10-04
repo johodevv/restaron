@@ -280,6 +280,24 @@ faylini o'chiring. (`RESTARON_XIZMATNI_TOXTATISH.bat` ham uni olib tashlaydi.)
 
 ---
 
+## Yangilash (yangi versiya olish)
+
+**`RESTARON_YANGILASH.bat`** — o'ng tugma → *Run as administrator*.
+
+Bitta bosishda hammasini qiladi:
+1. Yangi kodni yuklaydi (`git pull`)
+2. Kutubxonalarni tekshiradi
+3. Saytni qayta yig'adi
+4. Serverni qayta ishga tushiradi va saytni ochadi
+
+**Ma'lumotlaringiz o'chmaydi** — menyu, stollar, QR kodlar, xodimlar,
+buyurtmalar va cheklar arxivi joyida qoladi.
+
+> Yangilangach brauzerda **Ctrl + F5** bosing — eski versiya keshda
+> qolib ketmasligi uchun.
+
+---
+
 ## Kundalik ishlatish
 
 Server **fonda doimiy** ishlaydi — hech narsa qilish shart emas.
@@ -290,6 +308,7 @@ Kompyuter o'chib yonsa, o'zi qayta ishga tushadi va sayt o'zi ochiladi.
 | Serverni to'xtatish | `RESTARON_XIZMATNI_TOXTATISH.bat` (administrator) |
 | Doimiy internet manzili | `RESTARON_DOIMIY_MANZIL.bat` |
 | Namuna menyuni tozalash | `RESTARON_MENYUNI_TOZALASH.bat` (administrator) |
+| Yangi versiyaga yangilash | `RESTARON_YANGILASH.bat` (administrator) |
 | Qayta yoqish | `2_SERVERNI_ORNATISH.bat` (administrator) |
 | Jurnal (xatolarni ko'rish) | `server.log` |
 
