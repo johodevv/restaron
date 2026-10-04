@@ -14,27 +14,40 @@ import {
 import api from '../../utils/api';
 
 export const DunyoLanding = ({ onOpenLogin }) => {
-  const [featuredDishes, setFeaturedDishes] = useState([]);
+  // Menyu KATEGORIYALAR bo'yicha ko'rsatiladi (Kaboblar, Salatlar,
+  // Ichimliklar, Choylar...). Faqat admin panelda qo'shilgan taomlar
+  // chiqadi — boshqa hech narsa ko'rinmaydi.
+  const [menuGroups, setMenuGroups] = useState([]);
+  const [activeCatId, setActiveCatId] = useState(null);
   const [loadingDishes, setLoadingDishes] = useState(true);
 
   useEffect(() => {
     const fetchDishes = async () => {
       try {
         const categories = await api.get('/menu/full/1');
-        if (categories && Array.isArray(categories)) {
-          // Extract all items, prioritizing featured ones
-          const allItems = categories.flatMap((c) => c.items || []);
-          const featured = allItems.filter(item => item.is_featured || item.is_available);
-          setFeaturedDishes(featured.length > 0 ? featured.slice(0, 9) : allItems.slice(0, 6));
+        if (Array.isArray(categories)) {
+          const groups = categories
+            .map((c) => ({
+              ...c,
+              items: (c.items || []).filter(
+                (it) => it.is_available !== false && !it.is_stop_list
+              ),
+            }))
+            // Bo'sh kategoriya ko'rsatilmaydi
+            .filter((c) => c.items.length > 0);
+          setMenuGroups(groups);
+          if (groups.length > 0) setActiveCatId(groups[0].id);
         }
       } catch (err) {
-        console.warn('Menu load error for landing:', err);
+        console.warn('Menyuni yuklashda xatolik:', err);
       } finally {
         setLoadingDishes(false);
       }
     };
     fetchDishes();
   }, []);
+
+  const activeGroup = menuGroups.find((c) => c.id === activeCatId) || menuGroups[0];
 
   return (
     <div className="min-h-screen bg-theme-bg text-theme-text selection:bg-amber-500/30">
@@ -61,7 +74,8 @@ export const DunyoLanding = ({ onOpenLogin }) => {
           </h1>
 
           <p className="text-sm sm:text-base text-theme-muted max-w-2xl mx-auto leading-relaxed">
-            Samovarda damlangan shifobaxsh choylar, issiq tandir somsasi, qarsildoq qozon kabob va afsonaviy devzira palovimizdan bahramand bo'ling.
+            Shinam so'rilar, samovarda damlangan choy va issiq taomlar.
+            Menyu bilan quyida tanishing yoki stoldagi QR kodni skaner qiling.
           </p>
 
           {/* QR orqali kirishni eslatish */}
@@ -124,14 +138,14 @@ export const DunyoLanding = ({ onOpenLogin }) => {
             <div>
               <div className="inline-flex items-center gap-1 px-3 py-1 rounded-full bg-amber-500/10 text-amber-400 text-xs font-bold mb-2">
                 <Flame className="w-3.5 h-3.5" />
-                <span>MASHHUR TAOMLAR</span>
+                <span>MENYU</span>
               </div>
               <h2 className="text-2xl sm:text-3xl font-extrabold text-white">
-                Dunyo Choyxonasi Maxsus Taomlari
+                Taomlarimiz
               </h2>
             </div>
             <p className="text-xs text-theme-muted max-w-sm">
-              Har bir taom milliy an'analar va eng sara barra masalliqlar asosida tayyorlanadi.
+              Kategoriyani tanlang va taomlar bilan tanishing.
             </p>
           </div>
 
@@ -141,45 +155,88 @@ export const DunyoLanding = ({ onOpenLogin }) => {
                 <div key={n} className="h-64 rounded-3xl bg-white/5 animate-pulse" />
               ))}
             </div>
-          ) : featuredDishes.length > 0 ? (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
-              {featuredDishes.map((item) => (
-                <div
-                  key={item.id}
-                  className="rounded-3xl glass-card border border-theme-border bg-theme-surface/80 overflow-hidden group hover:border-amber-500/50 transition-all shadow-lg"
-                >
-                  <div className="relative h-44 overflow-hidden bg-black/40">
-                    <img
-                      src={item.image_url || 'https://images.unsplash.com/photo-1563379091339-03b21ab4a4f8?auto=format&fit=crop&w=600&q=80'}
-                      alt={item.name}
-                      className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
-                    />
-                    {item.is_featured && (
-                      <span className="absolute top-3 left-3 px-2.5 py-1 rounded-full bg-black/70 backdrop-blur-md text-amber-300 text-[10px] font-extrabold border border-amber-500/30">
-                        Maxsus Tavsiya 🔥
-                      </span>
-                    )}
-                  </div>
-                  <div className="p-4 space-y-2">
-                    <div className="flex items-start justify-between gap-2">
-                      <h3 className="font-extrabold text-sm text-white">{item.name}</h3>
-                      <span className="font-black text-amber-400 text-sm whitespace-nowrap">
-                        {item.price?.toLocaleString()} so'm
-                      </span>
-                    </div>
-                    {item.description && (
-                      <p className="text-xs text-theme-muted line-clamp-2 leading-relaxed">
-                        {item.description}
-                      </p>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
-          ) : (
+          ) : menuGroups.length === 0 ? (
             <div className="text-center py-12 text-theme-muted text-sm">
               Taomlar menyusi tez orada yangilanadi.
             </div>
+          ) : (
+            <>
+              {/* Kategoriya tugmalari — katta va aniq, oson bosiladi */}
+              <div className="flex gap-2.5 overflow-x-auto no-scrollbar pb-2 mb-6">
+                {menuGroups.map((cat) => {
+                  const active = cat.id === (activeGroup?.id);
+                  return (
+                    <button
+                      key={cat.id}
+                      onClick={() => setActiveCatId(cat.id)}
+                      className={`flex items-center gap-2 px-5 py-3 rounded-2xl text-sm font-extrabold shrink-0 transition-all ${
+                        active
+                          ? 'bg-amber-500 text-slate-950 shadow-lg shadow-amber-500/25'
+                          : 'glass-card border border-theme-border bg-theme-surface/70 text-theme-text hover:border-amber-500/50'
+                      }`}
+                    >
+                      <span className="text-lg leading-none">{cat.icon || '🍽️'}</span>
+                      <span>{cat.name}</span>
+                      <span
+                        className={`text-[11px] px-1.5 py-0.5 rounded-full font-bold ${
+                          active ? 'bg-slate-950/20 text-slate-950' : 'bg-white/10 text-theme-muted'
+                        }`}
+                      >
+                        {cat.items.length}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Tanlangan kategoriya taomlari */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
+                {(activeGroup?.items || []).map((item) => (
+                  <div
+                    key={item.id}
+                    className="rounded-3xl glass-card border border-theme-border bg-theme-surface/80 overflow-hidden group hover:border-amber-500/50 transition-all shadow-lg"
+                  >
+                    {/* Rasm faqat admin yuklagan bo'lsa ko'rsatiladi.
+                        Ilgari internetdan olingan begona surat chiqardi. */}
+                    {item.image_url ? (
+                      <div className="relative h-44 overflow-hidden bg-black/40">
+                        <img
+                          src={item.image_url}
+                          alt={item.name}
+                          loading="lazy"
+                          className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+                        />
+                        {item.is_featured && (
+                          <span className="absolute top-3 left-3 px-2.5 py-1 rounded-full bg-black/70 backdrop-blur-md text-amber-300 text-[10px] font-extrabold border border-amber-500/30">
+                            Maxsus Tavsiya 🔥
+                          </span>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="h-24 flex items-center justify-center bg-black/30 border-b border-theme-border/50">
+                        <span className="text-3xl opacity-60">{activeGroup?.icon || '🍽️'}</span>
+                      </div>
+                    )}
+
+                    <div className="p-4 space-y-2">
+                      <div className="flex items-start justify-between gap-2">
+                        <h3 className="font-extrabold text-base text-white leading-snug">
+                          {item.name}
+                        </h3>
+                        <span className="font-black text-amber-400 text-base whitespace-nowrap">
+                          {item.price?.toLocaleString()} so'm
+                        </span>
+                      </div>
+                      {item.description && (
+                        <p className="text-xs text-theme-muted line-clamp-2 leading-relaxed">
+                          {item.description}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </>
           )}
         </div>
       </section>

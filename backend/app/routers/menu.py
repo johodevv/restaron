@@ -6,7 +6,7 @@ import uuid
 import aiofiles
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, func
 from sqlalchemy.orm import selectinload
 from typing import List, Optional
 
@@ -14,6 +14,7 @@ from app.core.database import get_db
 from app.core.security import require_role
 from app.core.config import settings
 from app.models.menu import Category, MenuItem
+from app.models.order import OrderItem
 from app.models.user import User, UserRole
 from app.schemas.menu import (
     CategoryCreate, CategoryUpdate, CategoryResponse,
@@ -186,6 +187,30 @@ async def delete_category(
     category = result.scalar_one_or_none()
     if not category:
         raise HTTPException(status_code=404, detail="Kategoriya topilmadi")
+
+    # Kategoriya o'chirilsa ichidagi taomlar ham o'chadi. Agar o'sha
+    # taomlar eski buyurtmalarda ishlatilgan bo'lsa, cheklar arxivi
+    # buziladi — shuning uchun to'xtatamiz va nimani qilish kerakligini
+    # aytamiz.
+    used_res = await db.execute(
+        select(MenuItem.name, func.count(OrderItem.id))
+        .join(OrderItem, OrderItem.menu_item_id == MenuItem.id)
+        .where(MenuItem.category_id == category.id)
+        .group_by(MenuItem.id)
+    )
+    used_names = [row[0] for row in used_res.all()]
+    if used_names:
+        ro_yxat = ", ".join(used_names[:5])
+        agar = " va boshqalar" if len(used_names) > 5 else ""
+        raise HTTPException(
+            status_code=400,
+            detail=f"\"{category.name}\" kategoriyasini o'chirib bo'lmaydi: ichidagi "
+                   f"{len(used_names)} ta taom eski buyurtmalarda ishlatilgan "
+                   f"({ro_yxat}{agar}). Chek tarixi buzilmasligi uchun avval shu "
+                   f"taomlarni boshqa kategoriyaga ko'chiring yoki \"Stop-list\" "
+                   f"orqali yashiring.",
+        )
+
     await db.delete(category)
 
 
@@ -254,6 +279,22 @@ async def delete_menu_item(
     item = result.scalar_one_or_none()
     if not item:
         raise HTTPException(status_code=404, detail="Taom topilmadi")
+
+    # Eski buyurtmalarda ishlatilgan taomni o'chirsak, cheklar arxivi
+    # buziladi (chekda "Taom #12" bo'lib qoladi). Shuning uchun bunday
+    # taom o'chirilmaydi — uni Stop-list orqali yashirish mumkin.
+    cnt_res = await db.execute(
+        select(func.count(OrderItem.id)).where(OrderItem.menu_item_id == item.id)
+    )
+    used = cnt_res.scalar() or 0
+    if used > 0:
+        raise HTTPException(
+            status_code=400,
+            detail=f"\"{item.name}\" taomini o'chirib bo'lmaydi: u {used} ta buyurtmada "
+                   f"ishlatilgan va eski cheklarda ko'rinadi. Menyudan yashirish uchun "
+                   f"\"Stop-list\" tugmasini bosing — chek tarixi saqlanib qoladi.",
+        )
+
     await db.delete(item)
 
 

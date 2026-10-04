@@ -43,20 +43,22 @@ export const Navbar = ({
               if (tableInfo && onReturnToLanding) onReturnToLanding();
               else if (onNavigate) onNavigate('menu');
             }}
-            className="flex items-center gap-3 cursor-pointer group"
+            className="flex items-center gap-2.5 sm:gap-3 cursor-pointer group min-w-0 shrink"
           >
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-amber-500 to-amber-600 flex items-center justify-center text-black font-bold shadow-glow group-hover:scale-105 transition-transform">
+            <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-gradient-to-tr from-amber-500 to-amber-600 flex items-center justify-center text-black font-bold shadow-glow group-hover:scale-105 transition-transform shrink-0">
               <UtensilsCrossed className="w-5 h-5" />
             </div>
-            <div>
-              <span className="font-extrabold text-base sm:text-lg tracking-tight bg-gradient-to-r from-white via-white/95 to-amber-400 bg-clip-text text-transparent">
+            <div className="min-w-0">
+              {/* Telefonda nom bitta qatorda qoladi — ilgari ikkiga bo'linib,
+                  yuqori panel siqilib ketardi. */}
+              <span className="block truncate font-extrabold text-sm sm:text-lg tracking-tight bg-gradient-to-r from-white via-white/95 to-amber-400 bg-clip-text text-transparent">
                 Dunyo Choyxonasi
               </span>
               {tableInfo ? (
-                <div className="text-[11px] text-amber-400 font-bold flex items-center gap-1">
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                <div className="text-[11px] text-amber-400 font-bold flex items-center gap-1 whitespace-nowrap">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse shrink-0" />
                   Stol #{tableInfo.number} {tableInfo.room ? `(${tableInfo.room})` : ''}
-                  <span className="text-[9px] text-theme-muted font-normal underline ml-1">← Boshqa stol</span>
+                  <span className="hidden sm:inline text-[9px] text-theme-muted font-normal underline ml-1">← Boshqa stol</span>
                 </div>
               ) : (
                 <div className="text-[11px] text-theme-muted font-medium flex items-center gap-1">
@@ -72,7 +74,7 @@ export const Navbar = ({
           </div>
 
           {/* Action Items */}
-          <div className="flex items-center gap-2 sm:gap-3">
+          <div className="flex items-center gap-2 sm:gap-3 shrink-0">
             {/* Customer specific navigation */}
             {!user && activeOrderId && (
               <button
@@ -114,7 +116,7 @@ export const Navbar = ({
                   key={code}
                   type="button"
                   onClick={() => setLang(code)}
-                  className={`px-2 py-1 rounded-lg text-[11px] font-bold transition-all ${
+                  className={`px-1.5 sm:px-2 py-1 rounded-lg text-[10px] sm:text-[11px] font-bold transition-all ${
                     lang === code
                       ? 'bg-amber-500 text-black shadow-sm'
                       : 'text-zinc-400 hover:text-white'
@@ -130,7 +132,7 @@ export const Navbar = ({
             <button
               onClick={() => setThemeModalOpen(true)}
               title="Dizayn temasini o'zgartirish"
-              className="p-2 rounded-xl border border-theme-border/60 hover:border-theme-primary/60 bg-white/5 hover:bg-white/10 transition-all text-theme-text"
+              className={`${tableInfo ? 'hidden sm:block' : 'block'} p-2 rounded-xl border border-theme-border/60 hover:border-theme-primary/60 bg-white/5 hover:bg-white/10 transition-all text-theme-text`}
             >
               <Palette className="w-4 h-4 text-theme-primary" />
             </button>
@@ -182,7 +184,10 @@ export const Navbar = ({
             ) : (
               <button
                 onClick={() => onNavigate && onNavigate('login')}
-                className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-semibold bg-white/10 hover:bg-white/20 border border-white/10 text-white transition-all shadow-sm"
+                /* Mijoz stolda o'tirganda telefonda bu tugma kerak emas va
+                   yuqori panelni siqib qo'yadi — faqat kattaroq ekranda
+                   yoki bosh sahifada ko'rsatamiz. */
+                className={`${tableInfo ? 'hidden sm:flex' : 'flex'} items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-semibold bg-white/10 hover:bg-white/20 border border-white/10 text-white transition-all shadow-sm`}
               >
                 <User className="w-3.5 h-3.5 text-theme-primary" />
                 <span>Xodimlar</span>

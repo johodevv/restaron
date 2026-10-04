@@ -219,131 +219,28 @@ async def seed():
 
             await db.flush()
 
-            # Menyu kategoriyalari
+            # Menyu kategoriyalari.
+            # NAMUNA TAOMLAR QO'SHILMAYDI — menyuda faqat restoran egasi
+            # admin panelda o'zi kiritgan taomlar ko'rinadi.
             categories_data = [
-                {"name": "Asosiy taomlar", "name_ru": "Основные блюда", "name_en": "Main Dishes", "icon": "🍖"},
-                {"name": "Salatlar", "name_ru": "Салаты", "name_en": "Salads", "icon": "🥗"},
-                {"name": "Ichimliklar", "name_ru": "Напитки", "name_en": "Drinks", "icon": "🥤"},
-                {"name": "Shirinliklar", "name_ru": "Десерты", "name_en": "Desserts", "icon": "🍰"},
+                {"name": "Kaboblar", "name_ru": "Шашлыки", "name_en": "Kebabs",
+                 "name_cyrillic": "Кабоблар", "icon": "🍢"},
+                {"name": "Salatlar", "name_ru": "Салаты", "name_en": "Salads",
+                 "name_cyrillic": "Салатлар", "icon": "🥗"},
+                {"name": "Ichimliklar", "name_ru": "Напитки", "name_en": "Drinks",
+                 "name_cyrillic": "Ичимликлар", "icon": "🥤"},
+                {"name": "Choylar", "name_ru": "Чай", "name_en": "Tea",
+                 "name_cyrillic": "Чойлар", "icon": "🫖"},
             ]
 
             for i, cat_data in enumerate(categories_data):
-                cat = Category(
+                db.add(Category(
                     restaurant_id=restaurant.id,
                     sort_order=i,
                     **cat_data,
-                )
-                db.add(cat)
-                await db.flush()
+                ))
 
-                # Har kategoriyaga taomlar
-                items_by_category = {
-                    0: [  # Asosiy taomlar
-                        {
-                            "name": "Osh (Plov)",
-                            "description": "Maxsus qo'y go'shti, devzira guruch, sariq sabzi va noxatli an'anaviy to'y oshi.",
-                            "price": 35000,
-                            "prep_time_minutes": 20,
-                            "calories": 520,
-                            "image_url": "https://images.unsplash.com/photo-1563379091339-03b21ab4a4f8?auto=format&fit=crop&w=600&q=80"
-                        },
-                        {
-                            "name": "Shashlik",
-                            "description": "Ko'mirda pishirilgan shirali mol va qo'y go'shti, marinadlangan piyoz bilan.",
-                            "price": 45000,
-                            "prep_time_minutes": 25,
-                            "calories": 480,
-                            "image_url": "https://images.unsplash.com/photo-1555939594-58d7cb561ad1?auto=format&fit=crop&w=600&q=80"
-                        },
-                        {
-                            "name": "Lag'mon",
-                            "description": "Qo'lda cho'zilgan xamir, yangi sabzavotlar va xushbo'y mol go'shti qaylasi.",
-                            "price": 28000,
-                            "prep_time_minutes": 15,
-                            "calories": 650,
-                            "image_url": "https://images.unsplash.com/photo-1569718212165-3a8278d5f624?auto=format&fit=crop&w=600&q=80"
-                        },
-                        {
-                            "name": "Manti",
-                            "description": "Yupqa xamir ichida mayda to'g'ralgan shirali go'sht va piyoz, bug'da pishirilgan.",
-                            "price": 32000,
-                            "prep_time_minutes": 30,
-                            "calories": 420,
-                            "image_url": "https://images.unsplash.com/photo-1541696432-82c6da8ce7bf?auto=format&fit=crop&w=600&q=80"
-                        },
-                    ],
-                    1: [  # Salatlar
-                        {
-                            "name": "Toshkent Salat",
-                            "description": "Qaynatilgan mol go'shti tili, turp, qovurilgan piyoz va maxsus sous.",
-                            "price": 18000,
-                            "prep_time_minutes": 10,
-                            "calories": 180,
-                            "image_url": "https://images.unsplash.com/photo-1512621776951-a57141f2eefd?auto=format&fit=crop&w=600&q=80"
-                        },
-                        {
-                            "name": "Achiq-Chuchuk",
-                            "description": "Shirin pomidor, yupqa archilgan piyoz va achchiq qalampir.",
-                            "price": 15000,
-                            "prep_time_minutes": 8,
-                            "calories": 120,
-                            "image_url": "https://images.unsplash.com/photo-1540420773420-3366772f4999?auto=format&fit=crop&w=600&q=80"
-                        },
-                    ],
-                    2: [  # Ichimliklar
-                        {
-                            "name": "Kompot",
-                            "description": "Tabiiy mevalardan tayyorlangan muzdek xonaki kompot.",
-                            "price": 8000,
-                            "prep_time_minutes": 3,
-                            "calories": 85,
-                            "image_url": "https://images.unsplash.com/photo-1513558161293-cdaf765ed2fd?auto=format&fit=crop&w=600&q=80"
-                        },
-                        {
-                            "name": "Choy (Piola)",
-                            "description": "Xushbo'y ko'k yoki qora choy, limon bilan.",
-                            "price": 5000,
-                            "prep_time_minutes": 5,
-                            "calories": 10,
-                            "image_url": "https://images.unsplash.com/photo-1576092768241-dec231879fc3?auto=format&fit=crop&w=600&q=80"
-                        },
-                        {
-                            "name": "Meva Sharbati",
-                            "description": "Yangi siqilgan tabiiy apelsin va olma sharbati.",
-                            "price": 12000,
-                            "prep_time_minutes": 5,
-                            "calories": 120,
-                            "image_url": "https://images.unsplash.com/photo-1613478223719-2ab802602423?auto=format&fit=crop&w=600&q=80"
-                        },
-                    ],
-                    3: [  # Shirinliklar
-                        {
-                            "name": "Halva",
-                            "description": "Kunjut va yong'oqli sharqona shirinlik.",
-                            "price": 20000,
-                            "prep_time_minutes": 5,
-                            "calories": 350,
-                            "image_url": "https://images.unsplash.com/photo-1587314168485-3236d6710814?auto=format&fit=crop&w=600&q=80"
-                        },
-                        {
-                            "name": "Chak-Chak",
-                            "description": "Asal va yong'oq bilan qoplangan qarsildoq xamir.",
-                            "price": 18000,
-                            "prep_time_minutes": 5,
-                            "calories": 400,
-                            "image_url": "https://images.unsplash.com/photo-1579372786545-d24232daf58c?auto=format&fit=crop&w=600&q=80"
-                        },
-                    ],
-                }
-
-                for j, item_data in enumerate(items_by_category.get(i, [])):
-                    item = MenuItem(
-                        category_id=cat.id,
-                        sort_order=j,
-                        is_featured=(j == 0),
-                        **item_data,
-                    )
-                    db.add(item)
+            await db.flush()
 
             print("✅ Demo restoran yaratildi:")
             print("   Admin:     maqsad / 01020307m")

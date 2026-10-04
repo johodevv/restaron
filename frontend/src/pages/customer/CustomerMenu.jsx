@@ -34,9 +34,19 @@ export const CustomerMenu = ({
   const fetchMenu = async () => {
     try {
       const data = await api.get(`/menu/full/${restaurantId}`);
-      setCategories(data);
-      if (data.length > 0 && !selectedCatId) {
-        setSelectedCatId(data[0].id);
+      // Mijozga faqat admin yoqib qo'ygan taomlar ko'rsatiladi.
+      // O'chirilgan (is_available=false) taom umuman chiqmaydi.
+      // Taomi yo'q kategoriya ham ko'rsatilmaydi — mijoz bo'sh bo'limga
+      // bosib, "nega hech narsa yo'q" deb o'ylamasligi uchun.
+      const withItems = (Array.isArray(data) ? data : [])
+        .map((c) => ({
+          ...c,
+          items: (c.items || []).filter((it) => it.is_available !== false),
+        }))
+        .filter((c) => c.items.length > 0);
+      setCategories(withItems);
+      if (withItems.length > 0 && !selectedCatId) {
+        setSelectedCatId(withItems[0].id);
       }
     } catch (err) {
       console.error('Menu load error:', err);

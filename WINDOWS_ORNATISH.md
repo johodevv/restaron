@@ -289,6 +289,7 @@ Kompyuter o'chib yonsa, o'zi qayta ishga tushadi va sayt o'zi ochiladi.
 |---|---|
 | Serverni to'xtatish | `RESTARON_XIZMATNI_TOXTATISH.bat` (administrator) |
 | Doimiy internet manzili | `RESTARON_DOIMIY_MANZIL.bat` |
+| Namuna menyuni tozalash | `RESTARON_MENYUNI_TOZALASH.bat` (administrator) |
 | Qayta yoqish | `2_SERVERNI_ORNATISH.bat` (administrator) |
 | Jurnal (xatolarni ko'rish) | `server.log` |
 
@@ -343,6 +344,43 @@ nizo chiqmaydi.
 
 > Og'irlikni oshxonaga yuborgandan keyin ham o'zgartirish mumkin
 > (to'lov qilinmaguncha). Narx avtomatik qayta hisoblanadi.
+
+---
+
+## Menyu va kategoriyalar
+
+Mijoz ko'radigan menyuda **faqat siz admin panelda qo'shgan taomlar**
+chiqadi. Boshqa hech narsa ko'rinmaydi.
+
+Boshlang'ich kategoriyalar: **Kaboblar · Salatlar · Ichimliklar · Choylar**
+(bo'sh holda beriladi — o'zingiz to'ldirasiz).
+
+### Kategoriyalarni o'zgartirish
+
+Admin → **Menyu & Taomlar**:
+
+| Amal | Qayerda |
+|---|---|
+| Yangi kategoriya | **+ Yangi Kategoriya** tugmasi |
+| Nomini / belgisini o'zgartirish | kategoriya yonidagi ✏️ |
+| O'chirish | kategoriya yonidagi 🗑 |
+
+> Eski buyurtmalarda ishlatilgan taomni yoki shunday taomi bor
+> kategoriyani **o'chirib bo'lmaydi** — aks holda cheklar arxivi buziladi.
+> Tizim buni tushuntirib aytadi. Bunday taomni menyudan yo'qotish uchun
+> **"Stop-list"** tugmasini bosing: mijozga ko'rinmaydi, chek tarixi esa
+> saqlanib qoladi.
+
+### Namuna menyuni tozalash
+
+Demo taomlar (internetdan olingan suratlar bilan) qolgan bo'lsa:
+
+**`RESTARON_MENYUNI_TOZALASH.bat`** — o'ng tugma → *Run as administrator*.
+
+- Ishlatilmagan namuna taomlar **o'chiriladi**
+- Eski cheklarda ishlatilganlari **yashiriladi** (tarix buzilmaydi)
+- 4 ta bo'sh kategoriya qoladi
+- Stollar, QR kodlar, xodimlar, buyurtmalar va cheklar **saqlanadi**
 
 ---
 
