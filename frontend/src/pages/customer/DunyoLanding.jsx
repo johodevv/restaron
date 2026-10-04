@@ -202,11 +202,11 @@ export const DunyoLanding = ({ onOpenLogin }) => {
           <div className="flex flex-wrap items-center justify-center gap-6 text-xs text-theme-muted font-medium">
             <div className="flex items-center gap-1.5">
               <MapPin className="w-4 h-4 text-amber-400" />
-              <span>Toshkent shahri, Chilonzor tumani</span>
+              <span>Xorazm viloyati, Xiva tumani</span>
             </div>
             <div className="flex items-center gap-1.5">
               <Phone className="w-4 h-4 text-amber-400" />
-              <span>+998 71 200 00 00</span>
+              <span>+998 88 459 34 00</span>
             </div>
             <div className="flex items-center gap-1.5">
               <Clock className="w-4 h-4 text-amber-400" />

@@ -250,6 +250,7 @@ async def create_shift_report(
     set_res = await db.execute(select(RestaurantSettings).where(RestaurantSettings.restaurant_id == restaurant_id))
     settings = set_res.scalar_one_or_none()
     paper_width = settings.printer_paper_width if settings else 80
+    fsize = getattr(settings, "printer_font_size", None) or "normal"
 
     # Oxirgi yopilgan Z-Reportni topish (smena ochilgan vaqtini aniqlash uchun)
     last_z = await db.execute(
@@ -356,6 +357,7 @@ async def create_shift_report(
         total_waiter_earnings=total_waiter_earnings,
         waiter_breakdown=waiter_breakdown,
         paper_width=paper_width,
+        font_size=fsize,
     )
 
     shift_report = ShiftReport(

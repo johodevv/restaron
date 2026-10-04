@@ -109,9 +109,27 @@ ESC_CUT = b"\n\n\n\n\x1d\x56\x42\x00"  # qog'ozni kesish
 # sozlamalardan o'zgartirish mumkin.
 DEFAULT_CODEPAGE = 17
 
+# Chek shrifti o'lchami (keksa odamlar ham o'qiy olishi uchun).
+#   normal      — standart, 80mm da 48 belgi
+#   katta       — bo'yi 2 barobar, kengligi o'sha-o'sha (48 belgi saqlanadi,
+#                 chek chiroyli tekis chiqadi) — KO'PCHILIKKA SHU MA'QUL
+#   juda_katta  — bo'yi ham, eni ham 2 barobar (80mm da 24 belgi)
+# GS ! n : yuqori 4 bit = kenglik, quyi 4 bit = balandlik (0 = 1x)
+FONT_SIZES = {
+    "normal":     {"gs": 0x00, "w": 1},
+    "katta":      {"gs": 0x01, "w": 1},
+    "juda_katta": {"gs": 0x11, "w": 2},
+}
+DEFAULT_FONT_SIZE = "normal"
+
+
+def _font_spec(font_size: Optional[str]) -> dict:
+    return FONT_SIZES.get((font_size or "").strip().lower(), FONT_SIZES[DEFAULT_FONT_SIZE])
+
 
 def build_escpos_payload(raw_text: str, cut_paper: bool = True,
-                         codepage: int = DEFAULT_CODEPAGE) -> bytes:
+                         codepage: int = DEFAULT_CODEPAGE,
+                         font_size: str = DEFAULT_FONT_SIZE) -> bytes:
     """
     Matnni termal printer tushunadigan baytlarga aylantiradi.
 
@@ -136,14 +154,19 @@ def build_escpos_payload(raw_text: str, cut_paper: bool = True,
     # Shuning uchun avval shu rejimni o'chiramiz, keyin kod sahifasini
     # tanlaymiz.
     esc_codepage = b"\x1b\x74" + bytes([max(0, min(255, int(codepage)))])
+
+    # GS ! n — belgi o'lchami. Sozlamadan "katta" tanlansa harflar
+    # bo'yiga 2 barobar kattayadi, qator kengligi esa o'zgarmaydi.
+    gs_size = b"\x1d\x21" + bytes([_font_spec(font_size)["gs"]])
+
     payload = (ESC_INIT + FS_KANJI_OFF + FS_KANJI_OFF2
-               + esc_codepage + ESC_FONT_A + body)
+               + esc_codepage + ESC_FONT_A + gs_size + body)
     if cut_paper:
         payload += ESC_CUT
     return payload
 
 
-def receipt_columns(paper_width: int) -> int:
+def receipt_columns(paper_width: int, font_size: str = DEFAULT_FONT_SIZE) -> int:
     """
     Termal printer uchun bir qatordagi belgilar soni.
 
@@ -155,7 +178,10 @@ def receipt_columns(paper_width: int) -> int:
     Ilgari 80mm uchun 42 qo'yilgan edi: chek qog'ozning faqat ~87% ini
     egallab, tor va kichik bo'lib chiqardi.
     """
-    return 48 if paper_width >= 80 else 32
+    base = 48 if paper_width >= 80 else 32
+    # Harf eni 2 barobar bo'lsa, qatorga sig'adigan belgilar soni yarmiga
+    # tushadi — aks holda matn qog'ozdan chiqib, chek buzilib ketadi.
+    return max(16, base // _font_spec(font_size)["w"])
 
 
 def format_kitchen_ticket(
@@ -168,11 +194,12 @@ def format_kitchen_ticket(
     order_time: Optional[datetime] = None,
     paper_width: int = 80,
     station_title: Optional[str] = None,
+    font_size: str = DEFAULT_FONT_SIZE,
 ) -> str:
     """
     Oshxona / Bar begunogi (Runner ticket) — To'liq Kirill alifbosida
     """
-    col_width = receipt_columns(paper_width)
+    col_width = receipt_columns(paper_width, font_size)
     sep = "-" * col_width
     dt = order_time or datetime.now()
     dt_str = dt.strftime("%d.%m.%Y | %H:%M")
@@ -251,11 +278,12 @@ def format_pre_check(
     wifi_pass: Optional[str] = None,
     created_at: Optional[datetime] = None,
     paper_width: int = 80,
+    font_size: str = DEFAULT_FONT_SIZE,
 ) -> str:
     """
     Mijoz hisob cheki (Pre-check / Bill) — To'liq Kirill alifbosida
     """
-    col_width = receipt_columns(paper_width)
+    col_width = receipt_columns(paper_width, font_size)
     sep = "-" * col_width
     double_sep = "=" * col_width
     dt = created_at or datetime.now()
@@ -354,11 +382,12 @@ def format_shift_report(
     total_waiter_earnings: float,
     waiter_breakdown: Optional[List[Dict[str, Any]]] = None,
     paper_width: int = 80,
+    font_size: str = DEFAULT_FONT_SIZE,
 ) -> str:
     """
     X-Report (oraliq hisobot) yoki Z-Report (kassani yopish) — To'liq Kirill alifbosida
     """
-    col_width = receipt_columns(paper_width)
+    col_width = receipt_columns(paper_width, font_size)
     sep = "-" * col_width
     double_sep = "=" * col_width
 
@@ -444,7 +473,8 @@ def print_to_network_printer(
     port: int = 9100,
     raw_text: str = "",
     cut_paper: bool = True,
-    codepage: int = DEFAULT_CODEPAGE
+    codepage: int = DEFAULT_CODEPAGE,
+    font_size: str = DEFAULT_FONT_SIZE,
 ) -> Dict[str, Any]:
     """
     Wi-Fi yoki Ethernet (LAN kabel) orqali ulangan Xprinterga
@@ -462,7 +492,8 @@ def print_to_network_printer(
 
     try:
         # Matnni ESC/POS baytlariga aylantirish (kod sahifasi bilan)
-        payload = build_escpos_payload(raw_text, cut_paper=cut_paper, codepage=codepage)
+        payload = build_escpos_payload(raw_text, cut_paper=cut_paper,
+                                       codepage=codepage, font_size=font_size)
 
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         s.settimeout(3.5)
@@ -487,7 +518,8 @@ def print_to_windows_printer(
     raw_text: str,
     printer_name: Optional[str] = None,
     cut_paper: bool = True,
-    codepage: int = DEFAULT_CODEPAGE
+    codepage: int = DEFAULT_CODEPAGE,
+    font_size: str = DEFAULT_FONT_SIZE,
 ) -> Dict[str, Any]:
     """
     USB, Windows Spooler yoki Tarmoq (LAN/Wi-Fi IP) orqali chop etish
@@ -496,7 +528,8 @@ def print_to_windows_printer(
 
     # Agar kiritilgan qiymat IP manzil bo'lsa -> Tarmoq orqali yuborish!
     if is_ip_address(target):
-        return print_to_network_printer(target, raw_text=raw_text, cut_paper=cut_paper, codepage=codepage)
+        return print_to_network_printer(target, raw_text=raw_text, cut_paper=cut_paper,
+                                        codepage=codepage, font_size=font_size)
 
     if platform.system() != "Windows":
         return {"success": False, "error": "USB to'g'ridan-to'g'ri chop etish faqat Windows tizimida ishlaydi. Tarmoq printeri uchun IP manzil kiriting (masalan: 192.168.1.100)."}
@@ -526,7 +559,8 @@ def print_to_windows_printer(
             return {"success": False, "error": "Hech qanday printer topilmadi. Xprinter drayverini o'rnating."}
 
         # Matnni ESC/POS baytlariga aylantirish (kod sahifasi bilan)
-        payload = build_escpos_payload(raw_text, cut_paper=cut_paper, codepage=codepage)
+        payload = build_escpos_payload(raw_text, cut_paper=cut_paper,
+                                       codepage=codepage, font_size=font_size)
 
         hPrinter = win32print.OpenPrinter(target)
         try:

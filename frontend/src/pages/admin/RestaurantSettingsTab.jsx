@@ -92,6 +92,11 @@ export const RestaurantSettingsTab = ({ restaurantId }) => {
   const [serviceFeePercent, setServiceFeePercent] = useState(12);
   const [printerPaperWidth, setPrinterPaperWidth] = useState(80);
   const [printerCodepage, setPrinterCodepage] = useState(17);
+  // Chek shrifti o'lchami: keksa odamlar o'qiy olishi uchun
+  const [printerFontSize, setPrinterFontSize] = useState('normal');
+  // 4-Printer: BAR (choy, suv, ichimliklar)
+  const [printerBarName, setPrinterBarName] = useState('');
+  const [barTitle, setBarTitle] = useState('BAR (Ichimliklar)');
   const [testingCodepage, setTestingCodepage] = useState(false);
   const [archiveRetentionYears, setArchiveRetentionYears] = useState(3);
   const [receiptHeader, setReceiptHeader] = useState('RestAron Restaurant');
@@ -235,6 +240,7 @@ export const RestaurantSettingsTab = ({ restaurantId }) => {
         setServiceFeePercent(s.service_fee_percent ?? 12);
         setPrinterPaperWidth(s.printer_paper_width ?? 80);
         setPrinterCodepage(s.printer_codepage || 17);
+        setPrinterFontSize(s.printer_font_size || 'normal');
         setArchiveRetentionYears(s.archive_retention_years ?? 3);
         setReceiptHeader(s.receipt_header || 'RestAron Restaurant');
         setReceiptFooter(s.receipt_footer || 'Tashrif buyurganingiz uchun rahmat!');
@@ -256,6 +262,8 @@ export const RestaurantSettingsTab = ({ restaurantId }) => {
         setPrinterKitchen2Name(s.printer_kitchen2_name || '192.168.1.202');
         setKitchen1Title(s.kitchen1_title || '1-Oshxona (Qozon taomlari)');
         setKitchen2Title(s.kitchen2_title || '2-Oshxona (Baliq / Somsa)');
+        setPrinterBarName(s.printer_bar_name || '');
+        setBarTitle(s.bar_title || 'BAR (Ichimliklar)');
         setAutoPrintKitchen(s.auto_print_kitchen ?? true);
         setAutoPrintCustomerBill(s.auto_print_customer_bill ?? true);
         setDirectQrAccess(s.direct_qr_access ?? true);
@@ -290,6 +298,7 @@ export const RestaurantSettingsTab = ({ restaurantId }) => {
         service_fee_percent: parseFloat(serviceFeePercent) || 12,
         printer_paper_width: parseInt(printerPaperWidth) || 80,
         printer_codepage: parseInt(printerCodepage) || 17,
+        printer_font_size: printerFontSize,
         archive_retention_years: parseInt(archiveRetentionYears) || 3,
         receipt_header: receiptHeader.trim() || undefined,
         receipt_footer: receiptFooter.trim() || undefined,
@@ -310,6 +319,8 @@ export const RestaurantSettingsTab = ({ restaurantId }) => {
         printer_kitchen2_name: printerKitchen2Name.trim() || undefined,
         kitchen1_title: kitchen1Title.trim() || undefined,
         kitchen2_title: kitchen2Title.trim() || undefined,
+        printer_bar_name: printerBarName.trim(),
+        bar_title: barTitle.trim() || undefined,
         auto_print_kitchen: autoPrintKitchen,
         auto_print_customer_bill: autoPrintCustomerBill,
         direct_qr_access: directQrAccess,
@@ -1154,6 +1165,106 @@ export const RestaurantSettingsTab = ({ restaurantId }) => {
                 <Printer className="w-3.5 h-3.5" />
                 <span>{testPrintLoading.p3 ? 'Chop etilmoqda...' : 'Test chop etish'}</span>
               </button>
+            </div>
+
+            {/* 4-Printer: BAR (choy, suv, ichimliklar) */}
+            <div className="p-4 rounded-2xl bg-black/40 border border-purple-500/30 flex flex-col justify-between space-y-3 shadow-lg">
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-300 text-[10px] font-black uppercase tracking-wider">
+                    4-Printer • BAR
+                  </span>
+                  <span className="text-base">🥤</span>
+                </div>
+                <div className="text-sm font-bold text-white">Bar / Ichimliklar Stansiyasi</div>
+                <p className="text-[11px] text-theme-muted leading-relaxed">
+                  Taom kartasida "🥤 Bar" stansiyasi tanlangan bo'lsa (suv, choy,
+                  ichimliklar) begunok shu printerdan chiqadi. Bo'sh qoldirilsa —
+                  kassa printeridan chiqadi. Oshxonaga hech qachon yuborilmaydi.
+                </p>
+
+                <div className="pt-2 space-y-2">
+                  <div>
+                    <label className="block text-[11px] font-semibold text-theme-muted mb-1">Bar nomi:</label>
+                    <input
+                      type="text"
+                      placeholder="BAR (Ichimliklar)"
+                      value={barTitle}
+                      onChange={(e) => setBarTitle(e.target.value)}
+                      className="w-full px-3 py-1.5 rounded-xl bg-slate-900 border border-theme-border text-xs text-white focus:outline-none focus:border-purple-400"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-semibold text-theme-muted mb-1">
+                      Printer nomi yoki IP (bo'sh = kassa printeri):
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="Masalan: XP-80 Bar yoki 192.168.1.203"
+                      value={printerBarName}
+                      onChange={(e) => setPrinterBarName(e.target.value)}
+                      className="w-full px-3 py-2 rounded-xl bg-slate-900 border border-purple-500/40 text-xs text-white font-mono focus:outline-none focus:border-purple-400"
+                    />
+                    {detectedPrinters.length > 0 && (
+                      <div className="mt-1 flex flex-wrap gap-1">
+                        {detectedPrinters.map(p => (
+                          <button
+                            key={p}
+                            type="button"
+                            onClick={() => setPrinterBarName(p)}
+                            className="text-[10px] px-1.5 py-0.5 rounded bg-purple-500/10 text-purple-300 hover:bg-purple-500/20 border border-purple-500/20"
+                          >
+                            {p}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                disabled={testPrintLoading.p4}
+                onClick={() => handleTestPrint('p4', printerBarName || printerCustomerName, barTitle || 'BAR')}
+                className="w-full py-2 rounded-xl bg-purple-500/20 hover:bg-purple-500/30 border border-purple-500/40 text-purple-300 text-xs font-bold transition-all flex items-center justify-center gap-1.5 active:scale-95"
+              >
+                <Printer className="w-3.5 h-3.5" />
+                <span>{testPrintLoading.p4 ? 'Chop etilmoqda...' : 'Test chop etish'}</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Chek shrifti o'lchami — keksa odamlar uchun */}
+          <div className="pt-3 border-t border-theme-border/50">
+            <label className="block text-xs font-bold text-white mb-1">
+              🔍 Chek shrifti o'lchami
+            </label>
+            <p className="text-[11px] text-theme-muted mb-2.5">
+              Chek juda kichik chiqsa va keksa mijozlar o'qiy olmasa, "Katta" ni
+              tanlang — harflar ikki barobar balandroq bo'ladi, chek kengligi esa
+              o'zgarmaydi.
+            </p>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+              {[
+                { id: 'normal', nom: 'Oddiy', izoh: 'Standart o\'lcham' },
+                { id: 'katta', nom: 'Katta ✓', izoh: 'Harflar 2x balandroq (tavsiya)' },
+                { id: 'juda_katta', nom: 'Juda katta', izoh: 'Harflar 2x katta, chek uzunroq' },
+              ].map((v) => (
+                <button
+                  key={v.id}
+                  type="button"
+                  onClick={() => setPrinterFontSize(v.id)}
+                  className={`py-2.5 px-3 rounded-xl border text-left transition-all ${
+                    printerFontSize === v.id
+                      ? 'bg-theme-primary text-white border-theme-primary shadow-md'
+                      : 'bg-slate-900 border-theme-border text-slate-300 hover:border-theme-primary/50'
+                  }`}
+                >
+                  <span className="block text-xs font-black">{v.nom}</span>
+                  <span className="block text-[10px] opacity-80 mt-0.5">{v.izoh}</span>
+                </button>
+              ))}
             </div>
           </div>
 

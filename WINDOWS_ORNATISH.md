@@ -140,6 +140,12 @@ Admin panel → **Sozlamalar** bo'limida har bir printer alohida ko'rsatiladi:
 | 1 — Kassa (mijoz cheki) | `X-Q80A` | **USB** kabel |
 | 2 — 1-Oshxona | `192.168.1.201` | **LAN** (RJ-45) |
 | 3 — 2-Oshxona | `192.168.1.202` | **LAN** (RJ-45) |
+| 4 — **BAR** (suv, choy, ichimlik) | `192.168.1.203` yoki bo'sh | **LAN** yoki USB |
+
+> **BAR printeri muhim:** taom kartasida **"🥤 Bar"** stansiyasi tanlangan
+> bo'lsa (suv, choy, ichimliklar), begunok shu printerdan chiqadi.
+> Bo'sh qoldirilsa — **kassa printeridan** chiqadi. Oshxonaga hech qachon
+> yuborilmaydi.
 
 - **Printer nomi** yozilsa → USB orqali chiqaradi
 - **IP manzil** yozilsa → tarmoq orqali (TCP 9100) chiqaradi
@@ -149,6 +155,19 @@ Admin panel → **Sozlamalar** bo'limida har bir printer alohida ko'rsatiladi:
 > aks holda ertaga IP o'zgarib, chek chiqmay qoladi.
 
 Qog'oz eni: **80mm** (Sozlamalar bo'limida o'zgartirish mumkin).
+
+### Chek juda kichik chiqsa (keksa odamlar o'qiy olmasa)
+
+Admin → **Sozlamalar** → **🔍 Chek shrifti o'lchami**:
+
+| Variant | Nima bo'ladi |
+|---|---|
+| Oddiy | standart o'lcham |
+| **Katta** ✓ | harflar **2 barobar balandroq**, chek kengligi o'zgarmaydi — **tavsiya etiladi** |
+| Juda katta | harflar bo'yiga ham, eniga ham 2 barobar; qatorga 24 belgi sig'adi, chek uzunroq chiqadi |
+
+"Katta" ko'pchilikka yetarli: o'qish osonlashadi, lekin chek tartibi
+buzilmaydi va qog'oz ortiqcha sarflanmaydi.
 
 ---
 

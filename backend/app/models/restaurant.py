@@ -84,6 +84,9 @@ class RestaurantSettings(Base):
     # ieroglif bo'lib chiqsa, shu raqamni o'zgartirib ko'riladi.
     printer_codepage = Column(Integer, default=17)
     printer_paper_width = Column(Integer, default=80)  # 58 yoki 80 mm
+    # Chek shrifti o'lchami: "normal" | "katta" | "juda_katta"
+    # Keksa odamlar o'qiy olishi uchun "katta" tavsiya etiladi.
+    printer_font_size = Column(String(20), default="normal", nullable=True)
 
     # Cheklar arxivini saqlash muddati (yillarda, default: 3 yil)
     archive_retention_years = Column(Integer, default=3)
@@ -107,6 +110,10 @@ class RestaurantSettings(Base):
     printer_kitchen2_name = Column(String(100), default="X-Q80A", nullable=True)       # 3-Printer: 2-Oshxona (USB nomi yoki LAN IP)
     kitchen1_title = Column(String(100), default="1-Oshxona (Qozon taomlari)", nullable=True)
     kitchen2_title = Column(String(100), default="2-Oshxona (Baliq / Somsa)", nullable=True)
+    # 4-Printer: BAR (choy, suv, ichimliklar). Bo'sh qoldirilsa bar
+    # cheklari kassa printeridan chiqadi — oshxonaga YUBORILMAYDI.
+    printer_bar_name = Column(String(100), default="", nullable=True)
+    bar_title = Column(String(100), default="BAR (Ichimliklar)", nullable=True)
     auto_print_kitchen = Column(Boolean, default=True)            # Ofitsiant yuborganda avtomatik printerga chiqarish
     auto_print_customer_bill = Column(Boolean, default=True)      # Hisob yopilganda mijoz chekini avtomatik chiqarish
     direct_qr_access = Column(Boolean, default=True)              # QR kod skanerlanganda ruxsatsiz to'g'ridan-to'g'ri menyuga kirish

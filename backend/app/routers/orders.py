@@ -851,11 +851,16 @@ async def send_to_kitchen(
     settings = set_res.scalar_one_or_none()
     paper_width = settings.printer_paper_width if settings else 80
 
-    # 3-Printer Routing:
-    # 1-Oshxona (Qozon taomlari) -> hot_kitchen
-    # 2-Oshxona (Baliq, Somsa, va h.k.) -> cold_kitchen / fish / somsa
+    # Printer marshruti (stansiya -> printer):
+    #   hot_kitchen  -> 1-Oshxona (qozon taomlari)
+    #   cold_kitchen -> 2-Oshxona (baliq, somsa, mangal)
+    #   bar          -> BAR (choy, suv, ichimliklar)
+    # MUHIM: ilgari "bar" stansiyasi hech qayerda tekshirilmasdi va
+    # oxirgi `else` orqali 1-OSHXONAGA tushib ketardi — shuning uchun
+    # suv va ichimliklar oshxona printeridan chiqardi.
     k1_items = []
     k2_items = []
+    bar_items = []
 
     for it in target_items:
         st = getattr(it.menu_item, "kitchen_station", "hot_kitchen") if it.menu_item else "hot_kitchen"
@@ -881,6 +886,8 @@ async def send_to_kitchen(
         if st in ["customer_only", "customer", "kassa", "bill_only"]:
             # Faqat mijoz kassa hisob chekida chiqadi, oshxonaga kirmaydi
             continue
+        elif st in ["bar", "drink", "drinks", "ichimlik", "ichimliklar", "choyxona"]:
+            bar_items.append(item_dict)
         elif st in ["all_kitchens", "both", "all"]:
             k1_items.append(item_dict)
             k2_items.append(item_dict)
@@ -889,35 +896,56 @@ async def send_to_kitchen(
         else:
             k1_items.append(item_dict)
 
-    k1_title = getattr(settings, "kitchen1_title", "1-Oshxona (Qozon taomlari)") or "1-Oshxona (Qozon taomlari)"
-    k2_title = getattr(settings, "kitchen2_title", "2-Oshxona (Baliq / Somsa)") or "2-Oshxona (Baliq / Somsa)"
+    k1_title = getattr(settings, "kitchen1_title", None) or "1-Oshxona (Qozon taomlari)"
+    k2_title = getattr(settings, "kitchen2_title", None) or "2-Oshxona (Baliq / Somsa)"
+    bar_title = getattr(settings, "bar_title", None) or "BAR (Ichimliklar)"
     k1_printer = getattr(settings, "printer_kitchen1_name", None) or "X-Q80A"
     k2_printer = getattr(settings, "printer_kitchen2_name", None) or "X-Q80A"
+    # Bar printeri sozlanmagan bo'lsa — kassa printeriga chiqadi.
+    # Oshxonaga esa HECH QACHON yuborilmaydi.
+    bar_printer = (getattr(settings, "printer_bar_name", None) or "").strip() \
+        or (getattr(settings, "printer_customer_name", None) or "X-Q80A")
     auto_print = getattr(settings, "auto_print_kitchen", True)
     cp = getattr(settings, "printer_codepage", None) or 17
+    fsize = getattr(settings, "printer_font_size", None) or "normal"
 
     generated_tickets = []
     combined_texts = []
 
-    # 1-Oshxona (Qozon taomlari)
-    if k1_items:
-        k1_text = format_kitchen_ticket(
+    # Har bir stansiya uchun bir xil ish: begunok matni -> printer -> arxiv.
+    # Ilgari bu blok har stansiya uchun qayta-qayta yozilgan edi.
+    stations = [
+        ("hot_kitchen", k1_title, k1_printer, k1_items, "KITCHEN1"),
+        ("cold_kitchen", k2_title, k2_printer, k2_items, "KITCHEN2"),
+        ("bar", bar_title, bar_printer, bar_items, "BAR"),
+    ]
+
+    for station_key, station_title, station_printer, station_items, prefix in stations:
+        if not station_items:
+            continue
+
+        ticket_text = format_kitchen_ticket(
             hall_name=order.hall_name or room_name,
             room_name=room_name,
             table_number=table_num,
             waiter_name=waiter_display,
-            items=k1_items,
+            items=station_items,
             kitchen_note=order.kitchen_note,
             order_time=datetime.now(),
             paper_width=paper_width,
-            station_title=k1_title,
+            station_title=station_title,
+            font_size=fsize,
         )
-        combined_texts.append(k1_text)
+        combined_texts.append(ticket_text)
+
         print_status = False
         print_error = None
         if auto_print:
             try:
-                p_res = print_to_windows_printer(k1_text, printer_name=k1_printer, codepage=cp)
+                p_res = print_to_windows_printer(
+                    ticket_text, printer_name=station_printer,
+                    codepage=cp, font_size=fsize,
+                )
                 print_status = p_res.get("success", False)
                 if not print_status:
                     print_error = p_res.get("error") or p_res.get("message")
@@ -926,85 +954,30 @@ async def send_to_kitchen(
         else:
             print_error = "Avtomatik chop etish sozlamalarda o'chirilgan"
 
-        archive1 = ReceiptArchive(
+        db.add(ReceiptArchive(
             restaurant_id=order.restaurant_id,
             order_id=order.id,
-            receipt_number=f"KITCHEN1-{order.order_number}",
+            receipt_number=f"{prefix}-{order.order_number}",
             receipt_type="kitchen",
             hall_name=order.hall_name or room_name,
-            table_name=f"N# {table_num} ({k1_title})",
+            table_name=f"N# {table_num} ({station_title})",
             waiter_name=waiter_display,
             subtotal=order.subtotal or 0.0,
             service_fee_percent=0.0,
             service_fee_amount=0.0,
             total_amount=order.subtotal or 0.0,
             payment_method="kitchen",
-            items_json=k1_items,
+            items_json=station_items,
             notes=order.kitchen_note,
-            raw_text=k1_text,
-        )
-        db.add(archive1)
-        generated_tickets.append({
-            "station": "hot_kitchen",
-            "station_title": k1_title,
-            "printer_name": k1_printer,
-            "items": k1_items,
-            "raw_text": k1_text,
-            "printed": print_status,
-            "print_error": print_error,
-        })
+            raw_text=ticket_text,
+        ))
 
-    # 2-Oshxona (Baliq / Somsa)
-    if k2_items:
-        k2_text = format_kitchen_ticket(
-            hall_name=order.hall_name or room_name,
-            room_name=room_name,
-            table_number=table_num,
-            waiter_name=waiter_display,
-            items=k2_items,
-            kitchen_note=order.kitchen_note,
-            order_time=datetime.now(),
-            paper_width=paper_width,
-            station_title=k2_title,
-        )
-        combined_texts.append(k2_text)
-        print_status = False
-        print_error = None
-        if auto_print:
-            try:
-                p_res = print_to_windows_printer(k2_text, printer_name=k2_printer, codepage=cp)
-                print_status = p_res.get("success", False)
-                if not print_status:
-                    print_error = p_res.get("error") or p_res.get("message")
-            except Exception as e:
-                print_error = str(e)
-        else:
-            print_error = "Avtomatik chop etish sozlamalarda o'chirilgan"
-
-        archive2 = ReceiptArchive(
-            restaurant_id=order.restaurant_id,
-            order_id=order.id,
-            receipt_number=f"KITCHEN2-{order.order_number}",
-            receipt_type="kitchen",
-            hall_name=order.hall_name or room_name,
-            table_name=f"N# {table_num} ({k2_title})",
-            waiter_name=waiter_display,
-            subtotal=order.subtotal or 0.0,
-            service_fee_percent=0.0,
-            service_fee_amount=0.0,
-            total_amount=order.subtotal or 0.0,
-            payment_method="kitchen",
-            items_json=k2_items,
-            notes=order.kitchen_note,
-            raw_text=k2_text,
-        )
-        db.add(archive2)
         generated_tickets.append({
-            "station": "cold_kitchen",
-            "station_title": k2_title,
-            "printer_name": k2_printer,
-            "items": k2_items,
-            "raw_text": k2_text,
+            "station": station_key,
+            "station_title": station_title,
+            "printer_name": station_printer,
+            "items": station_items,
+            "raw_text": ticket_text,
             "printed": print_status,
             "print_error": print_error,
         })
@@ -1183,6 +1156,7 @@ async def checkout_order(
         order.table.is_unlocked = False
 
     paper_width = settings.printer_paper_width if settings else 80
+    fsize = getattr(settings, "printer_font_size", None) or "normal"
     table_disp = f"{order.hall_name or (order.table.room if order.table else '')} N#{order.table.number if order.table else ''}".strip()
     waiter_disp = (order.waiter.full_name or order.waiter.username) if order.waiter else current_user.full_name
 
@@ -1202,8 +1176,12 @@ async def checkout_order(
 
     bill_text = format_pre_check(
         restaurant_name=settings.receipt_header if (settings and settings.receipt_header) else rest_name,
-        address=settings.receipt_address if settings else None,
-        phone=settings.receipt_phone if settings else None,
+        # Chek sozlamasida bo'sh bo'lsa — restoran ma'lumotidan olamiz,
+        # shunda telefon/manzil chekda ikki joyda sozlanmasdan ham chiqadi.
+        address=(getattr(settings, "receipt_address", None) if settings else None)
+                or (restaurant.address if restaurant else None),
+        phone=(getattr(settings, "receipt_phone", None) if settings else None)
+              or (restaurant.phone if restaurant else None),
         table_name=table_disp,
         waiter_name=waiter_disp,
         order_number=order.order_number,
@@ -1217,6 +1195,7 @@ async def checkout_order(
         footer_text=settings.receipt_footer if settings else "Tashrifingiz uchun rahmat!",
         created_at=order.created_at,
         paper_width=paper_width,
+        font_size=fsize,
     )
 
     archive = ReceiptArchive(
@@ -1248,7 +1227,8 @@ async def checkout_order(
         cust_printer = getattr(settings, "printer_customer_name", None) or "X-Q80A"
         cp = getattr(settings, "printer_codepage", None) or 17
         try:
-            print_to_windows_printer(bill_text, printer_name=cust_printer, codepage=cp)
+            print_to_windows_printer(bill_text, printer_name=cust_printer,
+                                     codepage=cp, font_size=fsize)
         except Exception:
             pass
 

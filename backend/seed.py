@@ -172,8 +172,8 @@ async def seed():
                 name=RESTAURANT_NAME,
                 slug="demo-restoran",
                 description="RestAron tizimini sinab ko'rish uchun namuna restoran",
-                address="Toshkent, Chilonzor tumani",
-                phone="+998 90 123 45 67",
+                address="Xorazm viloyati, Xiva tumani",
+                phone="+998 88 459 34 00",
                 commission_percent=5.0,
             )
             db.add(restaurant)

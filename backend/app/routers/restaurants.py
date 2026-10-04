@@ -53,6 +53,7 @@ class SettingsUpdate(BaseModel):
     receipt_wifi_pass: Optional[str] = None
     printer_paper_width: Optional[int] = None
     printer_codepage: Optional[int] = None
+    printer_font_size: Optional[str] = None
     archive_retention_years: Optional[int] = None
     allow_debt_payment: Optional[bool] = None
     enable_telegram_notifications: Optional[bool] = None
@@ -66,6 +67,8 @@ class SettingsUpdate(BaseModel):
     printer_kitchen2_name: Optional[str] = None
     kitchen1_title: Optional[str] = None
     kitchen2_title: Optional[str] = None
+    printer_bar_name: Optional[str] = None
+    bar_title: Optional[str] = None
     auto_print_kitchen: Optional[bool] = None
     auto_print_customer_bill: Optional[bool] = None
     direct_qr_access: Optional[bool] = None

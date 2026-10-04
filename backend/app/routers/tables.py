@@ -758,6 +758,7 @@ async def print_table_bill(
     cust_printer = getattr(settings, "printer_customer_name", None) or "X-Q80A"
     cp = getattr(settings, "printer_codepage", None) or 17
     paper_width = getattr(settings, "printer_paper_width", 80) or 80
+    fsize = getattr(settings, "printer_font_size", None) or "normal"
 
     # Buyurtmalarni olish
     orders_res = await db.execute(
@@ -840,8 +841,11 @@ async def print_table_bill(
 
     bill_text = format_pre_check(
         restaurant_name=rest_name,
-        address=settings.receipt_address if settings else None,
-        phone=settings.receipt_phone if settings else None,
+        # Chek sozlamasida bo'sh bo'lsa — restoran ma'lumotidan olamiz.
+        address=(getattr(settings, "receipt_address", None) if settings else None)
+                or (table.restaurant.address if table.restaurant else None),
+        phone=(getattr(settings, "receipt_phone", None) if settings else None)
+              or (table.restaurant.phone if table.restaurant else None),
         table_name=table_disp,
         waiter_name=waiter_disp,
         order_number=", ".join(order_nums),
@@ -855,10 +859,12 @@ async def print_table_bill(
         footer_text=settings.receipt_footer if settings else "Ташрифингиз учун раҳмат! Яна келинг!",
         wifi_pass=settings.receipt_wifi_pass if settings else None,
         paper_width=paper_width,
+        font_size=fsize,
     )
 
     # 1-Printer (USB yoki LAN IP) ga chop etish
-    p_res = print_to_windows_printer(bill_text, printer_name=cust_printer, codepage=cp)
+    p_res = print_to_windows_printer(bill_text, printer_name=cust_printer,
+                                     codepage=cp, font_size=fsize)
 
     archive = ReceiptArchive(
         restaurant_id=table.restaurant_id,
