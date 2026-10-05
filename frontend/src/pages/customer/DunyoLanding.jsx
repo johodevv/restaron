@@ -27,6 +27,9 @@ export const DunyoLanding = ({ onOpenLogin }) => {
         const categories = await api.get('/menu/full/1');
         if (Array.isArray(categories)) {
           const groups = categories
+            // Admin panelda "Bosh sahifa" tugmasi o'chirilgan
+            // kategoriyalar bu yerda ko'rsatilmaydi.
+            .filter((c) => c.show_on_landing !== false)
             .map((c) => ({
               ...c,
               items: (c.items || []).filter(

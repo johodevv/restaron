@@ -17,6 +17,8 @@ class CategoryBase(BaseModel):
     image_url: Optional[str] = None
     sort_order: int = 0
     is_active: bool = True
+    # Bosh sahifadagi menyuda ko'rsatiladimi
+    show_on_landing: bool = True
 
 
 class CategoryCreate(CategoryBase):
@@ -33,6 +35,7 @@ class CategoryUpdate(BaseModel):
     image_url: Optional[str] = None
     sort_order: Optional[int] = None
     is_active: Optional[bool] = None
+    show_on_landing: Optional[bool] = None
 
 
 class CategoryResponse(CategoryBase):

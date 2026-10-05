@@ -524,6 +524,18 @@ export const AdminDashboard = () => {
     }
   };
 
+  // Bosh sahifada (choyxona menyusida) shu kategoriya ko'rsatiladimi
+  const handleToggleLanding = async (cat) => {
+    try {
+      await api.patch(`/menu/categories/${cat.id}`, {
+        show_on_landing: !(cat.show_on_landing !== false),
+      });
+      loadAll();
+    } catch (err) {
+      alert(err.message || 'Xatolik');
+    }
+  };
+
   const handleDeleteCategory = async (catId, catName) => {
     if (!window.confirm(`"${catName}" kategoriyasini o'chirishni xohlaysizmi? Ichidagi barcha taomlar ham o'chiriladi!`)) return;
     try {
@@ -1113,6 +1125,23 @@ export const AdminDashboard = () => {
                       </button>
 
                       <button
+                        onClick={() => handleToggleLanding(cat)}
+                        title={
+                          cat.show_on_landing !== false
+                            ? "Bosh sahifada KO'RINADI — yashirish uchun bosing"
+                            : 'Bosh sahifada yashirilgan — ko\'rsatish uchun bosing'
+                        }
+                        className={`px-2.5 py-1.5 rounded-xl text-[11px] font-bold border transition-all flex items-center gap-1 ${
+                          cat.show_on_landing !== false
+                            ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-300 hover:bg-emerald-500/25'
+                            : 'bg-zinc-700/30 border-zinc-600/50 text-zinc-400 hover:bg-zinc-700/50'
+                        }`}
+                      >
+                        <span>{cat.show_on_landing !== false ? '👁' : '🚫'}</span>
+                        <span className="hidden sm:inline">Bosh sahifa</span>
+                      </button>
+
+                      <button
                         onClick={() => handleOpenEditCategory(cat)}
                         title="Kategoriyani tahrirlash"
                         className="p-2 rounded-xl bg-white/5 hover:bg-white/10 text-theme-muted hover:text-white border border-theme-border transition-colors"
@@ -1206,7 +1235,8 @@ export const AdminDashboard = () => {
                                     >
                                       <option value="hot_kitchen" className="bg-slate-900 text-white">🫕 1-Oshxona (Qozon)</option>
                                       <option value="cold_kitchen" className="bg-slate-900 text-white">🐟 2-Oshxona (Baliq/Somsa)</option>
-                                      <option value="customer_only" className="bg-slate-900 text-white">🧾 Faqat Kassa</option>
+                                      <option value="bar" className="bg-slate-900 text-white">🥤 Bar (Ichimliklar)</option>
+                                      <option value="customer_only" className="bg-slate-900 text-white">🧾 Kassa (USB printer)</option>
                                       <option value="all_kitchens" className="bg-slate-900 text-white">📢 Har 2 Oshxona</option>
                                     </select>
                                   </div>
@@ -2119,7 +2149,9 @@ export const AdminDashboard = () => {
                   >
                     <option value="hot_kitchen">🍲 1-Oshxona (Qozon taomlari - osh, sho'rva, qozon kabob...)</option>
                     <option value="cold_kitchen">🐟 2-Oshxona (Baliq, Somsa, mangal, shashlik...)</option>
-                    <option value="bar">🥤 Bar (Ichimliklar / Choyxona)</option>
+                    <option value="bar">🥤 Bar (Ichimliklar / Choyxona) [4-Printer]</option>
+                    <option value="customer_only">🧾 Kassa (Kassadagi USB printer — suv, non, desert)</option>
+                    <option value="all_kitchens">📢 Har ikkala oshxona</option>
                   </select>
                   <span className="text-[10px] text-theme-muted mt-1 block">
                     Ofitsiant buyurtmani oshxonaga yuborganida faqat o'z stansiyasidagi printerdan begunok chiqadi.
@@ -2214,7 +2246,8 @@ export const AdminDashboard = () => {
                   >
                     <option value="hot_kitchen">🫕 1-Oshxona (Qozon taomlari — Osh, Sho'rva, Lag'mon, Qozon kabob...) [2-Printer]</option>
                     <option value="cold_kitchen">🐟 2-Oshxona (Baliq, Somsa, Shashlik, Mangal, Salatlar...) [3-Printer]</option>
-                    <option value="customer_only">🧾 Faqat Kassa / Mijoz cheki (Oshxonaga kirmaydi — Ichimliklar, non, desert)</option>
+                    <option value="bar">🥤 Bar (Ichimliklar, choy) [4-Printer]</option>
+                    <option value="customer_only">🧾 Kassa (Kassadagi USB printer — suv, non, desert)</option>
                     <option value="all_kitchens">📢 Barcha oshxonalarga (1- va 2-oshxona ikkalasidan ham chiqarilsin)</option>
                   </select>
                   <p className="text-[10px] text-theme-muted">

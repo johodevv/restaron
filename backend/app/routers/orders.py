@@ -861,6 +861,7 @@ async def send_to_kitchen(
     k1_items = []
     k2_items = []
     bar_items = []
+    kassa_items = []
 
     for it in target_items:
         st = getattr(it.menu_item, "kitchen_station", "hot_kitchen") if it.menu_item else "hot_kitchen"
@@ -884,8 +885,10 @@ async def send_to_kitchen(
 
         # Stansiya bo'yicha saralash
         if st in ["customer_only", "customer", "kassa", "bill_only"]:
-            # Faqat mijoz kassa hisob chekida chiqadi, oshxonaga kirmaydi
-            continue
+            # KASSA: oshxonaga YUBORILMAYDI, lekin kassadagi (USB) printerdan
+            # begunok chiqadi — kassir suv/non berib yuborishi uchun.
+            # Ilgari bu yerda `continue` turardi: hech qanday chek chiqmasdi.
+            kassa_items.append(item_dict)
         elif st in ["bar", "drink", "drinks", "ichimlik", "ichimliklar", "choyxona"]:
             bar_items.append(item_dict)
         elif st in ["all_kitchens", "both", "all"]:
@@ -914,10 +917,12 @@ async def send_to_kitchen(
 
     # Har bir stansiya uchun bir xil ish: begunok matni -> printer -> arxiv.
     # Ilgari bu blok har stansiya uchun qayta-qayta yozilgan edi.
+    kassa_printer = getattr(settings, "printer_customer_name", None) or "X-Q80A"
     stations = [
         ("hot_kitchen", k1_title, k1_printer, k1_items, "KITCHEN1"),
         ("cold_kitchen", k2_title, k2_printer, k2_items, "KITCHEN2"),
         ("bar", bar_title, bar_printer, bar_items, "BAR"),
+        ("kassa", "KASSA (Mijozga berish)", kassa_printer, kassa_items, "KASSA"),
     ]
 
     for station_key, station_title, station_printer, station_items, prefix in stations:

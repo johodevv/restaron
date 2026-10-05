@@ -159,8 +159,12 @@ def build_escpos_payload(raw_text: str, cut_paper: bool = True,
     # bo'yiga 2 barobar kattayadi, qator kengligi esa o'zgarmaydi.
     gs_size = b"\x1d\x21" + bytes([_font_spec(font_size)["gs"]])
 
+    # ESC E 1 — qalin (bold) matn. Termal chek vaqt o'tishi bilan
+    # xiralashadi, qalin shrift esa keksa odamlarga ham oson o'qiladi.
+    esc_bold = b"\x1b\x45\x01"
+
     payload = (ESC_INIT + FS_KANJI_OFF + FS_KANJI_OFF2
-               + esc_codepage + ESC_FONT_A + gs_size + body)
+               + esc_codepage + ESC_FONT_A + gs_size + esc_bold + body)
     if cut_paper:
         payload += ESC_CUT
     return payload
@@ -182,6 +186,43 @@ def receipt_columns(paper_width: int, font_size: str = DEFAULT_FONT_SIZE) -> int
     # Harf eni 2 barobar bo'lsa, qatorga sig'adigan belgilar soni yarmiga
     # tushadi — aks holda matn qog'ozdan chiqib, chek buzilib ketadi.
     return max(16, base // _font_spec(font_size)["w"])
+
+
+def merge_receipt_items(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Bir xil qatorlarni birlashtiradi.
+
+    Mijoz ikki marta non buyurtma qilsa chekda "1 non" ikki qator bo'lib
+    emas, "2 non" bo'lib bitta qatorda chiqishi kerak.
+
+    Taom nomi, hajmi (1.5 L), og'irligi va dona narxi bir xil bo'lsa
+    qatorlar qo'shiladi. Tortiladigan taomlar (har baliq o'z og'irligida)
+    birlashtirilmaydi.
+    """
+    merged: List[Dict[str, Any]] = []
+    index: Dict[tuple, Dict[str, Any]] = {}
+
+    for it in items or []:
+        if it.get("is_weighted"):
+            merged.append(dict(it))
+            continue
+
+        key = (
+            it.get("name_cyrillic") or it.get("name") or "",
+            (it.get("size") or "").strip(),
+            (it.get("note") or "").strip(),
+            round(float(it.get("unit_price") or it.get("price") or 0.0), 2),
+        )
+        row = index.get(key)
+        if row is None:
+            row = dict(it)
+            index[key] = row
+            merged.append(row)
+        else:
+            row["quantity"] = (row.get("quantity") or 0) + (it.get("quantity") or 0)
+            if it.get("total_price") is not None:
+                row["total_price"] = (row.get("total_price") or 0.0) + it["total_price"]
+
+    return merged
 
 
 def format_kitchen_ticket(
@@ -225,7 +266,7 @@ def format_kitchen_ticket(
     lines.append(_pad_line("ТАОМ", "СОНИ", col_width))
     lines.append(sep)
 
-    for item in items:
+    for item in merge_receipt_items(items):
         raw_name = item.get("name_cyrillic") or item.get("name") or "Таом"
         name = latin_to_cyrillic(raw_name)
         # O'lchanadigan taom hajmi (1.5 L / 1.4 kg) nom bilan birga chiqadi —
@@ -308,7 +349,7 @@ def format_pre_check(
     lines.append(sep)
     lines.append("Таомлар:")
 
-    for idx, it in enumerate(items, 1):
+    for idx, it in enumerate(merge_receipt_items(items), 1):
         raw_name = it.get("name_cyrillic") or it.get("name") or "Таом"
         name = latin_to_cyrillic(raw_name)
         size = (it.get("size") or "").strip()

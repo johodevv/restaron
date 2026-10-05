@@ -82,6 +82,7 @@ def _sync_sqlite_migrations(sync_conn):
         ],
         "categories": [
             ("name_cyrillic", "VARCHAR(100)"),
+            ("show_on_landing", "BOOLEAN DEFAULT 1"),
         ],
         "orders": [
             ("order_type", "VARCHAR(50) DEFAULT 'table'"),

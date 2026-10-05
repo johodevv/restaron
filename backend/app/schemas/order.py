@@ -192,6 +192,11 @@ class BillItemSummary(BaseModel):
     portion_size: Optional[str] = None
     weight: Optional[float] = None
     unit: str = "dona"
+    is_weighted: bool = False
+    # Tortiladigan taomni admin panelda tuzatish uchun kerak
+    # (masalan 1.5 kg deb olingan baliq 1.7 kg chiqsa).
+    order_id: Optional[int] = None
+    order_item_id: Optional[int] = None
     quantity: int
     unit_price: float
     total_price: float

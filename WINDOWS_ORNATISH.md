@@ -142,10 +142,19 @@ Admin panel → **Sozlamalar** bo'limida har bir printer alohida ko'rsatiladi:
 | 3 — 2-Oshxona | `192.168.1.202` | **LAN** (RJ-45) |
 | 4 — **BAR** (suv, choy, ichimlik) | `192.168.1.203` yoki bo'sh | **LAN** yoki USB |
 
-> **BAR printeri muhim:** taom kartasida **"🥤 Bar"** stansiyasi tanlangan
-> bo'lsa (suv, choy, ichimliklar), begunok shu printerdan chiqadi.
-> Bo'sh qoldirilsa — **kassa printeridan** chiqadi. Oshxonaga hech qachon
-> yuborilmaydi.
+Har bir taom kartasida **stansiya** tanlanadi — begunok shu printerdan chiqadi:
+
+| Stansiya | Qayerdan chiqadi |
+|---|---|
+| 🫕 1-Oshxona | 2-printer (qozon taomlari) |
+| 🐟 2-Oshxona | 3-printer (baliq, somsa, mangal) |
+| 🥤 Bar | 4-printer; bo'sh bo'lsa **kassa printeri** |
+| 🧾 **Kassa** | **kassadagi USB printer** (suv, non, desert) |
+| 📢 Har 2 oshxona | 2- va 3-printer |
+
+> **"Kassa" stansiyasi:** suv, non kabi oshxona tayyorlamaydigan narsalar
+> uchun. Begunok kassadagi (USB) printerdan chiqadi, oshxonaga
+> yuborilmaydi — kassir mahsulotni berib yuboradi.
 
 - **Printer nomi** yozilsa → USB orqali chiqaradi
 - **IP manzil** yozilsa → tarmoq orqali (TCP 9100) chiqaradi
@@ -363,6 +372,29 @@ nizo chiqmaydi.
 
 > Og'irlikni oshxonaga yuborgandan keyin ham o'zgartirish mumkin
 > (to'lov qilinmaguncha). Narx avtomatik qayta hisoblanadi.
+
+---
+
+## Bosh sahifada qaysi kategoriyalar chiqishi
+
+Admin → **Menyu & Taomlar** → har bir kategoriya yonidagi **👁 Bosh sahifa**
+tugmasi:
+
+- **👁** — kategoriya bosh sahifada (choyxona menyusida) ko'rinadi
+- **🚫** — yashirilgan
+
+QR orqali ochilgan mijoz menyusida esa **barcha** kategoriyalar chiqaveradi.
+
+---
+
+## Chekdagi og'irlikni tuzatish
+
+Baliq 1.5 kg deb buyurtma olingan, tarozida 1.7 kg chiqdi:
+
+Admin → **Stollar & QR** → **Hisobni ko'rish** → baliq qatoridagi
+**⚖️ 1.5 kg ✎** tugmasini bosing → yangi og'irlikni yozing.
+
+Narx va chek avtomatik qayta hisoblanadi.
 
 ---
 

@@ -30,6 +30,10 @@ export const BillModal = ({
   const [printingThermal, setPrintingThermal] = useState(false);
   const [callLoading, setCallLoading] = useState(false);
   const [callSuccess, setCallSuccess] = useState(false);
+  // Tortilgan og'irlikni tuzatish (1.5 kg deb olingan baliq 1.7 kg chiqsa)
+  const [weightEdit, setWeightEdit] = useState(null);   // {order_id, order_item_id, name, unit}
+  const [weightValue, setWeightValue] = useState('');
+  const [savingWeight, setSavingWeight] = useState(false);
   const { addEventListener } = useWebSocket();
   // Hisob yopilayotganda kelgan WebSocket xabari eski chekni qaytarib
   // qo'ymasligi uchun qulf.
@@ -127,6 +131,30 @@ ${node.innerHTML}
     }
   };
 
+  // Kassir tortilgan og'irlikni tuzatadi — narx avtomatik qayta hisoblanadi
+  const handleSaveWeight = async () => {
+    if (!weightEdit) return;
+    const w = parseFloat(String(weightValue).replace(',', '.'));
+    if (!w || w <= 0) {
+      alert("Og'irlikni kiriting (masalan: 1.7)");
+      return;
+    }
+    setSavingWeight(true);
+    try {
+      await api.patch(
+        `/orders/${weightEdit.order_id}/items/${weightEdit.order_item_id}/weight`,
+        { weight: w }
+      );
+      setWeightEdit(null);
+      setWeightValue('');
+      await fetchBill();
+    } catch (err) {
+      alert(err.message || "Og'irlikni saqlashda xatolik");
+    } finally {
+      setSavingWeight(false);
+    }
+  };
+
   const handleCheckoutAndClear = async () => {
     if (!window.confirm(`Stol #${bill?.table_number || tableNumber} hisobini yopish va stolni bo'shatishni tasdiqlaysizmi?`)) {
       return;
@@ -165,7 +193,80 @@ ${node.innerHTML}
     }
   };
 
+  // Og'irlikni tuzatish oynasi
+  const weightModal = weightEdit && (
+    <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-black/85 backdrop-blur-sm">
+      <div className="bg-slate-900 border-2 border-cyan-600/60 rounded-3xl max-w-sm w-full p-5 shadow-2xl">
+        <div className="flex items-start justify-between mb-1">
+          <div>
+            <h3 className="text-base font-black text-white">⚖️ Og'irlikni tuzatish</h3>
+            <p className="text-xs font-bold text-cyan-300 mt-0.5">{weightEdit.name}</p>
+          </div>
+          <button onClick={() => setWeightEdit(null)} className="text-slate-400 hover:text-white p-1">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+        <p className="text-[11px] text-slate-400 mb-3">
+          Masalan 1.5 kg deb olingan baliq tarozida 1.7 kg chiqsa, aniq
+          og'irlikni shu yerga yozing — narx va chek avtomatik to'g'rilanadi.
+        </p>
+        <div className="p-3 rounded-2xl bg-cyan-500/10 border border-cyan-500/30 mb-3 flex justify-between text-xs font-semibold text-slate-300">
+          <span>1 {weightEdit.unit} narxi:</span>
+          <span className="font-mono font-black text-white">
+            {(weightEdit.unit_price || 0).toLocaleString()} so'm
+          </span>
+        </div>
+        <label className="block text-[10px] font-black text-slate-400 uppercase tracking-wider mb-1.5">
+          Aniq og'irlik ({weightEdit.unit}):
+        </label>
+        <input
+          type="number"
+          step="0.01"
+          min="0"
+          inputMode="decimal"
+          autoFocus
+          value={weightValue}
+          onChange={(e) => setWeightValue(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') handleSaveWeight(); }}
+          placeholder="masalan: 1.7"
+          className="w-full p-3.5 rounded-xl bg-slate-950 border-2 border-cyan-700 text-2xl text-white font-mono font-black text-center focus:outline-none focus:border-cyan-400 mb-3"
+        />
+        {(() => {
+          const w = parseFloat(String(weightValue).replace(',', '.')) || 0;
+          if (w <= 0) return null;
+          return (
+            <div className="p-3 rounded-2xl bg-emerald-500/15 border border-emerald-500/40 mb-4 text-center">
+              <p className="text-[11px] font-bold text-slate-300 font-mono">
+                {w} {weightEdit.unit} × {(weightEdit.unit_price || 0).toLocaleString()}
+              </p>
+              <p className="text-2xl font-black text-emerald-400 font-mono mt-0.5">
+                {Math.round(w * (weightEdit.unit_price || 0)).toLocaleString()} so'm
+              </p>
+            </div>
+          );
+        })()}
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setWeightEdit(null)}
+            className="px-3 py-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-bold text-slate-300"
+          >
+            Bekor
+          </button>
+          <button
+            onClick={handleSaveWeight}
+            disabled={savingWeight}
+            className="flex-1 py-3 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-black text-sm disabled:opacity-40 active:scale-95 transition-all"
+          >
+            {savingWeight ? 'Saqlanmoqda...' : 'Saqlash va narxni tuzatish'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+
   return (
+    <>
+    {weightModal}
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/80 backdrop-blur-md animate-fade-in overflow-y-auto">
       {/* Printable Receipt Box (Hidden on screen except modal, styled for print) */}
       <div className="relative w-full max-w-lg rounded-3xl glass-card border border-theme-border bg-theme-surface p-5 sm:p-7 shadow-2xl text-theme-text my-8 max-h-[90vh] flex flex-col justify-between">
@@ -272,17 +373,44 @@ ${node.innerHTML}
                               {item.portion_size}
                             </span>
                           )}
-                          {item.weight > 0 && (
-                            <span className="ml-1.5 px-1.5 py-0.5 rounded-md bg-cyan-500/20 text-cyan-300 text-[10px] font-bold">
-                              {item.weight} {item.unit || 'kg'}
-                            </span>
-                          )}
-                          {/* Tortilmagan taom — kassir 0 so'm ko'rib
-                              chalkashmasligi uchun sababi aytiladi. */}
-                          {!item.weight && item.unit && item.unit !== 'dona' && (
-                            <span className="ml-1.5 px-1.5 py-0.5 rounded-md bg-red-600 text-white text-[10px] font-bold">
-                              TORTILMAGAN
-                            </span>
+                          {/* Tortiladigan taom: og'irlikni shu yerda tuzatish
+                              mumkin (1.5 kg deb olingan baliq 1.7 kg chiqsa). */}
+                          {item.is_weighted && isStaff && item.order_item_id ? (
+                            <button
+                              onClick={() => {
+                                setWeightEdit({
+                                  order_id: item.order_id,
+                                  order_item_id: item.order_item_id,
+                                  name: item.name,
+                                  unit: item.unit || 'kg',
+                                  unit_price: item.unit_price || 0,
+                                });
+                                setWeightValue(item.weight ? String(item.weight) : '');
+                              }}
+                              title="Tortilgan og'irlikni tuzatish"
+                              className={`ml-1.5 px-1.5 py-0.5 rounded-md text-[10px] font-bold transition-all ${
+                                item.weight > 0
+                                  ? 'bg-cyan-500/20 text-cyan-300 hover:bg-cyan-500/35'
+                                  : 'bg-red-600 text-white hover:bg-red-500'
+                              }`}
+                            >
+                              {item.weight > 0
+                                ? `⚖️ ${item.weight} ${item.unit || 'kg'} ✎`
+                                : '⚖️ TORTILMAGAN'}
+                            </button>
+                          ) : (
+                            <>
+                              {item.weight > 0 && (
+                                <span className="ml-1.5 px-1.5 py-0.5 rounded-md bg-cyan-500/20 text-cyan-300 text-[10px] font-bold">
+                                  {item.weight} {item.unit || 'kg'}
+                                </span>
+                              )}
+                              {!item.weight && item.is_weighted && (
+                                <span className="ml-1.5 px-1.5 py-0.5 rounded-md bg-red-600 text-white text-[10px] font-bold">
+                                  TORTILMAGAN
+                                </span>
+                              )}
+                            </>
                           )}
                         </div>
                         <div className="text-[11px] text-theme-muted">
@@ -391,6 +519,7 @@ ${node.innerHTML}
         </div>
       </div>
     </div>
+    </>
   );
 };
 

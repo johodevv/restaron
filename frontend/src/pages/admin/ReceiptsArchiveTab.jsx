@@ -105,6 +105,57 @@ export const ReceiptsArchiveTab = ({ restaurantId }) => {
         </div>
       </div>
 
+      {/* Umumiy hisobot — ro'yxatdagi TO'LANGAN cheklar bo'yicha */}
+      {(() => {
+        // Oshxona begunoklari pul emas — ularni hisobga qo'shmaymiz.
+        const paid = receipts.filter(
+          (r) => r.receipt_type !== 'kitchen' && (r.total_amount || 0) > 0
+        );
+        const jami = paid.reduce((s, r) => s + (r.total_amount || 0), 0);
+        const byMethod = (m) =>
+          paid.filter((r) => r.payment_method === m).reduce((s, r) => s + (r.total_amount || 0), 0);
+        const naqd = byMethod('cash');
+        const karta = byMethod('card');
+        const click = byMethod('click');
+        const nasiya = byMethod('debt');
+
+        const Karta = ({ nom, qiymat, rang, soni }) => (
+          <div className={`p-3.5 rounded-2xl border bg-black/30 ${rang}`}>
+            <div className="text-[11px] font-bold text-theme-muted uppercase tracking-wider">
+              {nom}
+            </div>
+            <div className="text-lg font-black text-white font-mono mt-1">
+              {Math.round(qiymat).toLocaleString()} <span className="text-xs font-bold">so'm</span>
+            </div>
+            {soni !== undefined && (
+              <div className="text-[10px] text-theme-muted mt-0.5">{soni} ta chek</div>
+            )}
+          </div>
+        );
+
+        return (
+          <div className="p-4 rounded-2xl bg-theme-surface/70 border border-theme-border/70 space-y-3">
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <h3 className="text-sm font-black text-white">
+                📊 Umumiy hisobot — to'langan cheklar
+              </h3>
+              <span className="text-[11px] text-theme-muted">
+                Quyidagi ro'yxatdagi {paid.length} ta chek bo'yicha
+                {(receiptType || paymentMethod || search) ? ' (filtr qo\'llangan)' : ''}
+              </span>
+            </div>
+            <div className="grid grid-cols-2 lg:grid-cols-5 gap-2.5">
+              <Karta nom="Jami tushum" qiymat={jami} soni={paid.length}
+                     rang="border-emerald-500/40" />
+              <Karta nom="💵 Naqd" qiymat={naqd} rang="border-theme-border" />
+              <Karta nom="💳 Karta" qiymat={karta} rang="border-theme-border" />
+              <Karta nom="📲 Click" qiymat={click} rang="border-theme-border" />
+              <Karta nom="📝 Nasiya" qiymat={nasiya} rang="border-amber-500/40" />
+            </div>
+          </div>
+        );
+      })()}
+
       {/* Filter and Search Bar */}
       <div className="p-4 rounded-2xl bg-black/40 border border-theme-border/70 flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-wrap items-center gap-2">

@@ -544,10 +544,12 @@ async def get_table_bill(table_id: int, db: AsyncSession = Depends(get_db)):
             size = (item.portion_size or "").strip() or None
             wt = item.weight if (item.weight and item.weight > 0) else None
             unit = (getattr(item.menu_item, "unit", None) or "dona") if item.menu_item else "dona"
-            # Hajmi/og'irligi har xil bo'lgan taomlar (1 L va 1.5 L kola,
-            # 1.35 kg va 2.1 kg baliq) alohida qatorda turishi kerak —
-            # aks holda mijoz nima olganini bilmaydi.
-            key = (m_id, size, wt)
+            weighed = bool(getattr(item.menu_item, "is_weighted", False)) if item.menu_item else False
+            # Hajmi har xil bo'lgan taomlar (1 L va 1.5 L kola) alohida
+            # qatorda turadi. Tortiladigan taom esa HECH QACHON
+            # birlashtirilmaydi — har bir baliqning o'z og'irligi bor va
+            # kassir uni alohida tuzata olishi kerak.
+            key = ("w", item.id) if weighed else (m_id, size, wt)
             if key not in items_map:
                 items_map[key] = {
                     "menu_item_id": m_id,
@@ -555,6 +557,9 @@ async def get_table_bill(table_id: int, db: AsyncSession = Depends(get_db)):
                     "portion_size": size,
                     "weight": wt,
                     "unit": unit,
+                    "is_weighted": weighed,
+                    "order_id": o.id,
+                    "order_item_id": item.id,
                     "quantity": 0,
                     "unit_price": item.unit_price,
                     "total_price": 0.0,
