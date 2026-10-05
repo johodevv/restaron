@@ -17,8 +17,9 @@ class CategoryBase(BaseModel):
     image_url: Optional[str] = None
     sort_order: int = 0
     is_active: bool = True
-    # Bosh sahifadagi menyuda ko'rsatiladimi
-    show_on_landing: bool = True
+    # Bosh sahifadagi menyuda ko'rsatiladimi.
+    # Yangi kategoriya sukut bo'yicha yashirin — admin o'zi yoqadi.
+    show_on_landing: bool = False
 
 
 class CategoryCreate(CategoryBase):

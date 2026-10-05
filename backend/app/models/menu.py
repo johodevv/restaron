@@ -25,8 +25,11 @@ class Category(Base):
     sort_order = Column(Integer, default=0)
     is_active = Column(Boolean, default=True)
     # Bosh sahifadagi (choyxona) menyuda shu kategoriya ko'rsatiladimi.
-    # QR orqali ochilgan menyuda esa barcha kategoriyalar chiqaveradi.
-    show_on_landing = Column(Boolean, default=True, nullable=False)
+    # YANGI kategoriya sukut bo'yicha YASHIRIN bo'ladi — admin o'zi
+    # "Bosh sahifa" tugmasi bilan yoqadi. Shunday qilib "sigaret" kabi
+    # ichki kategoriyalar mijoz sahifasida o'zidan chiqib ketmaydi.
+    # QR orqali ochilgan mijoz menyusida barcha kategoriyalar chiqaveradi.
+    show_on_landing = Column(Boolean, default=False, nullable=False)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())

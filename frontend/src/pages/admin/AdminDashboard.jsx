@@ -125,6 +125,8 @@ export const AdminDashboard = () => {
   const [categoryNameRu, setCategoryNameRu] = useState('');
   const [categoryNameEn, setCategoryNameEn] = useState('');
   const [categoryNameCyrillic, setCategoryNameCyrillic] = useState('');
+  // Bosh sahifada ko'rsatilsinmi (yangi kategoriya uchun sukut: yo'q)
+  const [categoryShowOnLanding, setCategoryShowOnLanding] = useState(false);
 
   // Dish Modal States (Add & Edit)
   const [showDishModal, setShowDishModal] = useState(false);
@@ -478,6 +480,8 @@ export const AdminDashboard = () => {
     setCategoryNameRu('');
     setCategoryNameEn('');
     setCategoryNameCyrillic('');
+    // Yangi kategoriya bosh sahifada ko'rinmaydi — admin o'zi yoqadi
+    setCategoryShowOnLanding(false);
     setShowCategoryModal(true);
   };
 
@@ -488,6 +492,7 @@ export const AdminDashboard = () => {
     setCategoryNameRu(cat.name_ru || '');
     setCategoryNameEn(cat.name_en || '');
     setCategoryNameCyrillic(cat.name_cyrillic || '');
+    setCategoryShowOnLanding(cat.show_on_landing === true);
     setShowCategoryModal(true);
   };
 
@@ -504,6 +509,7 @@ export const AdminDashboard = () => {
           name_ru: categoryNameRu.trim() || undefined,
           name_en: categoryNameEn.trim() || undefined,
           name_cyrillic: categoryNameCyrillic.trim() || undefined,
+          show_on_landing: categoryShowOnLanding,
         });
       } else {
         // Create
@@ -514,6 +520,7 @@ export const AdminDashboard = () => {
           name_ru: categoryNameRu.trim() || undefined,
           name_en: categoryNameEn.trim() || undefined,
           name_cyrillic: categoryNameCyrillic.trim() || undefined,
+          show_on_landing: categoryShowOnLanding,
           sort_order: categories.length,
         });
       }
@@ -2042,6 +2049,29 @@ export const AdminDashboard = () => {
                   placeholder="masalan: Иссиқ таомлар"
                   className="w-full px-3.5 py-2.5 rounded-xl bg-black/30 border border-theme-border text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-theme-primary"
                 />
+              </div>
+
+              {/* Bosh sahifada ko'rsatish — sukut bo'yicha YO'Q */}
+              <div className="p-3 rounded-2xl bg-emerald-500/10 border border-emerald-500/30">
+                <label className="flex items-start gap-2.5 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={categoryShowOnLanding}
+                    onChange={(e) => setCategoryShowOnLanding(e.target.checked)}
+                    className="mt-0.5 w-4 h-4 accent-emerald-500 shrink-0"
+                  />
+                  <span>
+                    <span className="block text-xs font-bold text-emerald-300">
+                      👁 Bosh sahifada ko'rsatilsin
+                    </span>
+                    <span className="block text-[10px] text-theme-muted mt-0.5">
+                      Belgilanmasa, bu kategoriya saytning bosh sahifasidagi
+                      menyuda chiqmaydi. Ichki kategoriyalar (masalan sigaret)
+                      uchun belgilamang. QR orqali ochilgan mijoz menyusida
+                      esa barcha kategoriyalar ko'rinaveradi.
+                    </span>
+                  </span>
+                </label>
               </div>
 
               <div className="grid grid-cols-2 gap-3">

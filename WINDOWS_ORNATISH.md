@@ -377,13 +377,22 @@ nizo chiqmaydi.
 
 ## Bosh sahifada qaysi kategoriyalar chiqishi
 
-Admin → **Menyu & Taomlar** → har bir kategoriya yonidagi **👁 Bosh sahifa**
-tugmasi:
+**Yangi qo'shilgan kategoriya bosh sahifada CHIQMAYDI** — o'zingiz yoqishingiz
+kerak. Shunday qilib "Sigaret" kabi ichki kategoriyalar mijoz ko'radigan
+sahifada o'zidan paydo bo'lmaydi.
 
-- **👁** — kategoriya bosh sahifada (choyxona menyusida) ko'rinadi
+Yoqish/o'chirish: Admin → **Menyu & Taomlar** → kategoriya yonidagi
+**👁 Bosh sahifa** tugmasi:
+
+- **👁** — bosh sahifada ko'rinadi
 - **🚫** — yashirilgan
 
-QR orqali ochilgan mijoz menyusida esa **barcha** kategoriyalar chiqaveradi.
+Yangi kategoriya yaratayotganda ham oynadagi **"👁 Bosh sahifada
+ko'rsatilsin"** katagini belgilashingiz mumkin.
+
+> **QR menyu boshqacha:** stoldagi QR kodni skanerlagan mijoz **barcha**
+> kategoriyalarni ko'radi — sigaret ham, shunda ofitsiant uni buyurtmaga
+> qo'sha oladi. Yashirish faqat saytning bosh sahifasiga tegishli.
 
 ---
 
