@@ -305,6 +305,17 @@ buyurtmalar va cheklar arxivi joyida qoladi.
 > Yangilangach brauzerda **Ctrl + F5** bosing — eski versiya keshda
 > qolib ketmasligi uchun.
 
+### Yangilanish yetib keldimi — qanday tekshirish
+
+Admin → **Sozlamalar** bo'limining tepasida **🔖 Dastur versiyasi**
+ko'rsatiladi (masalan `26c7d62`).
+
+Yangilagandan keyin bu raqam **o'zgarishi kerak**. O'zgarmasa, server
+hali eski kod bilan ishlayapti — `RESTARON_YANGILASH.bat` ni qaytadan,
+**administrator nomidan** ishga tushiring.
+
+Skript oxirida ham shu raqam yoziladi: *"Ishlayotgan versiya: ..."*
+
 ---
 
 ## Kundalik ishlatish

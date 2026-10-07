@@ -2,6 +2,7 @@
 RestAron — Asosiy FastAPI ilovasi
 """
 import os
+from datetime import datetime
 import sys
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
@@ -96,9 +97,61 @@ app.include_router(receipts, prefix="/api/v1")
 # ─── Health Check ─────────────────────────────────────────
 # MUHIM: Bu endpoint SPA catch-all marshrutidan OLDIN ro'yxatdan o'tishi shart,
 # aks holda "/{full_path:path}" uni soyalab qo'yadi va /health 404 qaytaradi.
+def read_app_version() -> dict:
+    """Ishlab turgan kod versiyasi (git commit) ni aniqlash.
+
+    Git dasturi kerak emas — .git papkasidagi fayllar o'qiladi.
+    Shu ma'lumot admin panelda ko'rsatiladi, shunda "yangiladim, lekin
+    o'zgarmadi" degan holatda qaysi versiya ishlayotganini bilish mumkin.
+    """
+    root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+    git_dir = os.path.join(root, ".git")
+    info = {"commit": "nomalum", "date": None}
+    try:
+        head_path = os.path.join(git_dir, "HEAD")
+        if not os.path.exists(head_path):
+            return info
+        head = open(head_path, encoding="utf-8").read().strip()
+        stamp_path = head_path
+        if head.startswith("ref:"):
+            ref = head.split(" ", 1)[1].strip()
+            ref_path = os.path.join(git_dir, *ref.split("/"))
+            if os.path.exists(ref_path):
+                sha = open(ref_path, encoding="utf-8").read().strip()
+                stamp_path = ref_path
+            else:
+                # packed-refs ichidan qidiramiz
+                sha = ""
+                packed = os.path.join(git_dir, "packed-refs")
+                if os.path.exists(packed):
+                    for line in open(packed, encoding="utf-8"):
+                        if line.strip().endswith(" " + ref):
+                            sha = line.split(" ", 1)[0].strip()
+                            break
+        else:
+            sha = head
+        if sha:
+            info["commit"] = sha[:7]
+        # Oxirgi o'zgarish vaqti — HEAD faylining sanasi
+        info["date"] = datetime.fromtimestamp(
+            os.path.getmtime(stamp_path)
+        ).strftime("%Y-%m-%d %H:%M")
+    except Exception:
+        pass
+    return info
+
+
+APP_VERSION = read_app_version()
+
+
 @app.get("/health", tags=["🏥 Health Check"])
 async def health():
-    return {"status": "healthy", "app": settings.APP_NAME}
+    return {
+        "status": "healthy",
+        "app": settings.APP_NAME,
+        "version": APP_VERSION["commit"],
+        "updated_at": APP_VERSION["date"],
+    }
 
 
 # ─── Frontend Statik Fayllarini Taqdim Etish (Standalone Server Rejimi) ───

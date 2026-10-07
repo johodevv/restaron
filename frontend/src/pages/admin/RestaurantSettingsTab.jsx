@@ -94,6 +94,8 @@ export const RestaurantSettingsTab = ({ restaurantId }) => {
   const [printerCodepage, setPrinterCodepage] = useState(17);
   // Chek shrifti o'lchami: keksa odamlar o'qiy olishi uchun
   const [printerFontSize, setPrinterFontSize] = useState('normal');
+  // Ishlab turgan kod versiyasi (yangilanganini tekshirish uchun)
+  const [appVersion, setAppVersion] = useState(null);
   // 4-Printer: BAR (choy, suv, ichimliklar)
   const [printerBarName, setPrinterBarName] = useState('');
   const [barTitle, setBarTitle] = useState('BAR (Ichimliklar)');
@@ -280,6 +282,14 @@ export const RestaurantSettingsTab = ({ restaurantId }) => {
     fetchSettings();
   }, [restaurantId]);
 
+  // Serverdan versiyani olamiz. /health — API prefiksisiz manzil.
+  useEffect(() => {
+    fetch('/health')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => d && setAppVersion(d))
+      .catch(() => {});
+  }, []);
+
   const handleSave = async (e) => {
     e.preventDefault();
     setSaving(true);
@@ -379,6 +389,32 @@ export const RestaurantSettingsTab = ({ restaurantId }) => {
           </button>
         </div>
       </div>
+
+      {/* Dastur versiyasi — yangilanish yetib kelganini tekshirish uchun */}
+      {appVersion && (
+        <div className="p-3.5 rounded-2xl bg-black/30 border border-theme-border/70 flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-2.5">
+            <span className="text-base">🔖</span>
+            <div>
+              <div className="text-xs font-bold text-white">Dastur versiyasi</div>
+              <div className="text-[11px] text-theme-muted">
+                Yangilagandan keyin bu raqam o'zgarishi kerak. O'zgarmasa —
+                yangilanish server'ga yetib bormagan.
+              </div>
+            </div>
+          </div>
+          <div className="text-right">
+            <div className="font-mono font-black text-theme-primary text-sm">
+              {appVersion.version || 'nomalum'}
+            </div>
+            {appVersion.updated_at && (
+              <div className="text-[10px] text-theme-muted font-mono">
+                {appVersion.updated_at}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* ─── Section 1: Restoran Ma'lumotlari ─────────────────────────── */}
       <SettingsSection title="Restoran Ma'lumotlari" icon={Globe}>

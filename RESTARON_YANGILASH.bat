@@ -94,8 +94,25 @@ if not exist "frontend\dist\index.html" (
 echo        Tayyor.
 
 echo  [4/4] Server qayta ishga tushirilmoqda...
+
+REM  MUHIM: schtasks /End faqat boshqaruvchi jarayonni to'xtatadi.
+REM  Uning bolasi (uvicorn) tirik qolib, 8000-portni ESKI kod bilan
+REM  ushlab turadi. Yangi server portni band deb ko'rib ishga tushmaydi
+REM  va sayt eski holida qolaveradi. Shuning uchun portni bo'shatamiz.
 schtasks /End /TN "RestAron Server" >nul 2>&1
+taskkill /F /IM cloudflared.exe /T >nul 2>&1
+timeout /t 2 /nobreak >nul
+
+REM  8000-portni band qilib turgan jarayonni topib yopamiz.
+netstat -ano -p TCP > "%TEMP%\restaron_ports.txt" 2>nul
+if exist "%TEMP%\restaron_ports.txt" (
+    for /f "tokens=5" %%p in ('findstr /r /c:":8000 .*LISTENING" "%TEMP%\restaron_ports.txt"') do (
+        taskkill /F /PID %%p >nul 2>&1
+    )
+    del "%TEMP%\restaron_ports.txt" >nul 2>&1
+)
 timeout /t 3 /nobreak >nul
+
 schtasks /Run /TN "RestAron Server" >nul 2>&1
 if errorlevel 1 (
     echo        Eslatma: xizmat topilmadi.
@@ -113,6 +130,12 @@ if errorlevel 1 (
     echo        Server ishlamoqda.
     start "" "http://localhost:8000"
 )
+
+REM  Ishlab turgan versiyani ko'rsatamiz - yangilanish yetib kelganini
+REM  shu raqamdan bilib olasiz.
+set "VER="
+for /f "delims=" %%v in ('powershell -NoProfile -Command "try{((Invoke-WebRequest -Uri http://localhost:8000/health -UseBasicParsing -TimeoutSec 5).Content ^| ConvertFrom-Json).version}catch{''}"') do set "VER=%%v"
+if not "!VER!"=="" echo        Ishlayotgan versiya: !VER!
 
 echo.
 echo  ================================================================
