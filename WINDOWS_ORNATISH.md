@@ -318,6 +318,7 @@ Kompyuter o'chib yonsa, o'zi qayta ishga tushadi va sayt o'zi ochiladi.
 | Doimiy internet manzili | `RESTARON_DOIMIY_MANZIL.bat` |
 | Namuna menyuni tozalash | `RESTARON_MENYUNI_TOZALASH.bat` (administrator) |
 | Yangi versiyaga yangilash | `RESTARON_YANGILASH.bat` (administrator) |
+| Boshqa kompyuterga ko'chirish | `RESTARON_NUSXA_OLISH.bat` |
 | Qayta yoqish | `2_SERVERNI_ORNATISH.bat` (administrator) |
 | Jurnal (xatolarni ko'rish) | `server.log` |
 
@@ -484,6 +485,49 @@ tushiradi — qo'lda hech narsa qilish shart emas.
 Xato bilan tozalab qo'ysangiz: `backend\zaxira\` ichidagi kerakli faylni
 `backend\restaron.db` nomi bilan qaytarib qo'ying (avval serverni
 `RESTARON_XIZMATNI_TOXTATISH.bat` bilan to'xtatib oling).
+
+---
+
+## Boshqa kompyuterga ko'chirish
+
+Papkani shunchaki ZIP qilib yuborish **ishlamaydi**: `backend\.venv`
+ichida eski kompyuterning yo'llari yozilgan (`C:\Users\<nom>\...`),
+yangi kompyuterda ular topilmaydi va server ishga tushmaydi.
+
+Shuning uchun **`RESTARON_NUSXA_OLISH.bat`** ni ishlating — ikki marta
+bosing (administrator kerak emas). U ish stolida toza ZIP yaratadi
+(~40 MB).
+
+| ZIP ichiga KIRADI | KIRMAYDI (yangi kompyuterda qayta yaratiladi) |
+|---|---|
+| butun dastur kodi | `backend\.venv` (eski yo'llar) |
+| menyu, stollar, xodimlar | `frontend\node_modules` |
+| buyurtmalar, cheklar arxivi | `frontend\dist` |
+| taom suratlari, QR rasmlari | jurnal fayllari |
+| sozlamalar (printerlar, shrift) | vaqtinchalik internet manzili |
+
+Baza nusxasi SQLite ning o'z vositasi bilan olinadi — server ishlab
+turganda ham butun nusxa chiqadi.
+
+### Yangi kompyuterda
+
+1. ZIP ni **o'ng tugma → Properties → "Unblock" → OK** *(shundan keyin oching!)*
+2. `C:\RestAron` ga chiqaring
+3. Python 3.11 va Node.js LTS o'rnating
+4. **`1_BIRINCHI_ORNATISH.bat`** — ikki marta bosing
+5. **`2_SERVERNI_ORNATISH.bat`** — administrator nomidan
+
+Menyu, stollar, xodimlar, cheklar arxivi — hammasi avvalgidek bo'ladi.
+Admin login ham o'zgarmaydi.
+
+> **QR kodlar haqida.** Stollarning QR kodlari ichidagi manzil eski
+> kompyuternikiga ishora qiladi. Yangi kompyuterda: Admin →
+> **Stollar & QR** → "Manzilni o'zgartirish" → yangi IP ni qo'ying →
+> QR kodlarni **qayta chop eting**.
+
+> **Ikkala kompyuterda birga ishlatmang.** Bu ko'chirish, sinxronlash
+> emas — har bir kompyuterda alohida baza bo'ladi va ular bir-biridan
+> ajralib ketadi.
 
 ---
 
