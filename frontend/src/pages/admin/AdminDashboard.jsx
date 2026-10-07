@@ -1145,7 +1145,11 @@ export const AdminDashboard = () => {
                         }`}
                       >
                         <span>{cat.show_on_landing !== false ? '👁' : '🚫'}</span>
-                        <span className="hidden sm:inline">Bosh sahifa</span>
+                        <span className="hidden sm:inline">
+                          {cat.show_on_landing !== false
+                            ? 'Bosh menyuda'
+                            : "Bosh menyuda yo'q"}
+                        </span>
                       </button>
 
                       <button
