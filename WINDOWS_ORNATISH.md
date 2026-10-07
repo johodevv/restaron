@@ -426,6 +426,11 @@ Admin → **Menyu & Taomlar**:
 | Nomini / belgisini o'zgartirish | kategoriya yonidagi ✏️ |
 | O'chirish | kategoriya yonidagi 🗑 |
 
+> **Stol raqamlari har zonada alohida.** "Ko'cha 8" bo'lsa ham "Zal 8"
+> qo'shsa bo'ladi — ikkalasi alohida stol. Faqat bitta zonada bir xil
+> raqam ikki marta bo'lmaydi. Chek va oshxona begunogida zona nomi
+> yoziladi, shuning uchun ular aralashib ketmaydi.
+
 > Eski buyurtmalarda ishlatilgan taomni yoki shunday taomi bor
 > kategoriyani **o'chirib bo'lmaydi** — aks holda cheklar arxivi buziladi.
 > Tizim buni tushuntirib aytadi. Bunday taomni menyudan yo'qotish uchun

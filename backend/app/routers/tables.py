@@ -75,6 +75,40 @@ def generate_qr_image(url: str, token: str) -> str:
     return f"/uploads/qr_codes/{file_name}"
 
 
+def norm_zone(room: Optional[str]) -> Optional[str]:
+    """Zona nomini solishtirish uchun tozalash (bo'sh -> None)"""
+    v = (room or "").strip()
+    return v or None
+
+
+async def ensure_table_number_free(
+    db: AsyncSession, restaurant_id: int, number: int,
+    room: Optional[str], exclude_id: Optional[int] = None,
+) -> None:
+    """Stol raqami SHU ZONADA bandmi — tekshiradi.
+
+    Raqam butun restoran bo'yicha emas, HAR ZONADA alohida yagona
+    bo'lishi kerak: "Ko'cha 8" bo'lsa ham "Zal 8" qo'shsa bo'ladi.
+    """
+    zone = norm_zone(room)
+    q = select(Table).where(
+        Table.restaurant_id == restaurant_id,
+        Table.number == number,
+    )
+    if exclude_id is not None:
+        q = q.where(Table.id != exclude_id)
+    res = await db.execute(q)
+
+    for t in res.scalars().all():
+        if norm_zone(t.room) == zone:
+            joy = f'"{zone}" zonasida' if zone else "zonasiz stollar orasida"
+            raise HTTPException(
+                status_code=409,
+                detail=f"#{number} raqamli stol {joy} allaqachon mavjud. "
+                       f"Boshqa raqam tanlang yoki stolni boshqa zonaga qo'shing.",
+            )
+
+
 @router.post(
     "/",
     response_model=TableResponse,
@@ -87,17 +121,9 @@ async def create_table(
     current_user: User = Depends(require_role("admin", "developer")),
 ):
     """Yangi stol yaratish va avtomatik QR kod generatsiya"""
-    result = await db.execute(
-        select(Table).where(
-            Table.restaurant_id == payload.restaurant_id,
-            Table.number == payload.number,
-        )
+    await ensure_table_number_free(
+        db, payload.restaurant_id, payload.number, payload.room
     )
-    if result.scalar_one_or_none():
-        raise HTTPException(
-            status_code=409,
-            detail=f"#{payload.number} raqamli stol allaqachon mavjud",
-        )
 
     qr_token = str(uuid.uuid4())
     qr_url = f"{get_qr_base_url()}/?table={qr_token}"
@@ -107,7 +133,7 @@ async def create_table(
         restaurant_id=payload.restaurant_id,
         number=payload.number,
         name=payload.name,
-        room=payload.room,
+        room=norm_zone(payload.room),
         capacity=payload.capacity,
         qr_token=qr_token,
         qr_image_url=qr_image_url,
@@ -931,7 +957,21 @@ async def update_table(
     if not table:
         raise HTTPException(status_code=404, detail="Stol topilmadi")
 
-    for field, value in payload.model_dump(exclude_unset=True).items():
+    data = payload.model_dump(exclude_unset=True)
+    if "room" in data:
+        data["room"] = norm_zone(data["room"])
+
+    # Raqam yoki zona o'zgarsa — yangi joyda bo'sh ekanini tekshiramiz
+    if "number" in data or "room" in data:
+        await ensure_table_number_free(
+            db,
+            table.restaurant_id,
+            data.get("number", table.number),
+            data.get("room", table.room),
+            exclude_id=table.id,
+        )
+
+    for field, value in data.items():
         setattr(table, field, value)
 
     await db.flush()
