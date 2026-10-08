@@ -18,12 +18,33 @@ def _pad_line(left: str, right: str, width: int = 42) -> str:
 
 
 def _center_line(text: str, width: int = 42) -> str:
-    """Matnni markazga joylashtirish"""
-    text = str(text)
-    if len(text) >= width:
-        return text[:width]
-    pad = (width - len(text)) // 2
-    return f"{' ' * pad}{text}"
+    """Matnni markazga joylashtirish.
+
+    Sig'masa — so'zlar bo'yicha bir nechta qatorga bo'linadi. Ilgari
+    matn shunchaki KESILARDI: katta shriftda (24 ustun) oshxona nomi
+    "1-ОШХОНА (ҚОЗОН ТАОМ" bo'lib yarmida uzilib qolardi.
+    """
+    text = str(text).strip()
+    if len(text) <= width:
+        pad = (width - len(text)) // 2
+        return f"{' ' * pad}{text}"
+
+    lines = []
+    current = ""
+    for word in text.split():
+        if not current:
+            current = word[:width]
+        elif len(current) + 1 + len(word) <= width:
+            current = f"{current} {word}"
+        else:
+            lines.append(current)
+            current = word[:width]
+    if current:
+        lines.append(current)
+
+    return "\n".join(
+        f"{' ' * ((width - len(ln)) // 2)}{ln}" for ln in lines
+    )
 
 
 def latin_to_cyrillic(text: Optional[str]) -> str:
@@ -120,7 +141,7 @@ FONT_SIZES = {
     "katta":      {"gs": 0x01, "w": 1},
     "juda_katta": {"gs": 0x11, "w": 2},
 }
-DEFAULT_FONT_SIZE = "normal"
+DEFAULT_FONT_SIZE = "katta"
 
 
 def _font_spec(font_size: Optional[str]) -> dict:
@@ -343,9 +364,25 @@ def format_pre_check(
     lines.append(sep)
 
     tbl_cyr = latin_to_cyrillic(table_name)
-    lines.append(_pad_line(f"Стол: {tbl_cyr}", f"Чек: №{order_number}", col_width))
     w_cyr = latin_to_cyrillic(waiter_name or 'Ходим')
-    lines.append(_pad_line(f"Официант: {w_cyr}", dt_str, col_width))
+    stol_s = f"Стол: {tbl_cyr}"
+    chek_s = f"Чек: №{order_number}"
+    ofi_s = f"Официант: {w_cyr}"
+
+    # Katta shriftda qator kengligi 24 ga tushadi — ikkita yozuvni bitta
+    # qatorga tiqishtirsak, ikkalasi ham kesilib qoladi ("Стол: Тер").
+    # Shuning uchun tor chekda har birini alohida qatorga chiqaramiz.
+    if col_width < 40 or len(stol_s) + len(chek_s) + 1 > col_width:
+        lines.append(stol_s)
+        lines.append(chek_s)
+    else:
+        lines.append(_pad_line(stol_s, chek_s, col_width))
+
+    if col_width < 40 or len(ofi_s) + len(dt_str) + 1 > col_width:
+        lines.append(ofi_s)
+        lines.append(dt_str)
+    else:
+        lines.append(_pad_line(ofi_s, dt_str, col_width))
     lines.append(sep)
     lines.append("Таомлар:")
 

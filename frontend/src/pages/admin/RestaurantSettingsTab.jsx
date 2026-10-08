@@ -93,7 +93,7 @@ export const RestaurantSettingsTab = ({ restaurantId }) => {
   const [printerPaperWidth, setPrinterPaperWidth] = useState(80);
   const [printerCodepage, setPrinterCodepage] = useState(17);
   // Chek shrifti o'lchami: keksa odamlar o'qiy olishi uchun
-  const [printerFontSize, setPrinterFontSize] = useState('normal');
+  const [printerFontSize, setPrinterFontSize] = useState('katta');
   // Ishlab turgan kod versiyasi (yangilanganini tekshirish uchun)
   const [appVersion, setAppVersion] = useState(null);
   // 4-Printer: BAR (choy, suv, ichimliklar)
@@ -218,6 +218,10 @@ export const RestaurantSettingsTab = ({ restaurantId }) => {
         text: sampleText,
         printer_name: printerName,
         cut_paper: true,
+        restaurant_id: restaurantId,
+        // Hozir tanlangan shrift bilan chiqsin — admin natijani
+        // qog'ozda darhol ko'rishi uchun (saqlashdan oldin ham).
+        font_size: printerFontSize,
       });
       alert(`✅ ${printerName} printeriga test cheki muvaffaqiyatli yuborildi!`);
     } catch (err) {
@@ -242,7 +246,7 @@ export const RestaurantSettingsTab = ({ restaurantId }) => {
         setServiceFeePercent(s.service_fee_percent ?? 12);
         setPrinterPaperWidth(s.printer_paper_width ?? 80);
         setPrinterCodepage(s.printer_codepage || 17);
-        setPrinterFontSize(s.printer_font_size || 'normal');
+        setPrinterFontSize(s.printer_font_size || 'katta');
         setArchiveRetentionYears(s.archive_retention_years ?? 3);
         setReceiptHeader(s.receipt_header || 'RestAron Restaurant');
         setReceiptFooter(s.receipt_footer || 'Tashrif buyurganingiz uchun rahmat!');
@@ -1277,15 +1281,16 @@ export const RestaurantSettingsTab = ({ restaurantId }) => {
               🔍 Chek shrifti o'lchami
             </label>
             <p className="text-[11px] text-theme-muted mb-2.5">
-              Chek juda kichik chiqsa va keksa mijozlar o'qiy olmasa, "Katta" ni
-              tanlang — harflar ikki barobar balandroq bo'ladi, chek kengligi esa
-              o'zgarmaydi.
+              Tanlab, pastdagi printerning <b>"Test chop etish"</b> tugmasini
+              bosing — natijani qog'ozda darhol ko'rasiz. Eng yirik va qalin
+              yozuv uchun <b>"ENG KATTA"</b> ni tanlang (chek biroz uzunroq
+              chiqadi, lekin uzoqdan ham o'qiladi).
             </p>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
               {[
-                { id: 'normal', nom: 'Oddiy', izoh: 'Standart o\'lcham' },
-                { id: 'katta', nom: 'Katta ✓', izoh: 'Harflar 2x balandroq (tavsiya)' },
-                { id: 'juda_katta', nom: 'Juda katta', izoh: 'Harflar 2x katta, chek uzunroq' },
+                { id: 'normal', nom: 'Oddiy', izoh: 'Eng kichik — 48 belgi' },
+                { id: 'katta', nom: 'Katta ✓', izoh: '2x balandroq, qalin — 48 belgi' },
+                { id: 'juda_katta', nom: 'ENG KATTA', izoh: '2x baland va keng, qalin — 24 belgi' },
               ].map((v) => (
                 <button
                   key={v.id}

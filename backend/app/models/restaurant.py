@@ -86,7 +86,7 @@ class RestaurantSettings(Base):
     printer_paper_width = Column(Integer, default=80)  # 58 yoki 80 mm
     # Chek shrifti o'lchami: "normal" | "katta" | "juda_katta"
     # Keksa odamlar o'qiy olishi uchun "katta" tavsiya etiladi.
-    printer_font_size = Column(String(20), default="normal", nullable=True)
+    printer_font_size = Column(String(20), default="katta", nullable=True)
 
     # Cheklar arxivini saqlash muddati (yillarda, default: 3 yil)
     archive_retention_years = Column(Integer, default=3)

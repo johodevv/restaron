@@ -32,6 +32,10 @@ class DirectPrintRequest(BaseModel):
     text: str
     printer_name: Optional[str] = None
     cut_paper: bool = True
+    restaurant_id: int = 1
+    # Sinov cheki ham HAQIQIY sozlamalar bilan chiqishi kerak, aks holda
+    # admin shrift o'lchamini tanlab, natijasini ko'ra olmaydi.
+    font_size: Optional[str] = None
 
 
 
@@ -211,9 +215,23 @@ async def print_receipt_usb(
 @router.post("/print-raw-usb", summary="Ixtiyoriy chek matnini to'g'ridan-to'g'ri USB Xprinter'ga chop etish")
 async def print_raw_usb(
     payload: DirectPrintRequest,
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_role("admin", "waiter", "developer")),
 ):
-    res = print_to_windows_printer(payload.text, printer_name=payload.printer_name, cut_paper=payload.cut_paper)
+    # Shrift va kod sahifasi sozlamalardan olinadi (so'rovda berilmasa)
+    set_res = await db.execute(
+        select(RestaurantSettings).where(
+            RestaurantSettings.restaurant_id == payload.restaurant_id
+        )
+    )
+    st = set_res.scalar_one_or_none()
+    fsize = payload.font_size or getattr(st, "printer_font_size", None) or "normal"
+    cp = getattr(st, "printer_codepage", None) or 17
+
+    res = print_to_windows_printer(
+        payload.text, printer_name=payload.printer_name,
+        cut_paper=payload.cut_paper, codepage=cp, font_size=fsize,
+    )
     if not res.get("success"):
         raise HTTPException(status_code=500, detail=res.get("error", "Chop etishda xatolik"))
     return res

@@ -171,12 +171,17 @@ Admin → **Sozlamalar** → **🔍 Chek shrifti o'lchami**:
 
 | Variant | Nima bo'ladi |
 |---|---|
-| Oddiy | standart o'lcham |
-| **Katta** ✓ | harflar **2 barobar balandroq**, chek kengligi o'zgarmaydi — **tavsiya etiladi** |
-| Juda katta | harflar bo'yiga ham, eniga ham 2 barobar; qatorga 24 belgi sig'adi, chek uzunroq chiqadi |
+| Oddiy | eng kichik — qatorga 48 belgi |
+| **Katta** (sukut) | harflar **2 barobar balandroq**, qalin — 48 belgi |
+| **ENG KATTA** | harflar bo'yiga ham, eniga ham **2 barobar**, qalin — 24 belgi |
 
-"Katta" ko'pchilikka yetarli: o'qish osonlashadi, lekin chek tartibi
-buzilmaydi va qog'oz ortiqcha sarflanmaydi.
+Barcha cheklar endi **qalin (bold)** chiqadi.
+
+Tanlab, pastdagi printerning **"Test chop etish"** tugmasini bosing —
+natijani qog'ozda darhol ko'rasiz (saqlashdan oldin ham).
+
+"ENG KATTA" da chek biroz uzunroq chiqadi, lekin uzoqdan ham o'qiladi —
+oshxona va keksa mijozlar uchun eng qulayi.
 
 ---
 
