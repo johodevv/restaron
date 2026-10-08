@@ -34,6 +34,9 @@ class OrderItemResponse(BaseModel):
     unit: str = "dona"                      # "kg", "l", "dona"
     sent_to_kitchen: bool = False
     sent_to_kitchen_at: Optional[datetime] = None
+    # Shu qatordan oshxonaga allaqachon nechta yuborilgan.
+    # quantity > sent_quantity bo'lsa — farqi hali yuborilmagan.
+    sent_quantity: int = 0
     is_prepared: bool = False
     prepared_at: Optional[datetime] = None
 

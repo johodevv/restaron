@@ -120,6 +120,11 @@ class OrderItem(Base):
     # Oshxona yuborilganlik holati (Oshxona begunogi)
     sent_to_kitchen = Column(Boolean, default=False)
     sent_to_kitchen_at = Column(DateTime(timezone=True), nullable=True)
+    # Shu qatordan oshxonaga ALLAQACHON nechta yuborilgan.
+    # Ofitsiant 1 somsa yuborgandan keyin yana 1 somsa qo'shsa, oshxonaga
+    # faqat YANGI 1 ta chiqishi kerak ("2 somsa" emas). Shuning uchun
+    # begunokka `quantity - sent_quantity` chiqadi.
+    sent_quantity = Column(Integer, default=0, nullable=False)
 
     # Oshpaz paneli uchun
     is_prepared = Column(Boolean, default=False)        # Tayyorlandimi

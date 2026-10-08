@@ -340,14 +340,35 @@ export const WaiterDashboard = () => {
   };
 
   // Action: "🔥 Buyurtmani tasdiqlash" (Send to kitchen -> auto-print on 1- & 2-kitchen printers)
-  const handleSendToKitchen = async () => {
+  //
+  // MUHIM: oshxonaga faqat YANGI qo'shilgan taomlar chiqadi. Ofitsiant
+  // 1 somsa yuborgandan keyin yana 1 somsa qo'shsa, oshxonada "1 somsa"
+  // chiqadi — "2 somsa" emas. Tugma bo'sh bosilsa hech narsa chiqmaydi;
+  // begunok printerdan chiqmagan bo'lsa "qayta chiqarish" so'raladi.
+  const handleSendToKitchen = async (reprint = false) => {
     if (!activeOrder || !activeOrder.items || activeOrder.items.length === 0) {
       alert("Buyurtmada taomlar yo'q! Avval o'ng tomondan taom qo'shing.");
       return;
     }
     setSendingToKitchen(true);
     try {
-      const res = await api.post(`/orders/${activeOrder.id}/send-to-kitchen`, {});
+      const res = await api.post(
+        `/orders/${activeOrder.id}/send-to-kitchen${reprint ? '?reprint=true' : ''}`,
+        {}
+      );
+
+      // Yangi taom yo'q: oshxonaga qayta-qayta bir xil begunok chiqib
+      // ketmasligi uchun hech narsa chop etilmadi.
+      if (res.nothing_new) {
+        const yes = window.confirm(
+          "Yangi taom yo'q — barchasi oshxonaga allaqachon yuborilgan.\n\n" +
+          'Begunok printerdan chiqmaganmi? "OK" bosing — butun buyurtma ' +
+          'TAKROR begunok sifatida qayta chiqadi.'
+        );
+        setSendingToKitchen(false);
+        if (yes) await handleSendToKitchen(true);
+        return;
+      }
 
       // Printerga chiqmagan begunoklar bormi?
       const tickets = res.tickets || [];
@@ -763,9 +784,27 @@ export const WaiterDashboard = () => {
 
                         <p className="text-xs font-semibold text-slate-400 font-mono mt-0.5">
                           {it.quantity} dona • {it.item_time || '12:00'} •{' '}
-                          <span className={it.sent_to_kitchen ? 'text-amber-400 font-bold' : 'text-emerald-400'}>
-                            {it.sent_to_kitchen ? 'Oshxonada ♨️' : 'Yangi ✦'}
-                          </span>
+                          {/* Oshxonaga nechtasi yuborilgan va nechtasi hali
+                              yuborilmaganini aniq ko'rsatamiz: 2 somsadan
+                              1 tasi yuborilgan bo'lsa "1 ♨️ · 1 yangi ✦". */}
+                          {(() => {
+                            const sent = Math.min(it.sent_quantity || 0, it.quantity);
+                            const fresh = Math.max(it.quantity - sent, 0);
+                            if (sent > 0 && fresh > 0) {
+                              return (
+                                <>
+                                  <span className="text-amber-400 font-bold">{sent} Oshxonada ♨️</span>
+                                  {' · '}
+                                  <span className="text-emerald-400 font-bold">{fresh} Yangi ✦</span>
+                                </>
+                              );
+                            }
+                            return (
+                              <span className={sent > 0 ? 'text-amber-400 font-bold' : 'text-emerald-400'}>
+                                {sent > 0 ? 'Oshxonada ♨️' : 'Yangi ✦'}
+                              </span>
+                            );
+                          })()}
                         </p>
                       </div>
 
@@ -867,7 +906,7 @@ export const WaiterDashboard = () => {
                   to'lovni kassada o'tirgan xodim admin panelda qabul qiladi. */}
               <div className="grid grid-cols-1 gap-2.5">
                 <button
-                  onClick={handleSendToKitchen}
+                  onClick={() => handleSendToKitchen(false)}
                   disabled={!activeOrder || sendingToKitchen}
                   className="py-4 px-3 rounded-2xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 disabled:opacity-40 text-slate-950 font-black text-xs sm:text-sm shadow-xl shadow-amber-500/25 transition-all active:scale-95 flex items-center justify-center gap-1.5"
                 >

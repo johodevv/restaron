@@ -22,20 +22,24 @@ from app.schemas.receipt import (
 from app.core.printer_service import (
     scan_network_printers,
     format_kitchen_ticket, format_pre_check, format_shift_report,
-    get_installed_printers, print_to_windows_printer
+    get_installed_printers, print_to_windows_printer, DEFAULT_FONT_SIZE
 )
 
 router = APIRouter(prefix="/receipts", tags=["🖨️ Cheklar Arxivi va Kassa Hisobotlari"])
 
 
 class DirectPrintRequest(BaseModel):
-    text: str
+    text: str = ""
     printer_name: Optional[str] = None
     cut_paper: bool = True
     restaurant_id: int = 1
     # Sinov cheki ham HAQIQIY sozlamalar bilan chiqishi kerak, aks holda
     # admin shrift o'lchamini tanlab, natijasini ko'ra olmaydi.
     font_size: Optional[str] = None
+    # True bo'lsa matn serverda HAQIQIY chek ko'rinishida tayyorlanadi:
+    # admin qog'ozda aynan mijozga beriladigan chekni ko'radi, shriftni
+    # shunga qarab tanlaydi.
+    sample_receipt: bool = False
 
 
 
@@ -225,11 +229,44 @@ async def print_raw_usb(
         )
     )
     st = set_res.scalar_one_or_none()
-    fsize = payload.font_size or getattr(st, "printer_font_size", None) or "normal"
+    fsize = payload.font_size or getattr(st, "printer_font_size", None) or DEFAULT_FONT_SIZE
     cp = getattr(st, "printer_codepage", None) or 17
+    paper_width = getattr(st, "printer_paper_width", 80) or 80
+
+    text = payload.text or ""
+    if payload.sample_receipt or not text.strip():
+        # Namuna chek — tanlangan shrift va qog'oz kengligi bo'yicha
+        # serverda yasaladi, shuning uchun qator kengligi aynan to'g'ri
+        # bo'ladi (katta shriftda 24 belgi, eng kattada 16).
+        rest_res = await db.execute(
+            select(Restaurant).where(Restaurant.id == payload.restaurant_id)
+        )
+        rest = rest_res.scalar_one_or_none()
+        text = format_pre_check(
+            restaurant_name=(rest.name if rest else "RestAron"),
+            address=(rest.address if rest else None),
+            phone=(rest.phone if rest else None),
+            table_name="Namuna 1",
+            waiter_name=(current_user.full_name or current_user.username),
+            order_number="SINOV",
+            items=[
+                {"name": "Qo'y kabob", "quantity": 2, "unit_price": 32000, "total_price": 64000},
+                {"name": "Kola", "size": "1.5 L", "quantity": 1, "unit_price": 15000, "total_price": 15000},
+                {"name": "Non", "quantity": 4, "unit_price": 2000, "total_price": 8000},
+            ],
+            subtotal=87000,
+            service_fee_percent=(getattr(st, "service_fee_percent", 12.0) or 12.0),
+            service_fee_amount=87000 * ((getattr(st, "service_fee_percent", 12.0) or 12.0) / 100.0),
+            discount=0.0,
+            total=87000 * (1 + (getattr(st, "service_fee_percent", 12.0) or 12.0) / 100.0),
+            receipt_note="SINOV CHEKI — shriftni tekshirish uchun",
+            footer_text=getattr(st, "receipt_footer", None),
+            paper_width=paper_width,
+            font_size=fsize,
+        )
 
     res = print_to_windows_printer(
-        payload.text, printer_name=payload.printer_name,
+        text, printer_name=payload.printer_name,
         cut_paper=payload.cut_paper, codepage=cp, font_size=fsize,
     )
     if not res.get("success"):
@@ -268,7 +305,7 @@ async def create_shift_report(
     set_res = await db.execute(select(RestaurantSettings).where(RestaurantSettings.restaurant_id == restaurant_id))
     settings = set_res.scalar_one_or_none()
     paper_width = settings.printer_paper_width if settings else 80
-    fsize = getattr(settings, "printer_font_size", None) or "normal"
+    fsize = getattr(settings, "printer_font_size", None) or DEFAULT_FONT_SIZE
 
     # Oxirgi yopilgan Z-Reportni topish (smena ochilgan vaqtini aniqlash uchun)
     last_z = await db.execute(

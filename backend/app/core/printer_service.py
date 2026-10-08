@@ -17,6 +17,96 @@ def _pad_line(left: str, right: str, width: int = 42) -> str:
     return f"{left}{' ' * space_needed}{right}"
 
 
+def _wrap_words(text: str, width: int, indent: str = "") -> List[str]:
+    """Matnni so'zlar bo'yicha bir nechta qatorga bo'ladi.
+
+    Katta shriftda qator 24 (yoki 16) belgiga tushadi, uzun taom nomi
+    esa kesilib qolardi: "Шашлик (қўй гўш". Endi nom to'liq chiqadi.
+    """
+    text = str(text).strip()
+    width = max(4, int(width))
+
+    # Narx "120 000" ko'rinishida yoziladi — minglik ajratgich BO'SH JOY.
+    # Shuning uchun oddiy so'z bo'yicha bo'lish raqamni ikkiga uzib
+    # qo'yardi ("120" va "000 204 000" — mijoz chalkashadi). Raqam
+    # guruhlarini bitta bo'linmas so'z qilib yig'amiz.
+    words: List[str] = []
+    for word in text.split():
+        if (words and len(word) == 3 and word.isdigit()
+                and words[-1] and words[-1][-1].isdigit()):
+            words[-1] = f"{words[-1]} {word}"
+        else:
+            words.append(word)
+
+    out: List[str] = []
+    cur = ""
+    for word in words or [""]:
+        cand = word if not cur else f"{cur} {word}"
+        if len(cand) <= width:
+            cur = cand
+            continue
+        if cur:
+            out.append(cur)
+        # Bitta so'zning o'zi sig'masa — bo'laklab tashlaymiz.
+        while len(word) > width:
+            out.append(word[:width])
+            word = word[width:]
+        cur = word
+    if cur or not out:
+        out.append(cur)
+    if not indent:
+        return out
+    return [out[0]] + [f"{indent}{ln}"[:width] for ln in out[1:]]
+
+
+def _name_amount_block(name: str, right: str, width: int) -> List[str]:
+    """Taom nomi + o'ngdagi qiymat (soni / summasi).
+
+    Bir qatorga sig'sa — bitta qator. Sig'masa nom so'zlar bo'yicha
+    bo'linadi va qiymat oxirgi qatorning o'ng chetiga tekislanadi
+    (joy bo'lmasa alohida qatorga tushadi). Hech narsa kesilmaydi.
+    """
+    name = str(name).strip()
+    right = str(right).strip()
+    if len(name) + 1 + len(right) <= width:
+        return [_pad_line(name, right, width)]
+
+    parts = _wrap_words(name, width)
+    last = parts[-1]
+    if len(last) + 1 + len(right) <= width:
+        parts[-1] = _pad_line(last, right, width)
+    else:
+        parts.append(right.rjust(width))
+    return parts
+
+
+def _amount_line(label: str, amount: str, width: int = 42) -> str:
+    """Nomi va summasini bir qatorga joylashtiradi.
+
+    Katta shriftda qator tor bo'ladi (24 yoki 16 belgi) va nom bilan
+    summa bir-biriga tiqilib, nom yarmida kesilib ketadi. Sig'masa
+    nomni alohida qatorga chiqaramiz, summani esa o'ng chetga
+    tekislaymiz — hech qanday raqam yo'qolmaydi.
+    """
+    label = str(label)
+    amount = str(amount)
+    if len(label) + 1 + len(amount) <= width:
+        return _pad_line(label, amount, width)
+
+    # Sig'masa: nomni so'zlar bo'yicha bo'lamiz va summani o'ng chetga
+    # chiqaramiz. Summa HECH QACHON kesilmaydi — chekda pul miqdori
+    # yarmida uzilib qolsa mijoz bilan janjal chiqadi.
+    indent = label[:len(label) - len(label.lstrip())]
+    inner = max(4, width - len(indent))
+    parts = [f"{indent}{ln}" for ln in _wrap_words(label.strip(), inner)]
+    last = parts[-1]
+    if len(last) + 1 + len(amount) <= width:
+        parts[-1] = _pad_line(last, amount, width)
+    else:
+        parts.append(amount.rjust(width) if len(amount) <= width else amount)
+    return "\n".join(parts)
+
+
 def _center_line(text: str, width: int = 42) -> str:
     """Matnni markazga joylashtirish.
 
@@ -130,22 +220,47 @@ ESC_CUT = b"\n\n\n\n\x1d\x56\x42\x00"  # qog'ozni kesish
 # sozlamalardan o'zgartirish mumkin.
 DEFAULT_CODEPAGE = 17
 
-# Chek shrifti o'lchami (keksa odamlar ham o'qiy olishi uchun).
-#   normal      — standart, 80mm da 48 belgi
-#   katta       — bo'yi 2 barobar, kengligi o'sha-o'sha (48 belgi saqlanadi,
-#                 chek chiroyli tekis chiqadi) — KO'PCHILIKKA SHU MA'QUL
-#   juda_katta  — bo'yi ham, eni ham 2 barobar (80mm da 24 belgi)
-# GS ! n : yuqori 4 bit = kenglik, quyi 4 bit = balandlik (0 = 1x)
+# ─── Chek shrifti o'lchami ─────────────────────────────────────────────
+#
+# GS ! n : yuqori 4 bit = KENGLIK ko'paytirgichi, quyi 4 bit = BALANDLIK
+# (0 = 1x, 1 = 2x, 2 = 3x ...).
+#
+# MUHIM — nega "faqat bo'yi 2 barobar" (eski "katta") XIRA chiqadi:
+# termal printer harfni bo'yiga cho'zganda har nuqta qatorini ikki marta
+# bosadi, lekin harf chiziqlarining ENI o'sha-o'sha 1 nuqta qolib ketadi.
+# Natijada harflar cho'zilgan, ingichka va xira ko'rinadi. Shuning uchun
+# harf eni ham, bo'yi ham BIRGA kattalashtiriladi: chiziqlar ham 2 nuqta
+# bo'ladi va yozuv to'q, qalin, aniq chiqadi.
+#
+#   normal      — 1x1  (80mm da 48 belgi)  — eng kichik
+#   baland      — 1x2  (48 belgi)          — eski "katta" (xira chiqishi mumkin)
+#   keng        — 2x1  (24 belgi)          — eni 2x, bo'yi o'sha-o'sha: eng TO'Q
+#   katta       — 2x2  (24 belgi)          — SUKUT: katta va to'q
+#   juda_katta  — 3x3  (16 belgi)          — eng katta
 FONT_SIZES = {
-    "normal":     {"gs": 0x00, "w": 1},
-    "katta":      {"gs": 0x01, "w": 1},
-    "juda_katta": {"gs": 0x11, "w": 2},
+    "normal":     {"gs": 0x00, "w": 1, "label": "1x1"},
+    "baland":     {"gs": 0x01, "w": 1, "label": "1x2"},
+    "keng":       {"gs": 0x10, "w": 2, "label": "2x1"},
+    "katta":      {"gs": 0x11, "w": 2, "label": "2x2"},
+    "juda_katta": {"gs": 0x22, "w": 3, "label": "3x3"},
 }
 DEFAULT_FONT_SIZE = "katta"
 
+# Eski sozlamalar bilan moslik: ilgari "katta" faqat bo'yi 2x degani edi.
+FONT_SIZE_ALIASES = {
+    "kichik": "normal",
+    "oddiy": "normal",
+    "standart": "normal",
+    "balandroq": "baland",
+    "katta_baland": "baland",
+    "eng_katta": "juda_katta",
+}
+
 
 def _font_spec(font_size: Optional[str]) -> dict:
-    return FONT_SIZES.get((font_size or "").strip().lower(), FONT_SIZES[DEFAULT_FONT_SIZE])
+    key = (font_size or "").strip().lower()
+    key = FONT_SIZE_ALIASES.get(key, key)
+    return FONT_SIZES.get(key, FONT_SIZES[DEFAULT_FONT_SIZE])
 
 
 def build_escpos_payload(raw_text: str, cut_paper: bool = True,
@@ -180,9 +295,13 @@ def build_escpos_payload(raw_text: str, cut_paper: bool = True,
     # bo'yiga 2 barobar kattayadi, qator kengligi esa o'zgarmaydi.
     gs_size = b"\x1d\x21" + bytes([_font_spec(font_size)["gs"]])
 
-    # ESC E 1 — qalin (bold) matn. Termal chek vaqt o'tishi bilan
-    # xiralashadi, qalin shrift esa keksa odamlarga ham oson o'qiladi.
-    esc_bold = b"\x1b\x45\x01"
+    # ESC E 1 — qalin (bold) matn, ESC G 1 — ikki marta bosish
+    # (double-strike). Ikkisi birga chekni ancha TO'Q qiladi: termal chek
+    # vaqt o'tishi bilan xiralashadi, qalin yozuvni esa keksa odamlar ham
+    # bemalol o'qiydi. Ikkisi ham standart ESC/POS buyrug'i, shuning uchun
+    # qo'llab-quvvatlanmasa ham printer ularni shunchaki e'tiborsiz
+    # qoldiradi (qog'ozga begona belgi chiqmaydi).
+    esc_bold = b"\x1b\x45\x01" + b"\x1b\x47\x01"
 
     payload = (ESC_INIT + FS_KANJI_OFF + FS_KANJI_OFF2
                + esc_codepage + ESC_FONT_A + gs_size + esc_bold + body)
@@ -206,7 +325,9 @@ def receipt_columns(paper_width: int, font_size: str = DEFAULT_FONT_SIZE) -> int
     base = 48 if paper_width >= 80 else 32
     # Harf eni 2 barobar bo'lsa, qatorga sig'adigan belgilar soni yarmiga
     # tushadi — aks holda matn qog'ozdan chiqib, chek buzilib ketadi.
-    return max(16, base // _font_spec(font_size)["w"])
+    # Pastki chegara 16 edi: 58mm qog'ozda 3x shriftda (10 belgi) matn
+    # qog'ozdan chiqib, raqamlar o'rtasidan uzilib ketardi.
+    return max(10, base // _font_spec(font_size)["w"])
 
 
 def merge_receipt_items(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -257,6 +378,7 @@ def format_kitchen_ticket(
     paper_width: int = 80,
     station_title: Optional[str] = None,
     font_size: str = DEFAULT_FONT_SIZE,
+    is_reprint: bool = False,
 ) -> str:
     """
     Oshxona / Bar begunogi (Runner ticket) — To'liq Kirill alifbosida
@@ -271,17 +393,30 @@ def format_kitchen_ticket(
     st_title = station_title or "ОШХОНА БЕГУНОГИ"
     lines.append(_center_line(f"*** {latin_to_cyrillic(st_title).upper()} ***", col_width))
 
+    # Takroriy begunok: oshpaz buni YANGI buyurtma deb o'ylamasligi kerak.
+    if is_reprint:
+        lines.append(sep)
+        lines.append(_center_line("!!! ТАКРОР !!!", col_width))
+        lines.append(_center_line("ЯНГИ БУЮРТМА ЭМАС", col_width))
+        lines.append(sep)
+
     # Zal / Xona nomi
     zal = hall_name or room_name or "Зал"
     lines.append(_center_line(latin_to_cyrillic(zal).upper(), col_width))
     if room_name and room_name != hall_name:
         lines.append(_center_line(latin_to_cyrillic(room_name), col_width))
 
-    # Stol va Ofitsiant
-    lines.append(f"Стол: № {table_number}")
+    # Stol va Ofitsiant. Tor chekda (katta shrift) qatorlar so'zlar
+    # bo'yicha bo'linadi — printer o'zi so'z o'rtasidan uzib tashlamasin.
+    lines.extend(_wrap_words(f"Стол: № {table_number}", col_width, indent="  "))
     waiter_cyr = latin_to_cyrillic(waiter_name or 'Официант')
-    lines.append(f"Официант: {waiter_cyr}")
-    lines.append(f"Вақт: {dt_str}")
+    lines.extend(_wrap_words(f"Официант: {waiter_cyr}", col_width, indent="  "))
+    if len(f"Вақт: {dt_str}") <= col_width:
+        lines.append(f"Вақт: {dt_str}")
+    else:
+        # "Вақт: 08.10.2026 | 05:20" — tor chekda sana va soat alohida.
+        lines.append("Вақт:")
+        lines.extend(_wrap_words(dt_str.replace("|", " "), col_width, indent="  "))
     lines.append(sep)
 
     lines.append(_pad_line("ТАОМ", "СОНИ", col_width))
@@ -303,20 +438,20 @@ def format_kitchen_ticket(
             wt = item.get("weight")
             unit_cyr = latin_to_cyrillic(item.get("unit") or "kg")
             if wt:
-                lines.append(_pad_line(name, f"{wt:g} {unit_cyr}", col_width))
+                lines.extend(_name_amount_block(name, f"{wt:g} {unit_cyr}", col_width))
             else:
-                lines.append(_pad_line(name, "ТОРТИЛСИН!", col_width))
+                lines.extend(_name_amount_block(name, "ТОРТИЛСИН!", col_width))
             continue
 
-        lines.append(_pad_line(name, f"{qty} та", col_width))
+        lines.extend(_name_amount_block(name, f"{qty} та", col_width))
         if item.get("note"):
             note_cyr = latin_to_cyrillic(item['note'])
-            lines.append(f"  * {note_cyr}")
+            lines.extend(_wrap_words(f"  * {note_cyr}", col_width, indent="    "))
 
     lines.append(sep)
     if kitchen_note:
         note_str = latin_to_cyrillic(kitchen_note)
-        lines.append(f"Изоҳ: {note_str}")
+        lines.extend(_wrap_words(f"Изоҳ: {note_str}", col_width, indent="  "))
         lines.append(sep)
 
     return "\n".join(lines) + "\n\n\n"
@@ -373,14 +508,14 @@ def format_pre_check(
     # qatorga tiqishtirsak, ikkalasi ham kesilib qoladi ("Стол: Тер").
     # Shuning uchun tor chekda har birini alohida qatorga chiqaramiz.
     if col_width < 40 or len(stol_s) + len(chek_s) + 1 > col_width:
-        lines.append(stol_s)
-        lines.append(chek_s)
+        lines.extend(_wrap_words(stol_s, col_width, indent="  "))
+        lines.extend(_wrap_words(chek_s, col_width, indent="  "))
     else:
         lines.append(_pad_line(stol_s, chek_s, col_width))
 
     if col_width < 40 or len(ofi_s) + len(dt_str) + 1 > col_width:
-        lines.append(ofi_s)
-        lines.append(dt_str)
+        lines.extend(_wrap_words(ofi_s, col_width, indent="  "))
+        lines.extend(_wrap_words(dt_str, col_width, indent="  "))
     else:
         lines.append(_pad_line(ofi_s, dt_str, col_width))
     lines.append(sep)
@@ -396,7 +531,18 @@ def format_pre_check(
         unit_price = it.get("unit_price") or it.get("price") or 0.0
         line_total = it.get("total_price") or (qty * unit_price)
 
-        lines.append(f"{idx}. {name}")
+        lines.extend(_wrap_words(f"{idx}. {name}", col_width, indent="   "))
+
+        # Tortiladigan taom hali tortilmagan bo'lsa narx YOZILMAYDI:
+        # ilgari "1 x 120 000" deb 1 kg narxi chiqib ketardi va mijoz
+        # hali aniqlanmagan summani ko'rardi.
+        if it.get("is_weighted") and not it.get("weight"):
+            unit_cyr = latin_to_cyrillic(it.get("unit") or "kg")
+            lines.append(_amount_line(f"   1 {unit_cyr} = {unit_price:,.0f}".replace(",", " "),
+                                      "ТОРТИЛМАГАН" if col_width >= 12 else "ТОРТИЛМ.",
+                                      col_width))
+            continue
+
         tot_str = f"{line_total:,.0f}".replace(",", " ")
 
         # Tortiladigan taomda hisob "og'irlik x 1 kg narxi" ko'rinishida
@@ -410,28 +556,34 @@ def format_pre_check(
                 calc_str = f"   {qty} x {wt:g} {unit_cyr} x {unit_price:,.0f}".replace(",", " ")
         else:
             calc_str = f"   {qty} x {unit_price:,.0f}".replace(",", " ")
-        lines.append(_pad_line(calc_str, tot_str, col_width))
+        lines.append(_amount_line(calc_str, tot_str, col_width))
 
     lines.append(sep)
+    # Katta shriftda qator tor (24 yoki 16 belgi) — uzun ruscha-o'zbekcha
+    # izohlar sig'masligi uchun qisqa yozuvlardan foydalanamiz.
+    narrow = col_width < 32
     sub_str = f"{subtotal:,.0f}".replace(",", " ")
-    lines.append(_pad_line("Жами (Итого):", sub_str, col_width))
+    lines.append(_amount_line("Жами:" if narrow else "Жами (Итого):", sub_str, col_width))
 
     if service_fee_percent > 0:
-        fee_title = f"Хизмат ҳақи ({service_fee_percent:.0f}%):"
+        fee_title = (f"Хизмат {service_fee_percent:.0f}%:" if narrow
+                     else f"Хизмат ҳақи ({service_fee_percent:.0f}%):")
         fee_str = f"{service_fee_amount:,.0f}".replace(",", " ")
-        lines.append(_pad_line(fee_title, fee_str, col_width))
+        lines.append(_amount_line(fee_title, fee_str, col_width))
 
     if discount > 0:
         disc_str = f"-{discount:,.0f}".replace(",", " ")
-        lines.append(_pad_line("Чегирма (Скидка):", disc_str, col_width))
+        lines.append(_amount_line("Чегирма:" if narrow else "Чегирма (Скидка):",
+                                  disc_str, col_width))
 
     lines.append(double_sep)
     total_str = f"{total:,.0f}".replace(",", " ")
-    lines.append(_pad_line("ЖАМИ ТЎЛОВ:", total_str, col_width))
+    lines.append(_amount_line("ЖАМИ:" if narrow else "ЖАМИ ТЎЛОВ:", total_str, col_width))
     lines.append(double_sep)
 
     if receipt_note:
-        lines.append(f"Изоҳ: {latin_to_cyrillic(receipt_note)}")
+        lines.extend(_wrap_words(f"Изоҳ: {latin_to_cyrillic(receipt_note)}",
+                                 col_width, indent="  "))
         lines.append(sep)
 
     foot = footer_text or "Ташрифингиз учун раҳмат! Яна келинг!"
@@ -478,37 +630,65 @@ def format_shift_report(
     lines.append(sep)
 
     c_cyr = latin_to_cyrillic(cashier_name or "Кассир")
-    lines.append(_pad_line(f"Смена: #{shift_number}", f"Кассир: {c_cyr}", col_width))
+    smena_s = f"Смена: #{shift_number}"
+    kassir_s = f"Кассир: {c_cyr}"
+    if len(smena_s) + 1 + len(kassir_s) <= col_width:
+        lines.append(_pad_line(smena_s, kassir_s, col_width))
+    else:
+        lines.extend(_wrap_words(smena_s, col_width, indent="  "))
+        lines.extend(_wrap_words(kassir_s, col_width, indent="  "))
     if opened_at:
-        lines.append(f"Очилган: {opened_at.strftime('%d.%m.%Y %H:%M')}")
+        lines.extend(_wrap_words(f"Очилган: {opened_at.strftime('%d.%m.%Y %H:%M')}",
+                                 col_width, indent="  "))
     dt_close = closed_at or datetime.now()
-    lines.append(f"Ҳисобот: {dt_close.strftime('%d.%m.%Y %H:%M')}")
+    lines.extend(_wrap_words(f"Ҳисобот: {dt_close.strftime('%d.%m.%Y %H:%M')}",
+                             col_width, indent="  "))
     lines.append(sep)
 
-    lines.append(_pad_line("Ёпилган буюртмалар:", str(total_orders), col_width))
+    narrow = col_width < 32
+    lines.append(_amount_line("Буюртмалар:" if narrow else "Ёпилган буюртмалар:",
+                              str(total_orders), col_width))
     lines.append(sep)
 
-    lines.append(_pad_line("Нақд пул (Наличные):", f"{total_cash:,.0f}".replace(",", " "), col_width))
-    lines.append(_pad_line("Банк карта (Карта):", f"{total_card:,.0f}".replace(",", " "), col_width))
-    lines.append(_pad_line("Click / Payme:", f"{total_click:,.0f}".replace(",", " "), col_width))
-    lines.append(_pad_line("Насия / Қарз:", f"{total_debt:,.0f}".replace(",", " "), col_width))
+    lines.append(_amount_line("Нақд:" if narrow else "Нақд пул (Наличные):",
+                              f"{total_cash:,.0f}".replace(",", " "), col_width))
+    lines.append(_amount_line("Карта:" if narrow else "Банк карта (Карта):",
+                              f"{total_card:,.0f}".replace(",", " "), col_width))
+    lines.append(_amount_line("Click/Payme:", f"{total_click:,.0f}".replace(",", " "), col_width))
+    lines.append(_amount_line("Насия:" if narrow else "Насия / Қарз:",
+                              f"{total_debt:,.0f}".replace(",", " "), col_width))
     lines.append(sep)
 
-    lines.append(_pad_line("Жами хизмат ҳақи:", f"{total_service_fee:,.0f}".replace(",", " "), col_width))
-    lines.append(_pad_line("Официантлар улуши:", f"{total_waiter_earnings:,.0f}".replace(",", " "), col_width))
+    lines.append(_amount_line("Хизмат ҳақи:" if narrow else "Жами хизмат ҳақи:",
+                              f"{total_service_fee:,.0f}".replace(",", " "), col_width))
+    lines.append(_amount_line("Улушлар:" if narrow else "Официантлар улуши:",
+                              f"{total_waiter_earnings:,.0f}".replace(",", " "), col_width))
     lines.append(double_sep)
 
-    lines.append(_pad_line("УМУМИЙ ТУШУМ:", f"{total_sales:,.0f}".replace(",", " "), col_width))
+    lines.append(_amount_line("УМУМИЙ:" if narrow else "УМУМИЙ ТУШУМ:",
+                              f"{total_sales:,.0f}".replace(",", " "), col_width))
     lines.append(double_sep)
 
     if waiter_breakdown:
-        lines.append("ОФИЦИАНТЛАР КЕСИМИДА:")
+        if col_width < 24:
+            lines.append("ОФИЦИАНТ:")
+        elif col_width < 32:
+            lines.append("ОФИЦИАНТЛАР:")
+        else:
+            lines.append("ОФИЦИАНТЛАР КЕСИМИДА:")
         for w in waiter_breakdown:
             w_name = latin_to_cyrillic(w.get("name", "Официант"))
             w_sales = w.get("sales", 0.0)
             w_earn = w.get("earning", 0.0)
-            lines.append(f" • {w_name}:")
-            lines.append(_pad_line(f"   Савдо: {w_sales:,.0f}".replace(",", " "), f"Улуш: {w_earn:,.0f}".replace(",", " "), col_width))
+            lines.extend(_wrap_words(f" * {w_name}:", col_width, indent="   "))
+            sav = f"{w_sales:,.0f}".replace(",", " ")
+            ulu = f"{w_earn:,.0f}".replace(",", " ")
+            if col_width < 24:
+                # Juda tor chekda "Савдо" va "Улуш" alohida qatorda.
+                lines.append(_amount_line("  Савдо:", sav, col_width))
+                lines.append(_amount_line("  Улуш:", ulu, col_width))
+            else:
+                lines.append(_amount_line(f"   Савдо: {sav}", f"Улуш: {ulu}", col_width))
         lines.append(sep)
 
     return "\n".join(lines) + "\n\n\n"

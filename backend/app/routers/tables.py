@@ -24,7 +24,9 @@ from app.models.user import User, UserRole
 from app.models.order import Order, OrderItem, OrderStatus, CallStatus
 from app.models.restaurant import Restaurant, RestaurantSettings
 from app.models.receipt import ReceiptArchive
-from app.core.printer_service import format_pre_check, print_to_windows_printer
+from app.core.printer_service import (
+    format_pre_check, print_to_windows_printer, DEFAULT_FONT_SIZE
+)
 from app.schemas.table import TableCreate, TableUpdate, TableResponse, TablePublic
 from app.schemas.order import TableBillResponse, BillItemSummary
 from app.websockets.manager import manager
@@ -789,7 +791,7 @@ async def print_table_bill(
     cust_printer = getattr(settings, "printer_customer_name", None) or "X-Q80A"
     cp = getattr(settings, "printer_codepage", None) or 17
     paper_width = getattr(settings, "printer_paper_width", 80) or 80
-    fsize = getattr(settings, "printer_font_size", None) or "normal"
+    fsize = getattr(settings, "printer_font_size", None) or DEFAULT_FONT_SIZE
 
     # Buyurtmalarni olish
     orders_res = await db.execute(

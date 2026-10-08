@@ -57,7 +57,7 @@ def _sync_sqlite_migrations(sync_conn):
             ("receipt_phone", "VARCHAR(50)"),
             ("receipt_wifi_pass", "VARCHAR(100)"),
             ("printer_paper_width", "INTEGER DEFAULT 80"),
-            ("printer_font_size", "VARCHAR(20) DEFAULT 'normal'"),
+            ("printer_font_size", "VARCHAR(20) DEFAULT 'katta'"),
             ("printer_bar_name", "VARCHAR(100) DEFAULT ''"),
             ("bar_title", "VARCHAR(100) DEFAULT 'BAR (Ichimliklar)'"),
             ("printer_codepage", "INTEGER DEFAULT 17"),
@@ -106,6 +106,7 @@ def _sync_sqlite_migrations(sync_conn):
             ("weight", "FLOAT"),
             ("sent_to_kitchen", "BOOLEAN DEFAULT 0"),
             ("sent_to_kitchen_at", "TIMESTAMP"),
+            ("sent_quantity", "INTEGER DEFAULT 0"),
         ],
         "menu_items": [
             ("is_stop_list", "BOOLEAN DEFAULT 0"),
@@ -120,6 +121,8 @@ def _sync_sqlite_migrations(sync_conn):
         ],
     }
 
+    added = set()
+
     for table_name, cols in migrations.items():
         try:
             res = sync_conn.execute(text(f"PRAGMA table_info({table_name})"))
@@ -129,7 +132,25 @@ def _sync_sqlite_migrations(sync_conn):
             for col_name, col_def in cols:
                 if col_name not in existing_cols:
                     sync_conn.execute(text(f"ALTER TABLE {table_name} ADD COLUMN {col_name} {col_def}"))
+                    added.add((table_name, col_name))
         except Exception as e:
+            pass
+
+    # Yangi "sent_quantity" ustuni qo'shilganda: oshxonaga ALLAQACHON
+    # yuborilgan qatorlarni yuborilgan deb belgilaymiz. Aks holda
+    # yangilangandan keyin ochiq stollardagi barcha taomlar oshxonaga
+    # qaytadan chiqib ketardi.
+    if ("order_items", "sent_quantity") in added:
+        try:
+            sync_conn.execute(text(
+                "UPDATE order_items SET sent_quantity = quantity "
+                "WHERE sent_to_kitchen = 1"
+            ))
+            sync_conn.execute(text(
+                "UPDATE order_items SET sent_quantity = 0 "
+                "WHERE sent_quantity IS NULL"
+            ))
+        except Exception:
             pass
 
 

@@ -213,9 +213,12 @@ export const RestaurantSettingsTab = ({ restaurantId }) => {
     }
     setTestPrintLoading((prev) => ({ ...prev, [printerKey]: true }));
     try {
-      const sampleText = `================================\n   ${title.toUpperCase()}\n   RestAron Test Chop Etish\n================================\nPrinter: ${printerName}\nSana: ${new Date().toLocaleString()}\nHolat: Ulanish muvaffaqiyatli!\n================================\n\n\n`;
       await api.post('/receipts/print-raw-usb', {
-        text: sampleText,
+        // Namuna chek serverda yasaladi: qator kengligi tanlangan
+        // shriftga aniq moslanadi va admin qog'ozda AYNAN mijozga
+        // beriladigan chekni ko'radi.
+        text: '',
+        sample_receipt: true,
         printer_name: printerName,
         cut_paper: true,
         restaurant_id: restaurantId,
@@ -1281,16 +1284,24 @@ export const RestaurantSettingsTab = ({ restaurantId }) => {
               🔍 Chek shrifti o'lchami
             </label>
             <p className="text-[11px] text-theme-muted mb-2.5">
-              Tanlab, pastdagi printerning <b>"Test chop etish"</b> tugmasini
-              bosing — natijani qog'ozda darhol ko'rasiz. Eng yirik va qalin
-              yozuv uchun <b>"ENG KATTA"</b> ni tanlang (chek biroz uzunroq
-              chiqadi, lekin uzoqdan ham o'qiladi).
+              Tanlang va pastdagi printerning <b>"Test chop etish"</b> tugmasini
+              bosing — natijani qog'ozda darhol ko'rasiz. Hamma variant
+              <b> qalin (bold)</b> chiqadi.
+              <br />
+              <b className="text-amber-300">
+                Yozuv xira chiqsa — "Faqat balandroq" ni tanlamang:
+              </b>{' '}
+              harf bo'yiga cho'zilganda chiziqlari ingichka qolib xira
+              ko'rinadi. <b>"KATTA"</b> yoki <b>"Kengroq"</b> da harf eni ham
+              kattalashadi, shuning uchun to'q va aniq chiqadi.
             </p>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
               {[
-                { id: 'normal', nom: 'Oddiy', izoh: 'Eng kichik — 48 belgi' },
-                { id: 'katta', nom: 'Katta ✓', izoh: '2x balandroq, qalin — 48 belgi' },
-                { id: 'juda_katta', nom: 'ENG KATTA', izoh: '2x baland va keng, qalin — 24 belgi' },
+                { id: 'normal', nom: 'Oddiy', izoh: 'Eng kichik (1x1) — 48 belgi' },
+                { id: 'baland', nom: 'Faqat balandroq', izoh: '1x2 — xira chiqishi mumkin' },
+                { id: 'keng', nom: 'Kengroq', izoh: '2x1 — eng TO\'Q, 24 belgi' },
+                { id: 'katta', nom: 'KATTA ✓', izoh: '2x2 — katta va to\'q, 24 belgi' },
+                { id: 'juda_katta', nom: 'ENG KATTA', izoh: '3x3 — juda yirik, 16 belgi' },
               ].map((v) => (
                 <button
                   key={v.id}

@@ -28,7 +28,10 @@ from app.schemas.order import (
     UpdateItemWeightRequest,
     OrderNoteUpdate, OrderCheckoutRequest
 )
-from app.core.printer_service import format_kitchen_ticket, format_pre_check, print_to_windows_printer
+from app.core.printer_service import (
+    format_kitchen_ticket, format_pre_check, print_to_windows_printer,
+    DEFAULT_FONT_SIZE,
+)
 from app.core.sms_telegram import send_telegram_alert
 from app.websockets.manager import manager
 
@@ -180,6 +183,7 @@ def build_order_response(order: Order, table_number: Optional[int] = None, waite
                 unit=(getattr(item.menu_item, "unit", "dona") or "dona") if item.menu_item else "dona",
                 sent_to_kitchen=bool(item.sent_to_kitchen),
                 sent_to_kitchen_at=item.sent_to_kitchen_at,
+                sent_quantity=int(item.sent_quantity or 0),
                 is_prepared=bool(item.is_prepared),
                 prepared_at=item.prepared_at,
                 menu_item_name=item.menu_item.name if item.menu_item else None,
@@ -475,6 +479,7 @@ async def waiter_create_order(
             weight=item_data.weight,
             item_time=now_time_str,
             sent_to_kitchen=False,
+            sent_quantity=0,
         )
         db.add(order_item)
         menu_item.total_ordered += item_data.quantity
@@ -580,6 +585,7 @@ async def waiter_add_items(
             item_time=now_time_str,
             sent_to_kitchen=payload.send_to_kitchen_immediately,
             sent_to_kitchen_at=datetime.now(timezone.utc) if payload.send_to_kitchen_immediately else None,
+            sent_quantity=(item_data.quantity if payload.send_to_kitchen_immediately else 0),
         )
         db.add(order_item)
         menu_item.total_ordered += item_data.quantity
@@ -808,12 +814,13 @@ async def update_order_notes(
 @router.post("/{order_id}/send-to-kitchen", summary="Oshxonaga yuborish (Xprinter Begunok)")
 async def send_to_kitchen(
     order_id: int,
+    reprint: bool = False,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_role("waiter", "admin", "developer")),
 ):
     """
     Ofitsiant 'На кухню' tugmasini bosadi:
-    1. Yuborilmagan taomlarni sent_to_kitchen = True qiladi
+    1. FAQAT yangi qo'shilgan taomlarni (quantity - sent_quantity) yuboradi
     2. Xprinter uchun oshxona begunogi matnini formatlaydi (Rasm 1 dagidek)
     3. ReceiptArchive ga 'kitchen' sifatida saqlaydi
     4. Oshpaz KDS ekraniga WebSocket xabar beradi
@@ -831,13 +838,54 @@ async def send_to_kitchen(
     if not order:
         raise HTTPException(status_code=404, detail="Buyurtma topilmadi")
 
-    unsent_items = [i for i in order.items if not i.sent_to_kitchen]
-    target_items = unsent_items if unsent_items else order.items
+    # Oshxonaga faqat YANGI qo'shilganlar chiqadi.
+    #
+    # Ofitsiant 1 somsa yuborgandan keyin yana 1 somsa qo'shsa, oshxonada
+    # "1 somsa" chiqishi kerak — "2 somsa" emas, aks holda oshpaz ikkita
+    # tayyorlaydi. Shuning uchun har qatorda "nechta yuborilgan"
+    # (sent_quantity) saqlanadi va begunokka faqat farqi chiqadi.
+    #
+    # Ilgari bu yerda "yangisi bo'lmasa — hammasini chiqar" degan zahira
+    # yo'l bor edi: tugma ikkinchi marta bosilganda butun buyurtma
+    # qaytadan chiqib ketardi.
+    pending: List[tuple] = []   # (OrderItem, shu begunokda chiqadigan yangi soni)
+    for it in order.items:
+        qty = it.quantity or 0
+        already = it.sent_quantity or 0
+        # Ofitsiant yuborgandan keyin sonini kamaytirgan bo'lsa
+        # (already > qty) hisobni kamaytirmaymiz: oshxona ko'pini
+        # tayyorlayotgan bo'lishi mumkin, keyin qayta qo'shilsa
+        # ikkinchi marta chiqib ketmasligi kerak.
+        delta = qty - already
+        if delta > 0:
+            pending.append((it, delta))
+
+    if not pending and not reprint:
+        # Yangi taom yo'q. Bu yerda hech narsa chop etilmaydi — ofitsiant
+        # xohlasa "qayta chiqarish" bilan butun begunokni takrorlaydi.
+        return {
+            "success": True,
+            "order_id": order.id,
+            "items_count": 0,
+            "nothing_new": True,
+            "message": "Yangi taom yo'q — barchasi oshxonaga allaqachon yuborilgan.",
+            "tickets": [],
+            "raw_text": "",
+        }
+
+    if reprint:
+        # Begunok printerdan chiqmagan bo'lsa ofitsiant qaytadan
+        # chiqaradi: butun buyurtma chiqadi va begunok tepasida
+        # "ТАКРОР" deb yoziladi — oshpaz ikkinchi marta tayyorlamasin.
+        target_items = [(it, it.quantity or 0) for it in order.items if (it.quantity or 0) > 0]
+    else:
+        target_items = pending
 
     now_utc = datetime.now(timezone.utc)
-    for it in target_items:
+    for it, _delta in pending:
         it.sent_to_kitchen = True
         it.sent_to_kitchen_at = now_utc
+        it.sent_quantity = max(it.sent_quantity or 0, it.quantity or 0)
 
     if order.status == OrderStatus.PENDING:
         order.status = OrderStatus.PREPARING
@@ -863,7 +911,7 @@ async def send_to_kitchen(
     bar_items = []
     kassa_items = []
 
-    for it in target_items:
+    for it, send_qty in target_items:
         st = getattr(it.menu_item, "kitchen_station", "hot_kitchen") if it.menu_item else "hot_kitchen"
         st = (st or "hot_kitchen").lower().strip()
 
@@ -871,7 +919,9 @@ async def send_to_kitchen(
 
         item_dict = {
             "name": dish_name,
-            "quantity": it.quantity,
+            # MUHIM: qatordagi umumiy son emas, shu begunokda oshxonaga
+            # chiqayotgan YANGI son.
+            "quantity": send_qty,
             "note": it.special_note,
             # O'lchanadigan taomning hajmi — oshxona nechchi litr/kg
             # ekanini begunokdan ko'rishi uchun.
@@ -910,7 +960,7 @@ async def send_to_kitchen(
         or (getattr(settings, "printer_customer_name", None) or "X-Q80A")
     auto_print = getattr(settings, "auto_print_kitchen", True)
     cp = getattr(settings, "printer_codepage", None) or 17
-    fsize = getattr(settings, "printer_font_size", None) or "normal"
+    fsize = getattr(settings, "printer_font_size", None) or DEFAULT_FONT_SIZE
 
     generated_tickets = []
     combined_texts = []
@@ -940,6 +990,7 @@ async def send_to_kitchen(
             paper_width=paper_width,
             station_title=station_title,
             font_size=fsize,
+            is_reprint=bool(reprint),
         )
         combined_texts.append(ticket_text)
 
@@ -1010,7 +1061,8 @@ async def send_to_kitchen(
     return {
         "success": True,
         "order_id": order.id,
-        "items_count": len(target_items),
+        "items_count": sum(q for _it, q in target_items),
+        "nothing_new": False,
         "tickets": generated_tickets,
         "raw_text": main_raw_text,
     }
@@ -1161,7 +1213,7 @@ async def checkout_order(
         order.table.is_unlocked = False
 
     paper_width = settings.printer_paper_width if settings else 80
-    fsize = getattr(settings, "printer_font_size", None) or "normal"
+    fsize = getattr(settings, "printer_font_size", None) or DEFAULT_FONT_SIZE
     table_disp = f"{order.hall_name or (order.table.room if order.table else '')} N#{order.table.number if order.table else ''}".strip()
     waiter_disp = (order.waiter.full_name or order.waiter.username) if order.waiter else current_user.full_name
 
