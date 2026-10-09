@@ -8,7 +8,7 @@ import qrcode
 import aiofiles
 from io import BytesIO
 from datetime import datetime, timezone
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -612,7 +612,10 @@ async def get_table_bill(table_id: int, db: AsyncSession = Depends(get_db)):
             select(RestaurantSettings).where(RestaurantSettings.restaurant_id == table.restaurant_id)
         )
         rsettings = set_res.scalar_one_or_none()
-        service_fee_percent = (rsettings.service_fee_percent if rsettings else None) or 12.0
+        # 0% ham haqiqiy qiymat — `or 12.0` yozilsa restoran xizmat
+        # haqini butunlay o'chirganda ham 12% chiqib ketardi.
+        cfg = rsettings.service_fee_percent if rsettings else None
+        service_fee_percent = 12.0 if cfg is None else float(cfg)
 
     service_fee_amount = round(subtotal * (service_fee_percent / 100.0), 2)
     grand_total = round(subtotal + service_fee_amount, 2)
@@ -678,7 +681,8 @@ async def checkout_table(
         select(RestaurantSettings).where(RestaurantSettings.restaurant_id == table.restaurant_id)
     )
     rest_settings = set_res.scalar_one_or_none()
-    default_fee = rest_settings.service_fee_percent if rest_settings else 12.0
+    _cfg_fee = rest_settings.service_fee_percent if rest_settings else None
+    default_fee = 12.0 if _cfg_fee is None else float(_cfg_fee)
 
     # Ushbu stoldagi barcha to'lanmagan faol buyurtmalarni PAID qilish
     orders_res = await db.execute(
@@ -714,7 +718,7 @@ async def checkout_table(
         # Summalarni qayta hisoblaymiz — hisobot va kassa mos kelishi uchun
         subtotal = sum(i.total_price or 0.0 for i in o.items)
         fee_pct = o.service_fee_percent if o.service_fee_percent is not None else default_fee
-        fee_amount = round(subtotal * ((fee_pct or 0.0) / 100.0), 2)
+        fee_amount = round(subtotal * (float(fee_pct) / 100.0), 2)
         total = round(max(0.0, subtotal + fee_amount - (o.discount or 0.0)), 2)
 
         o.subtotal = subtotal
@@ -769,6 +773,77 @@ async def checkout_table(
     )
 
     return TableResponse.model_validate(table)
+
+
+class TableServiceFeeRequest(BaseModel):
+    """Shu stol hisobidagi xizmat haqi foizini o'zgartirish"""
+    percent: float = Field(..., ge=0, le=100)
+
+
+@router.patch("/{table_id}/service-fee", summary="Stol hisobidagi xizmat haqi foizini o'zgartirish")
+async def set_table_service_fee(
+    table_id: int,
+    payload: TableServiceFeeRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role("admin", "waiter", "developer")),
+):
+    """Shu stolning OCHIQ hisobiga boshqa xizmat haqi foizini qo'yish.
+
+    Har stol uchun har xil foiz kerak bo'ladi (masalan VIP xonaga 15%,
+    ko'chaga 0%). Sukut bo'yicha sozlamalardagi foiz (12%) ishlatiladi —
+    kassir hech narsa qilmasa shu qoladi. O'zgartirsa esa shu stolning
+    hisobida ham, chekda ham aynan shu foiz chiqadi.
+
+    Restoranning umumiy sozlamasiga TEGILMAYDI: boshqa stollar
+    avvalgidek ishlayveradi.
+    """
+    res = await db.execute(select(Table).where(Table.id == table_id))
+    table = res.scalar_one_or_none()
+    if not table:
+        raise HTTPException(status_code=404, detail="Stol topilmadi")
+
+    orders_res = await db.execute(
+        select(Order)
+        .options(selectinload(Order.items))
+        .where(
+            Order.table_id == table_id,
+            Order.is_paid == False,
+            Order.status.notin_([OrderStatus.CANCELLED, OrderStatus.PAID]),
+        )
+    )
+    orders = orders_res.scalars().all()
+    if not orders:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Stol #{table.number} da ochiq hisob yo'q — foizni o'zgartirib bo'lmaydi.",
+        )
+
+    pct = round(float(payload.percent), 2)
+    for o in orders:
+        subtotal = sum((i.total_price or 0.0) for i in o.items)
+        o.service_fee_percent = pct
+        o.subtotal = round(subtotal, 2)
+        o.service_fee_amount = round(subtotal * (pct / 100.0), 2)
+        o.total = round(subtotal + o.service_fee_amount - (o.discount or 0.0), 2)
+
+    await db.flush()
+
+    total = round(sum((o.total or 0.0) for o in orders), 2)
+    await manager.broadcast_to_restaurant(table.restaurant_id, {
+        "type": "order_updated",
+        "table_id": table_id,
+        "table_number": table.number,
+        "service_fee_percent": pct,
+        "total": total,
+    })
+
+    return {
+        "success": True,
+        "table_id": table_id,
+        "service_fee_percent": pct,
+        "orders_updated": len(orders),
+        "total": total,
+    }
 
 
 @router.post("/{table_id}/print-bill", summary="Stol hisob chekini Printer 1 ga chop etish (Kassa / Mijoz)")
@@ -873,7 +948,14 @@ async def print_table_bill(
             })
             subtotal += it.total_price
 
-    fee_pct = getattr(settings, "service_fee_percent", 12.0) or 12.0
+    # Xizmat haqi foizi BUYURTMADAN olinadi. Kassir shu stol uchun
+    # foizni o'zgartirgan bo'lsa (masalan VIP xonaga 15%), chekda ham
+    # aynan shu foiz chiqishi kerak — aks holda ekranda bir summa,
+    # qog'ozda boshqa summa bo'lib qoladi.
+    fee_candidates = [o.service_fee_percent for o in target_orders
+                      if o.service_fee_percent is not None]
+    _cfg = getattr(settings, "service_fee_percent", None)
+    fee_pct = fee_candidates[0] if fee_candidates else (12.0 if _cfg is None else float(_cfg))
     fee_amount = round(subtotal * (fee_pct / 100.0), 2)
     grand_total = subtotal + fee_amount
     rest_name = settings.receipt_header if (settings and settings.receipt_header) else (table.restaurant.name if table.restaurant else "RestAron")

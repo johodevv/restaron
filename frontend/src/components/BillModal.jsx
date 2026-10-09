@@ -34,6 +34,10 @@ export const BillModal = ({
   const [weightEdit, setWeightEdit] = useState(null);   // {order_id, order_item_id, name, unit}
   const [weightValue, setWeightValue] = useState('');
   const [priceValue, setPriceValue] = useState('');
+  // Xizmat haqi foizini shu hisob uchun o'zgartirish (VIP 15%, ko'cha 0% ...)
+  const [feeEditOpen, setFeeEditOpen] = useState(false);
+  const [feeValue, setFeeValue] = useState('');
+  const [savingFee, setSavingFee] = useState(false);
   const [savingWeight, setSavingWeight] = useState(false);
   const { addEventListener } = useWebSocket();
   // Hisob yopilayotganda kelgan WebSocket xabari eski chekni qaytarib
@@ -108,6 +112,8 @@ export const BillModal = ({
   /* Mijozga beriladigan chekda xizmat haqining SUMMASI yozilmaydi —
      faqat foizi ko'rinadi (termal chekdagidek). */
   .bill-fee-amount { display:none; }
+  /* Foizni o'zgartirish tugmasi faqat ekran uchun — chekka tushmaydi */
+  .bill-fee-box { display:none; }
   svg { display:none; }
 </style></head><body>
 <h1>Hisob — Stol #${bill?.table_number ?? ''}</h1>
@@ -132,6 +138,27 @@ ${node.innerHTML}
       alert(`❌ Chek chiqarishda xatolik: ` + (err.message || ''));
     } finally {
       setPrintingThermal(false);
+    }
+  };
+
+  // Shu stol hisobi uchun xizmat haqi foizini o'zgartirish.
+  // Tegilmasa sozlamalardagi foiz (12%) o'z holicha qoladi —
+  // har chek chiqarganda qayta kiritib o'tirish shart emas.
+  const handleSaveFee = async () => {
+    const v = parseFloat(String(feeValue).replace(',', '.'));
+    if (isNaN(v) || v < 0 || v > 100) {
+      alert('Foizni 0 dan 100 gacha kiriting (masalan: 12)');
+      return;
+    }
+    setSavingFee(true);
+    try {
+      await api.patch(`/tables/${tableId}/service-fee`, { percent: v });
+      setFeeEditOpen(false);
+      await fetchBill();
+    } catch (err) {
+      alert(err.message || "Xizmat haqini o'zgartirishda xatolik");
+    } finally {
+      setSavingFee(false);
     }
   };
 
@@ -355,6 +382,97 @@ ${node.innerHTML}
             </div>
           ) : (
             <div id="printable-bill" className="space-y-4">
+              {/* ─── Xizmat haqi foizi (TEPADA) ────────────────────
+                  Har stol uchun har xil foiz kerak bo'ladi. Tegilmasa
+                  sozlamadagi foiz (12%) o'z holicha qoladi — har chek
+                  chiqarganda qayta kiritib o'tirish shart emas.
+                  Bu blok faqat EKRANDA ko'rinadi, chekka tushmaydi. */}
+              {isStaff && (
+                <div className="bill-fee-box p-3 rounded-2xl bg-amber-500/10 border border-amber-500/40">
+                  {!feeEditOpen ? (
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="text-xs font-black text-white">
+                          Xizmat haqi:{' '}
+                          <span className="text-amber-300 font-mono">
+                            {bill.service_fee_percent ?? 12}%
+                          </span>
+                        </div>
+                        <div className="text-[10px] text-theme-muted mt-0.5">
+                          Shu stol uchun boshqa foiz kerak bo'lsa o'zgartiring.
+                          Tegmasangiz shu foiz qolaveradi.
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setFeeValue(String(bill.service_fee_percent ?? 12));
+                          setFeeEditOpen(true);
+                        }}
+                        className="shrink-0 px-3 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-black transition-all active:scale-95"
+                      >
+                        O'zgartirish
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="space-y-2.5">
+                      <div className="text-xs font-black text-white">
+                        Shu hisob uchun xizmat haqi foizi
+                      </div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {[0, 5, 10, 12, 15, 20].map((v) => (
+                          <button
+                            key={v}
+                            type="button"
+                            onClick={() => setFeeValue(String(v))}
+                            className={`px-3 py-1.5 rounded-xl text-xs font-black transition-all active:scale-95 ${
+                              String(v) === String(feeValue)
+                                ? 'bg-amber-500 text-slate-950'
+                                : 'bg-black/30 border border-theme-border text-slate-300 hover:border-amber-500/60'
+                            }`}
+                          >
+                            {v}%
+                          </button>
+                        ))}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="number"
+                          min="0"
+                          max="100"
+                          step="0.5"
+                          inputMode="decimal"
+                          autoFocus
+                          value={feeValue}
+                          onChange={(e) => setFeeValue(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') handleSaveFee();
+                            if (e.key === 'Escape') setFeeEditOpen(false);
+                          }}
+                          className="w-24 p-2.5 rounded-xl bg-slate-950 border-2 border-amber-600 text-lg text-white font-mono font-black text-center focus:outline-none focus:border-amber-400"
+                        />
+                        <span className="text-sm font-black text-amber-300">%</span>
+                        <button
+                          type="button"
+                          onClick={handleSaveFee}
+                          disabled={savingFee}
+                          className="flex-1 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 disabled:opacity-40 text-slate-950 text-xs font-black transition-all active:scale-95"
+                        >
+                          {savingFee ? 'Saqlanmoqda...' : 'Saqlash'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setFeeEditOpen(false)}
+                          className="px-3 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-bold text-slate-300"
+                        >
+                          Bekor
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
               {/* Receipt info header */}
               <div className="p-3.5 rounded-2xl bg-black/20 border border-theme-border/40 text-xs space-y-1 text-theme-muted">
                 <div className="flex justify-between font-medium">

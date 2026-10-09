@@ -128,6 +128,22 @@ async def load_order_full(db: AsyncSession, order_id: int) -> Optional[Order]:
     return res.scalar_one_or_none()
 
 
+DEFAULT_SERVICE_FEE = 12.0
+
+
+def order_fee_percent(order: Order, fallback: Optional[float] = None) -> float:
+    """Buyurtmaning xizmat haqi foizi.
+
+    MUHIM: 0% ham HAQIQIY qiymat. Ilgari `order.service_fee_percent or 12`
+    deb yozilgandi va kassir "xizmat haqi olinmasin" deb 0% qo'yganda
+    u jimgina 12% ga aylanib ketardi — mijozdan ortiqcha pul olinardi.
+    """
+    v = order.service_fee_percent
+    if v is None:
+        v = fallback if fallback is not None else DEFAULT_SERVICE_FEE
+    return float(v)
+
+
 def line_total(menu_item: MenuItem, quantity: int, weight: Optional[float],
                manual_price: Optional[float] = None) -> float:
     """Bitta qator summasi.
@@ -178,7 +194,7 @@ async def recalc_order_totals(db: AsyncSession, order: Order) -> None:
     """Buyurtma summalarini qatorlardan qayta hisoblash"""
     res = await db.execute(select(OrderItem).where(OrderItem.order_id == order.id))
     subtotal = sum((i.total_price or 0.0) for i in res.scalars().all())
-    fee_pct = order.service_fee_percent or 12.0
+    fee_pct = order_fee_percent(order)
     order.subtotal = subtotal
     order.service_fee_amount = round(subtotal * (fee_pct / 100.0), 2)
     order.total = round(subtotal + order.service_fee_amount - (order.discount or 0.0), 2)
@@ -235,7 +251,7 @@ def build_order_response(order: Order, table_number: Optional[int] = None, waite
         receipt_note=order.receipt_note,
         status=order.status,
         subtotal=order.subtotal or 0.0,
-        service_fee_percent=order.service_fee_percent or 12.0,
+        service_fee_percent=order_fee_percent(order),
         service_fee_amount=order.service_fee_amount or 0.0,
         discount=order.discount or 0.0,
         total=order.total or 0.0,
@@ -620,7 +636,7 @@ async def waiter_add_items(
         })
 
     order.subtotal = new_subtotal
-    fee_pct = order.service_fee_percent or 12.0
+    fee_pct = order_fee_percent(order)
     order.service_fee_amount = new_subtotal * (fee_pct / 100.0)
     order.total = new_subtotal + order.service_fee_amount - (order.discount or 0.0)
 
@@ -817,7 +833,7 @@ async def delete_order_item(
     )
     order = order_res.scalar_one()
     order.subtotal = subtotal
-    fee_pct = order.service_fee_percent or 12.0
+    fee_pct = order_fee_percent(order)
     order.service_fee_amount = subtotal * (fee_pct / 100.0)
     order.total = subtotal + order.service_fee_amount - (order.discount or 0.0)
 
@@ -1158,9 +1174,20 @@ async def checkout_order(
     restaurant = rest_res.scalar_one_or_none()
     rest_name = restaurant.name if restaurant else "RestAron"
 
-    fee_pct = payload.service_fee_percent if payload.service_fee_percent is not None else (
-        settings.service_fee_percent if settings else 12.0
-    )
+    # Xizmat haqi foizi tartibi:
+    #   1) to'lov oynasida ataylab boshqa foiz yuborilgan bo'lsa — o'sha;
+    #   2) aks holda BUYURTMAGA qo'yilgan foiz (kassir shu stol uchun
+    #      o'zgartirgan bo'lishi mumkin — masalan VIP xonaga 15%);
+    #   3) ikkisi ham yo'q bo'lsa — sozlamadagi umumiy foiz.
+    # Ilgari 2-qadam yo'q edi: kassir stol uchun foizni o'zgartirsa ham
+    # to'lovda u 12% ga qaytib ketardi va mijozdan boshqa summa olinardi.
+    if payload.service_fee_percent is not None:
+        fee_pct = float(payload.service_fee_percent)
+    else:
+        fee_pct = order_fee_percent(
+            order,
+            fallback=(settings.service_fee_percent if settings else None),
+        )
     subtotal = sum(i.total_price for i in order.items)
     fee_amount = subtotal * (fee_pct / 100.0)
     discount = payload.discount

@@ -254,6 +254,8 @@ async def print_raw_usb(
             select(Restaurant).where(Restaurant.id == payload.restaurant_id)
         )
         rest = rest_res.scalar_one_or_none()
+        _cfg_fee = getattr(st, "service_fee_percent", None)
+        _sample_fee = 12.0 if _cfg_fee is None else float(_cfg_fee)
         text = format_pre_check(
             restaurant_name=(rest.name if rest else "RestAron"),
             address=(rest.address if rest else None),
@@ -267,10 +269,10 @@ async def print_raw_usb(
                 {"name": "Non", "quantity": 4, "unit_price": 2000, "total_price": 8000},
             ],
             subtotal=87000,
-            service_fee_percent=(getattr(st, "service_fee_percent", 12.0) or 12.0),
-            service_fee_amount=87000 * ((getattr(st, "service_fee_percent", 12.0) or 12.0) / 100.0),
+            service_fee_percent=_sample_fee,
+            service_fee_amount=87000 * (_sample_fee / 100.0),
             discount=0.0,
-            total=87000 * (1 + (getattr(st, "service_fee_percent", 12.0) or 12.0) / 100.0),
+            total=87000 * (1 + _sample_fee / 100.0),
             receipt_note="SINOV CHEKI — shriftni tekshirish uchun",
             footer_text=getattr(st, "receipt_footer", None),
             paper_width=paper_width,

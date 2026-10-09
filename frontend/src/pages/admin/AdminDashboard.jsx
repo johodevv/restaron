@@ -10,6 +10,7 @@ import { DebtsTab } from './DebtsTab';
 import { ReceiptsArchiveTab } from './ReceiptsArchiveTab';
 import { PaymentsReportTab } from './PaymentsReportTab';
 import { WaiterKpiTab } from './WaiterKpiTab';
+import WaiterDashboard from '../waiter/WaiterDashboard';
 import { RestaurantSettingsTab } from './RestaurantSettingsTab';
 import {
   LayoutDashboard,
@@ -50,6 +51,7 @@ import {
   FileSpreadsheet,
   Trophy,
   Palette,
+  ShoppingCart,
   CreditCard,
   MapPin
 } from 'lucide-react';
@@ -936,6 +938,9 @@ export const AdminDashboard = () => {
       <div className="flex items-center gap-2 overflow-x-auto pb-2 scrollbar-none no-scrollbar">
         {[
           { key: 'overview', label: 'Xulosa', icon: LayoutDashboard },
+          // Admin ham xuddi ofitsiantdek zakas olishi mumkin — kassada
+          // o'tirgan xodim stolga taom qo'shib, oshxonaga yuboradi.
+          { key: 'pos', label: 'Zakas olish (POS)', icon: ShoppingCart },
           { key: 'menu', label: 'Menyu & Taomlar', icon: UtensilsCrossed },
           { key: 'tables', label: 'Stollar & QR', icon: TableIcon },
           { key: 'staff', label: 'Xodimlar', icon: Users },
@@ -1101,6 +1106,23 @@ export const AdminDashboard = () => {
       )}
 
       {/* TAB 2: MENU & DISHES MANAGER */}
+      {/* ─── Zakas olish: ofitsiant paneli admin uchun ────────────
+          Butun POS shu yerga qo'yiladi — admin stolni tanlab, taom
+          qo'shib, oshxonaga yuboradi. Kod takrorlanmaydi: ayni bir
+          komponent ishlatiladi, shuning uchun ofitsiant panelidagi
+          barcha imkoniyatlar (zonalar, baliq narxi, begunok) bir xil
+          ishlaydi. */}
+      {tab === 'pos' && (
+        <div className="-mx-4">
+          <div className="mx-4 mb-3 p-3 rounded-2xl bg-theme-primary/10 border border-theme-primary/30 text-xs text-theme-text">
+            <b className="text-white">Zakas olish.</b> Stolni tanlang, o'ng tomondan
+            taomlarni bosing va <b>"Buyurtmani tasdiqlash"</b> tugmasi bilan
+            oshxonaga yuboring. Buyurtma sizning nomingizga yoziladi.
+          </div>
+          <WaiterDashboard />
+        </div>
+      )}
+
       {tab === 'menu' && (
         <div className="space-y-6">
           {/* Top Actions: Add Category & Add Dish */}

@@ -80,6 +80,18 @@ def _name_amount_block(name: str, right: str, width: int) -> List[str]:
     return parts
 
 
+def fmt_percent(value: float) -> str:
+    """Foizni chekda chiroyli yozish: 12 -> "12", 7.5 -> "7.5".
+
+    Ilgari ".0f" ishlatilgandi va 7.5% chekda "8%" bo'lib chiqardi —
+    mijoz 8% deb o'qib, aslida 7.5% to'lardi.
+    """
+    v = float(value or 0)
+    if abs(v - round(v)) < 0.005:
+        return f"{round(v):d}"
+    return f"{v:.2f}".rstrip("0").rstrip(".")
+
+
 def _amount_line(label: str, amount: str, width: int = 42) -> str:
     """Nomi va summasini bir qatorga joylashtiradi.
 
@@ -673,7 +685,7 @@ def format_pre_check(
         else:
             fee_title = "Хизмат ҳақи (Обслуж.):"
         lines.append(_amount_line(
-            fee_title, f"{service_fee_percent:.0f}%", col_width))
+            fee_title, f"{fmt_percent(service_fee_percent)}%", col_width))
 
     if discount > 0:
         disc_str = f"-{discount:,.0f}".replace(",", " ")
