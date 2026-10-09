@@ -25,7 +25,8 @@ from app.models.order import Order, OrderItem, OrderStatus, CallStatus
 from app.models.restaurant import Restaurant, RestaurantSettings
 from app.models.receipt import ReceiptArchive
 from app.core.printer_service import (
-    format_pre_check, print_to_windows_printer, DEFAULT_FONT_SIZE
+    format_pre_check, print_to_windows_printer, DEFAULT_FONT_SIZE,
+    printer_options,
 )
 from app.schemas.table import TableCreate, TableUpdate, TableResponse, TablePublic
 from app.schemas.order import TableBillResponse, BillItemSummary
@@ -584,6 +585,7 @@ async def get_table_bill(table_id: int, db: AsyncSession = Depends(get_db)):
                     "name": name,
                     "portion_size": size,
                     "weight": wt,
+                    "manual_price": item.manual_price,
                     "unit": unit,
                     "is_weighted": weighed,
                     "order_id": o.id,
@@ -696,13 +698,15 @@ async def checkout_table(
     for o in active_orders:
         for it in o.items:
             mi = it.menu_item
-            if mi and getattr(mi, "is_weighted", False) and (not it.weight or it.weight <= 0):
+            priced = (it.manual_price is not None and it.manual_price >= 0) or \
+                     bool(it.weight and it.weight > 0)
+            if mi and getattr(mi, "is_weighted", False) and not priced:
                 not_weighed.append(mi.name)
     if not_weighed:
         raise HTTPException(
             status_code=400,
             detail="Stolni yopib bo'lmaydi: " + ", ".join(sorted(set(not_weighed))) +
-                   " hali tortilmagan. Avval aniq og'irlikni kiriting.",
+                   " narxi kiritilmagan. Ofitsiant panelida summasini yozing.",
         )
 
     closed_at = datetime.now(timezone.utc)
@@ -789,9 +793,10 @@ async def print_table_bill(
     )
     settings = s_res.scalar_one_or_none()
     cust_printer = getattr(settings, "printer_customer_name", None) or "X-Q80A"
-    cp = getattr(settings, "printer_codepage", None) or 17
     paper_width = getattr(settings, "printer_paper_width", 80) or 80
-    fsize = getattr(settings, "printer_font_size", None) or DEFAULT_FONT_SIZE
+    popts = printer_options(settings)
+    cp = popts["codepage"]
+    fsize = popts["font_size"]
 
     # Buyurtmalarni olish
     orders_res = await db.execute(
@@ -818,13 +823,15 @@ async def print_table_bill(
             continue
         for it in o.items:
             mi = it.menu_item
-            if mi and getattr(mi, "is_weighted", False) and (not it.weight or it.weight <= 0):
+            priced = (it.manual_price is not None and it.manual_price >= 0) or \
+                     bool(it.weight and it.weight > 0)
+            if mi and getattr(mi, "is_weighted", False) and not priced:
                 not_weighed.append(mi.name)
     if not_weighed:
         raise HTTPException(
             status_code=400,
             detail="Chek chiqarib bo'lmaydi: " + ", ".join(sorted(set(not_weighed))) +
-                   " hali tortilmagan. Ofitsiant panelida aniq og'irlikni kiriting.",
+                   " narxi kiritilmagan. Ofitsiant panelida summasini yozing.",
         )
 
     active_orders = [o for o in orders if not o.is_paid]
@@ -860,6 +867,7 @@ async def print_table_bill(
                 "total_price": it.total_price,
                 "size": it.portion_size,
                 "weight": it.weight,
+                "manual_price": it.manual_price,
                 "unit": (getattr(it.menu_item, "unit", None) or "kg") if it.menu_item else "kg",
                 "is_weighted": bool(getattr(it.menu_item, "is_weighted", False)) if it.menu_item else False,
             })
@@ -893,11 +901,11 @@ async def print_table_bill(
         wifi_pass=settings.receipt_wifi_pass if settings else None,
         paper_width=paper_width,
         font_size=fsize,
+        char_spacing=popts["char_spacing"],
     )
 
     # 1-Printer (USB yoki LAN IP) ga chop etish
-    p_res = print_to_windows_printer(bill_text, printer_name=cust_printer,
-                                     codepage=cp, font_size=fsize)
+    p_res = print_to_windows_printer(bill_text, printer_name=cust_printer, **popts)
 
     archive = ReceiptArchive(
         restaurant_id=table.restaurant_id,

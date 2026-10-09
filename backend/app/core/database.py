@@ -58,6 +58,8 @@ def _sync_sqlite_migrations(sync_conn):
             ("receipt_wifi_pass", "VARCHAR(100)"),
             ("printer_paper_width", "INTEGER DEFAULT 80"),
             ("printer_font_size", "VARCHAR(20) DEFAULT 'katta'"),
+            ("printer_char_spacing", "INTEGER DEFAULT 1"),
+            ("printer_line_spacing", "VARCHAR(20) DEFAULT 'oddiy'"),
             ("printer_bar_name", "VARCHAR(100) DEFAULT ''"),
             ("bar_title", "VARCHAR(100) DEFAULT 'BAR (Ichimliklar)'"),
             ("printer_codepage", "INTEGER DEFAULT 17"),
@@ -107,6 +109,7 @@ def _sync_sqlite_migrations(sync_conn):
             ("sent_to_kitchen", "BOOLEAN DEFAULT 0"),
             ("sent_to_kitchen_at", "TIMESTAMP"),
             ("sent_quantity", "INTEGER DEFAULT 0"),
+            ("manual_price", "FLOAT"),
         ],
         "menu_items": [
             ("is_stop_list", "BOOLEAN DEFAULT 0"),

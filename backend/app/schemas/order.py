@@ -30,6 +30,7 @@ class OrderItemResponse(BaseModel):
 
     # Tortiladigan taom (baliq, go'sht) ma'lumotlari
     weight: Optional[float] = None          # aniq tortilgan og'irlik
+    manual_price: Optional[float] = None    # qo'lda kiritilgan summa (kg o'rniga)
     is_weighted: bool = False               # bu taom tortiladimi
     unit: str = "dona"                      # "kg", "l", "dona"
     sent_to_kitchen: bool = False
@@ -79,8 +80,17 @@ class UpdateItemQtyRequest(BaseModel):
 
 
 class UpdateItemWeightRequest(BaseModel):
-    """Tortilgan aniq og'irlikni kiritish (1.35 kg). Narx qayta hisoblanadi."""
+    """Tortiladigan taom narxini belgilash.
+
+    Ikki yo'l bilan:
+      * `price` — ofitsiant tarozidagi SUMMANI to'g'ridan-to'g'ri yozadi
+        (asosiy yo'l: "baliqni kg emas, pulini yoz");
+      * `weight` — aniq og'irlik (kg), narx 1 kg narxiga ko'paytiriladi.
+    Ikkisi birga berilsa: summa — `price`, chekda esa og'irlik ham
+    ko'rinadi (oshxona nechchi kg ekanini bilishi uchun).
+    """
     weight: Optional[float] = Field(default=None, gt=0, le=1000)
+    price: Optional[float] = Field(default=None, ge=0, le=1_000_000_000)
 
 
 class UpdateItemSizeRequest(BaseModel):
@@ -194,6 +204,8 @@ class BillItemSummary(BaseModel):
     name: str
     portion_size: Optional[str] = None
     weight: Optional[float] = None
+    # Ofitsiant qo'lda yozgan summa (baliqning kg i emas, puli)
+    manual_price: Optional[float] = None
     unit: str = "dona"
     is_weighted: bool = False
     # Tortiladigan taomni admin panelda tuzatish uchun kerak

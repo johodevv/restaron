@@ -117,6 +117,12 @@ class OrderItem(Base):
     # puli yozilganini ko'radi.
     weight = Column(Float, nullable=True)
 
+    # Tortiladigan taom uchun QO'LDA kiritilgan summa.
+    # Ofitsiant baliqni tarozida tortib, kg emas, to'g'ridan-to'g'ri
+    # PULINI yozadi. Shu to'ldirilgan bo'lsa narx kg x narx bo'yicha
+    # qayta hisoblanmaydi — ofitsiant yozgan summa o'zgarmaydi.
+    manual_price = Column(Float, nullable=True)
+
     # Oshxona yuborilganlik holati (Oshxona begunogi)
     sent_to_kitchen = Column(Boolean, default=False)
     sent_to_kitchen_at = Column(DateTime(timezone=True), nullable=True)

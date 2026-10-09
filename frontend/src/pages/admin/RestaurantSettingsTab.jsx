@@ -94,6 +94,9 @@ export const RestaurantSettingsTab = ({ restaurantId }) => {
   const [printerCodepage, setPrinterCodepage] = useState(17);
   // Chek shrifti o'lchami: keksa odamlar o'qiy olishi uchun
   const [printerFontSize, setPrinterFontSize] = useState('katta');
+  // Harflar orasidagi masofa (nuqta) va qatorlar orasi
+  const [printerCharSpacing, setPrinterCharSpacing] = useState(1);
+  const [printerLineSpacing, setPrinterLineSpacing] = useState('oddiy');
   // Ishlab turgan kod versiyasi (yangilanganini tekshirish uchun)
   const [appVersion, setAppVersion] = useState(null);
   // 4-Printer: BAR (choy, suv, ichimliklar)
@@ -225,6 +228,8 @@ export const RestaurantSettingsTab = ({ restaurantId }) => {
         // Hozir tanlangan shrift bilan chiqsin — admin natijani
         // qog'ozda darhol ko'rishi uchun (saqlashdan oldin ham).
         font_size: printerFontSize,
+        char_spacing: printerCharSpacing,
+        line_spacing: printerLineSpacing,
       });
       alert(`✅ ${printerName} printeriga test cheki muvaffaqiyatli yuborildi!`);
     } catch (err) {
@@ -250,6 +255,12 @@ export const RestaurantSettingsTab = ({ restaurantId }) => {
         setPrinterPaperWidth(s.printer_paper_width ?? 80);
         setPrinterCodepage(s.printer_codepage || 17);
         setPrinterFontSize(s.printer_font_size || 'katta');
+        setPrinterCharSpacing(
+          s.printer_char_spacing === null || s.printer_char_spacing === undefined
+            ? 1
+            : s.printer_char_spacing
+        );
+        setPrinterLineSpacing(s.printer_line_spacing || 'oddiy');
         setArchiveRetentionYears(s.archive_retention_years ?? 3);
         setReceiptHeader(s.receipt_header || 'RestAron Restaurant');
         setReceiptFooter(s.receipt_footer || 'Tashrif buyurganingiz uchun rahmat!');
@@ -316,6 +327,8 @@ export const RestaurantSettingsTab = ({ restaurantId }) => {
         printer_paper_width: parseInt(printerPaperWidth) || 80,
         printer_codepage: parseInt(printerCodepage) || 17,
         printer_font_size: printerFontSize,
+        printer_char_spacing: printerCharSpacing,
+        printer_line_spacing: printerLineSpacing,
         archive_retention_years: parseInt(archiveRetentionYears) || 3,
         receipt_header: receiptHeader.trim() || undefined,
         receipt_footer: receiptFooter.trim() || undefined,
@@ -1315,6 +1328,74 @@ export const RestaurantSettingsTab = ({ restaurantId }) => {
                 >
                   <span className="block text-xs font-black">{v.nom}</span>
                   <span className="block text-[10px] opacity-80 mt-0.5">{v.izoh}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Harflar orasidagi masofa — keksa odamlar o'qishi uchun */}
+          <div className="pt-3 border-t border-theme-border/50">
+            <label className="block text-xs font-bold text-white mb-1">
+              ↔️ Harflar orasidagi masofa
+            </label>
+            <p className="text-[11px] text-theme-muted mb-2.5">
+              Termal printerda harflar bir-biriga yopishib chiqadi. Bu yerdan
+              har harf orasiga bo'sh joy qo'shiladi — yozuv yoyilib, ancha
+              oson o'qiladi. <b>Eslatma:</b> masofa oshsa bir qatorga
+              sig'adigan belgilar kamayadi (chek biroz uzunroq chiqadi).
+            </p>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+              {[
+                { v: 0, nom: 'Yopishgan', izoh: "0 nuqta — eng zich" },
+                { v: 1, nom: 'Oz ✓', izoh: '1 nuqta' },
+                { v: 2, nom: "O'rtacha", izoh: '2 nuqta' },
+                { v: 3, nom: 'Keng', izoh: '3 nuqta' },
+              ].map((o) => (
+                <button
+                  key={o.v}
+                  type="button"
+                  onClick={() => setPrinterCharSpacing(o.v)}
+                  className={`py-2.5 px-3 rounded-xl border text-left transition-all ${
+                    printerCharSpacing === o.v
+                      ? 'bg-theme-primary text-white border-theme-primary shadow-md'
+                      : 'bg-slate-900 border-theme-border text-slate-300 hover:border-theme-primary/50'
+                  }`}
+                >
+                  <span className="block text-xs font-black">{o.nom}</span>
+                  <span className="block text-[10px] opacity-80 mt-0.5">{o.izoh}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Qatorlar orasidagi masofa */}
+          <div className="pt-3 border-t border-theme-border/50">
+            <label className="block text-xs font-bold text-white mb-1">
+              ↕️ Qatorlar orasidagi masofa
+            </label>
+            <p className="text-[11px] text-theme-muted mb-2.5">
+              Qatorlar bir-biriga yaqin bo'lsa chek siqilib ko'rinadi.
+              Bu yerdan oraliqni kengaytirasiz.
+            </p>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+              {[
+                { id: 'zich', nom: 'Zich', izoh: 'Printer o\'zi hal qiladi' },
+                { id: 'oddiy', nom: 'Oddiy ✓', izoh: 'Standart oraliq' },
+                { id: 'keng', nom: 'Keng', izoh: 'Kengroq oraliq' },
+                { id: 'juda_keng', nom: 'Juda keng', izoh: 'Eng keng oraliq' },
+              ].map((o) => (
+                <button
+                  key={o.id}
+                  type="button"
+                  onClick={() => setPrinterLineSpacing(o.id)}
+                  className={`py-2.5 px-3 rounded-xl border text-left transition-all ${
+                    printerLineSpacing === o.id
+                      ? 'bg-theme-primary text-white border-theme-primary shadow-md'
+                      : 'bg-slate-900 border-theme-border text-slate-300 hover:border-theme-primary/50'
+                  }`}
+                >
+                  <span className="block text-xs font-black">{o.nom}</span>
+                  <span className="block text-[10px] opacity-80 mt-0.5">{o.izoh}</span>
                 </button>
               ))}
             </div>

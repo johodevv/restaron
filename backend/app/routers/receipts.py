@@ -22,7 +22,8 @@ from app.schemas.receipt import (
 from app.core.printer_service import (
     scan_network_printers,
     format_kitchen_ticket, format_pre_check, format_shift_report,
-    get_installed_printers, print_to_windows_printer, DEFAULT_FONT_SIZE
+    get_installed_printers, print_to_windows_printer, DEFAULT_FONT_SIZE,
+    printer_options,
 )
 
 router = APIRouter(prefix="/receipts", tags=["🖨️ Cheklar Arxivi va Kassa Hisobotlari"])
@@ -40,6 +41,10 @@ class DirectPrintRequest(BaseModel):
     # admin qog'ozda aynan mijozga beriladigan chekni ko'radi, shriftni
     # shunga qarab tanlaydi.
     sample_receipt: bool = False
+    # Admin sinov chekida harflar orasi va qatorlar oralig'ini ham
+    # saqlashdan oldin sinab ko'rishi uchun
+    char_spacing: Optional[int] = None
+    line_spacing: Optional[str] = None
 
 
 
@@ -229,8 +234,15 @@ async def print_raw_usb(
         )
     )
     st = set_res.scalar_one_or_none()
-    fsize = payload.font_size or getattr(st, "printer_font_size", None) or DEFAULT_FONT_SIZE
-    cp = getattr(st, "printer_codepage", None) or 17
+    popts = printer_options(st)
+    # Admin sinov chekida shriftni tanlab ko'rishi mumkin
+    if payload.font_size:
+        popts["font_size"] = payload.font_size
+    if payload.char_spacing is not None:
+        popts["char_spacing"] = payload.char_spacing
+    if payload.line_spacing:
+        popts["line_spacing"] = payload.line_spacing
+    fsize = popts["font_size"]
     paper_width = getattr(st, "printer_paper_width", 80) or 80
 
     text = payload.text or ""
@@ -263,11 +275,12 @@ async def print_raw_usb(
             footer_text=getattr(st, "receipt_footer", None),
             paper_width=paper_width,
             font_size=fsize,
+            char_spacing=popts["char_spacing"],
         )
 
     res = print_to_windows_printer(
         text, printer_name=payload.printer_name,
-        cut_paper=payload.cut_paper, codepage=cp, font_size=fsize,
+        cut_paper=payload.cut_paper, **popts,
     )
     if not res.get("success"):
         raise HTTPException(status_code=500, detail=res.get("error", "Chop etishda xatolik"))
@@ -305,7 +318,8 @@ async def create_shift_report(
     set_res = await db.execute(select(RestaurantSettings).where(RestaurantSettings.restaurant_id == restaurant_id))
     settings = set_res.scalar_one_or_none()
     paper_width = settings.printer_paper_width if settings else 80
-    fsize = getattr(settings, "printer_font_size", None) or DEFAULT_FONT_SIZE
+    popts = printer_options(settings)
+    fsize = popts["font_size"]
 
     # Oxirgi yopilgan Z-Reportni topish (smena ochilgan vaqtini aniqlash uchun)
     last_z = await db.execute(
@@ -413,6 +427,7 @@ async def create_shift_report(
         waiter_breakdown=waiter_breakdown,
         paper_width=paper_width,
         font_size=fsize,
+        char_spacing=popts["char_spacing"],
     )
 
     shift_report = ShiftReport(

@@ -87,6 +87,11 @@ class RestaurantSettings(Base):
     # Chek shrifti o'lchami: "normal" | "katta" | "juda_katta"
     # Keksa odamlar o'qiy olishi uchun "katta" tavsiya etiladi.
     printer_font_size = Column(String(20), default="katta", nullable=True)
+    # Harflar orasidagi masofa (nuqta). Termal printerda harflar
+    # bir-biriga yopishib chiqadi — keksa odamga o'qish qiyin.
+    printer_char_spacing = Column(Integer, default=1, nullable=True)
+    # Qatorlar orasidagi masofa: zich / oddiy / keng / juda_keng
+    printer_line_spacing = Column(String(20), default="oddiy", nullable=True)
 
     # Cheklar arxivini saqlash muddati (yillarda, default: 3 yil)
     archive_retention_years = Column(Integer, default=3)

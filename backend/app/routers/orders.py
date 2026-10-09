@@ -30,7 +30,7 @@ from app.schemas.order import (
 )
 from app.core.printer_service import (
     format_kitchen_ticket, format_pre_check, print_to_windows_printer,
-    DEFAULT_FONT_SIZE,
+    DEFAULT_FONT_SIZE, printer_options,
 )
 from app.core.sms_telegram import send_telegram_alert
 from app.websockets.manager import manager
@@ -128,14 +128,23 @@ async def load_order_full(db: AsyncSession, order_id: int) -> Optional[Order]:
     return res.scalar_one_or_none()
 
 
-def line_total(menu_item: MenuItem, quantity: int, weight: Optional[float]) -> float:
+def line_total(menu_item: MenuItem, quantity: int, weight: Optional[float],
+               manual_price: Optional[float] = None) -> float:
     """Bitta qator summasi.
 
-    Tortiladigan taom (baliq, go'sht) uchun `price` — 1 kg narxi, shuning
-    uchun summa ANIQ tortilgan og'irlikka ko'paytiriladi. Og'irlik hali
-    kiritilmagan bo'lsa 0 qaytariladi — narxni taxmin qilib yozib qo'yish
+    Tortiladigan taom (baliq, go'sht) uchun ikki yo'l bor:
+
+    1. Ofitsiant SUMMANI o'zi yozadi (`manual_price`) — asosiy yo'l.
+       Tarozi pulni ko'rsatadi, ofitsiant shuni kiritadi va summa
+       boshqa hech qayerda qayta hisoblanmaydi.
+    2. Og'irlik (kg) kiritiladi — summa 1 kg narxiga ko'paytiriladi.
+
+    Ikkisi ham bo'lmasa 0 qaytariladi: narxni taxmin qilib yozib qo'yish
     mijoz bilan nizoga olib keladi.
     """
+    if manual_price is not None and manual_price >= 0:
+        return round(float(manual_price), 2)
+
     price = menu_item.price or 0.0
     if getattr(menu_item, "is_weighted", False):
         if not weight or weight <= 0:
@@ -144,12 +153,23 @@ def line_total(menu_item: MenuItem, quantity: int, weight: Optional[float]) -> f
     return round(price * quantity, 2)
 
 
+def item_is_priced(it: OrderItem) -> bool:
+    """Tortiladigan taomning narxi aniqmi (summa yoki og'irlik kiritilganmi)."""
+    if it.manual_price is not None and it.manual_price >= 0:
+        return True
+    return bool(it.weight and it.weight > 0)
+
+
 def missing_weight_items(order: Order) -> List[str]:
-    """Tortilishi kerak, lekin hali tortilmagan taomlar ro'yxati"""
+    """Narxi hali aniqlanmagan tortiladigan taomlar ro'yxati.
+
+    Ofitsiant summani yozgan bo'lsa (manual_price) — taom tayyor,
+    og'irlik kiritilishi SHART EMAS.
+    """
     names = []
     for it in order.items:
         mi = it.menu_item
-        if mi and getattr(mi, "is_weighted", False) and (not it.weight or it.weight <= 0):
+        if mi and getattr(mi, "is_weighted", False) and not item_is_priced(it):
             names.append(mi.name)
     return names
 
@@ -179,6 +199,7 @@ def build_order_response(order: Order, table_number: Optional[int] = None, waite
                 portion_size=item.portion_size,
                 item_time=item.item_time,
                 weight=item.weight,
+                manual_price=item.manual_price,
                 is_weighted=bool(getattr(item.menu_item, "is_weighted", False)) if item.menu_item else False,
                 unit=(getattr(item.menu_item, "unit", "dona") or "dona") if item.menu_item else "dona",
                 sent_to_kitchen=bool(item.sent_to_kitchen),
@@ -645,7 +666,9 @@ async def update_item_quantity(
     mi_res = await db.execute(select(MenuItem).where(MenuItem.id == order_item.menu_item_id))
     menu_item = mi_res.scalar_one_or_none()
     if menu_item:
-        order_item.total_price = line_total(menu_item, payload.quantity, order_item.weight)
+        order_item.total_price = line_total(
+            menu_item, payload.quantity, order_item.weight, order_item.manual_price
+        )
     else:
         order_item.total_price = round((order_item.unit_price or 0.0) * payload.quantity, 2)
 
@@ -662,7 +685,7 @@ async def update_item_quantity(
 
 # ─── Tortilgan ANIQ og'irlikni kiritish (baliq 1.35 kg) ────────
 @router.patch("/{order_id}/items/{item_id}/weight", response_model=OrderResponse,
-              summary="Tortilgan aniq og'irlikni kiritish va narxni qayta hisoblash")
+              summary="Tortiladigan taom narxini (summa yoki og'irlik) kiritish")
 async def update_item_weight(
     order_id: int,
     item_id: int,
@@ -670,10 +693,15 @@ async def update_item_weight(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_role("waiter", "admin", "developer")),
 ):
-    """Baliq/go'sht tortilgandan keyin aniq og'irligi kiritiladi.
+    """Tortiladigan taom (baliq, go'sht) narxini belgilash.
 
-    Narx shu zahoti qayta hisoblanadi (1 kg narxi x og'irlik), shuning
-    uchun chekda mijoz ko'rgan og'irlik va summa bir-biriga mos keladi.
+    Asosiy yo'l — ofitsiant tarozidagi SUMMANI o'zi yozadi (`price`):
+    "baliqning kg sini emas, pulini yoz". Shunda summa boshqa hech
+    qayerda qayta hisoblanmaydi.
+
+    Istasa og'irlikni ham (`weight`) kiritadi — u chekda va oshxona
+    begunogida ko'rinadi. Faqat og'irlik kiritilsa, summa eski yo'l
+    bilan 1 kg narxiga ko'paytiriladi.
     """
     item_res = await db.execute(
         select(OrderItem)
@@ -703,8 +731,21 @@ async def update_item_weight(
                    f"\"Tortiladigan taom\" deb belgilang.",
         )
 
-    order_item.weight = payload.weight if (payload.weight and payload.weight > 0) else None
-    order_item.total_price = line_total(menu_item, order_item.quantity, order_item.weight)
+    has_price = payload.price is not None
+    has_weight = payload.weight is not None and payload.weight > 0
+    if not has_price and not has_weight:
+        raise HTTPException(
+            status_code=400,
+            detail="Summani yoki og'irlikni kiriting.",
+        )
+
+    order_item.weight = payload.weight if has_weight else None
+    # Ofitsiant summani o'zi yozsa — shu summa qoladi. Faqat og'irlik
+    # kiritilsa, eski yo'l bilan 1 kg narxiga ko'paytiriladi.
+    order_item.manual_price = round(float(payload.price), 2) if has_price else None
+    order_item.total_price = line_total(
+        menu_item, order_item.quantity, order_item.weight, order_item.manual_price
+    )
 
     await recalc_order_totals(db, order)
     await db.flush()
@@ -929,6 +970,7 @@ async def send_to_kitchen(
             # Tortiladigan taom: begunokda "1.35 кг" yoki tortilmagan
             # bo'lsa "ТОРТИЛСИН!" deb chiqadi.
             "weight": it.weight,
+            "manual_price": it.manual_price,
             "unit": (getattr(it.menu_item, "unit", None) or "kg") if it.menu_item else "kg",
             "is_weighted": bool(getattr(it.menu_item, "is_weighted", False)) if it.menu_item else False,
         }
@@ -959,8 +1001,9 @@ async def send_to_kitchen(
     bar_printer = (getattr(settings, "printer_bar_name", None) or "").strip() \
         or (getattr(settings, "printer_customer_name", None) or "X-Q80A")
     auto_print = getattr(settings, "auto_print_kitchen", True)
-    cp = getattr(settings, "printer_codepage", None) or 17
-    fsize = getattr(settings, "printer_font_size", None) or DEFAULT_FONT_SIZE
+    popts = printer_options(settings)
+    cp = popts["codepage"]
+    fsize = popts["font_size"]
 
     generated_tickets = []
     combined_texts = []
@@ -990,6 +1033,7 @@ async def send_to_kitchen(
             paper_width=paper_width,
             station_title=station_title,
             font_size=fsize,
+            char_spacing=popts["char_spacing"],
             is_reprint=bool(reprint),
         )
         combined_texts.append(ticket_text)
@@ -999,8 +1043,7 @@ async def send_to_kitchen(
         if auto_print:
             try:
                 p_res = print_to_windows_printer(
-                    ticket_text, printer_name=station_printer,
-                    codepage=cp, font_size=fsize,
+                    ticket_text, printer_name=station_printer, **popts
                 )
                 print_status = p_res.get("success", False)
                 if not print_status:
@@ -1097,16 +1140,15 @@ async def checkout_order(
     if not order:
         raise HTTPException(status_code=404, detail="Buyurtma topilmadi")
 
-    # Tortiladigan taom hali tortilmagan bo'lsa chek chiqarib bo'lmaydi.
-    # Aks holda chekda noto'g'ri og'irlik va noto'g'ri summa yoziladi —
-    # mijoz "men 1 kg uchun to'layman" deb nizolashadi.
+    # Tortiladigan taomning narxi kiritilmagan bo'lsa chek chiqarib
+    # bo'lmaydi: chekda 0 so'm yoziladi va kassa kam pul oladi.
     not_weighed = missing_weight_items(order)
     if not_weighed:
         raise HTTPException(
             status_code=400,
             detail="Chek chiqarib bo'lmaydi: " + ", ".join(not_weighed) +
-                   " hali tortilmagan. Ofitsiant panelida aniq og'irlikni "
-                   "kiriting — shundan keyin narx va chek to'g'ri bo'ladi.",
+                   " narxi kiritilmagan. Ofitsiant panelida summasini "
+                   "yozing — shundan keyin chek to'g'ri chiqadi.",
         )
 
     set_res = await db.execute(select(RestaurantSettings).where(RestaurantSettings.restaurant_id == order.restaurant_id))
@@ -1213,7 +1255,8 @@ async def checkout_order(
         order.table.is_unlocked = False
 
     paper_width = settings.printer_paper_width if settings else 80
-    fsize = getattr(settings, "printer_font_size", None) or DEFAULT_FONT_SIZE
+    popts = printer_options(settings)
+    fsize = popts["font_size"]
     table_disp = f"{order.hall_name or (order.table.room if order.table else '')} N#{order.table.number if order.table else ''}".strip()
     waiter_disp = (order.waiter.full_name or order.waiter.username) if order.waiter else current_user.full_name
 
@@ -1225,6 +1268,7 @@ async def checkout_order(
             "total_price": it.total_price,
             "size": it.portion_size,
             "weight": it.weight,
+            "manual_price": it.manual_price,
             "unit": (getattr(it.menu_item, "unit", None) or "kg") if it.menu_item else "kg",
             "is_weighted": bool(getattr(it.menu_item, "is_weighted", False)) if it.menu_item else False,
         }
@@ -1253,6 +1297,7 @@ async def checkout_order(
         created_at=order.created_at,
         paper_width=paper_width,
         font_size=fsize,
+        char_spacing=popts["char_spacing"],
     )
 
     archive = ReceiptArchive(
@@ -1282,10 +1327,8 @@ async def checkout_order(
     # Avtomatik 1-Printer (Mijoz kassa cheki) ga chop etish
     if getattr(settings, "auto_print_customer_bill", True):
         cust_printer = getattr(settings, "printer_customer_name", None) or "X-Q80A"
-        cp = getattr(settings, "printer_codepage", None) or 17
         try:
-            print_to_windows_printer(bill_text, printer_name=cust_printer,
-                                     codepage=cp, font_size=fsize)
+            print_to_windows_printer(bill_text, printer_name=cust_printer, **popts)
         except Exception:
             pass
 

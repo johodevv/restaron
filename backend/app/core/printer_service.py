@@ -238,11 +238,11 @@ DEFAULT_CODEPAGE = 17
 #   katta       — 2x2  (24 belgi)          — SUKUT: katta va to'q
 #   juda_katta  — 3x3  (16 belgi)          — eng katta
 FONT_SIZES = {
-    "normal":     {"gs": 0x00, "w": 1, "label": "1x1"},
-    "baland":     {"gs": 0x01, "w": 1, "label": "1x2"},
-    "keng":       {"gs": 0x10, "w": 2, "label": "2x1"},
-    "katta":      {"gs": 0x11, "w": 2, "label": "2x2"},
-    "juda_katta": {"gs": 0x22, "w": 3, "label": "3x3"},
+    "normal":     {"gs": 0x00, "w": 1, "h": 1, "label": "1x1"},
+    "baland":     {"gs": 0x01, "w": 1, "h": 2, "label": "1x2"},
+    "keng":       {"gs": 0x10, "w": 2, "h": 1, "label": "2x1"},
+    "katta":      {"gs": 0x11, "w": 2, "h": 2, "label": "2x2"},
+    "juda_katta": {"gs": 0x22, "w": 3, "h": 3, "label": "3x3"},
 }
 DEFAULT_FONT_SIZE = "katta"
 
@@ -263,9 +263,60 @@ def _font_spec(font_size: Optional[str]) -> dict:
     return FONT_SIZES.get(key, FONT_SIZES[DEFAULT_FONT_SIZE])
 
 
+# ─── Harflar orasidagi masofa (ESC SP n) ──────────────────────────────
+#
+# Termal printerda harflar bir-biriga yopishib chiqadi va qari odamga
+# o'qish qiyin bo'ladi. `ESC SP n` har harfning O'NG tomoniga n nuqta
+# bo'sh joy qo'shadi (standart ESC/POS buyrug'i).
+#
+# MUHIM: bo'sh joy qo'shilsa bir qatorga sig'adigan belgilar soni
+# kamayadi, shuning uchun `receipt_columns` buni hisobga oladi.
+DEFAULT_CHAR_SPACING = 1      # nuqta (0 = yopishib turadi)
+MAX_CHAR_SPACING = 6
+
+# ─── Qatorlar orasidagi masofa (ESC 3 n) ──────────────────────────────
+#
+# "zich" — printer o'zi hal qiladi (hech narsa yuborilmaydi)
+# "oddiy" / "keng" / "juda_keng" — harf balandligiga qarab hisoblanadi
+LINE_SPACINGS = {
+    "zich": None,
+    "oddiy": 6,
+    "keng": 14,
+    "juda_keng": 24,
+}
+DEFAULT_LINE_SPACING = "oddiy"
+
+# Font A balandligi va kengligi (nuqtada), 203 dpi li printerlarda
+FONT_A_W = 12
+FONT_A_H = 24
+
+# 80mm qog'ozda bosiladigan maydon 72mm = 576 nuqta, 58mm da 48mm = 384
+PRINT_DOTS_80 = 576
+PRINT_DOTS_58 = 384
+
+
+def _clamp_char_spacing(value: Optional[int]) -> int:
+    try:
+        n = int(value if value is not None else DEFAULT_CHAR_SPACING)
+    except (TypeError, ValueError):
+        n = DEFAULT_CHAR_SPACING
+    return max(0, min(MAX_CHAR_SPACING, n))
+
+
+def _line_spacing_dots(line_spacing: Optional[str], height_mult: int) -> Optional[int]:
+    """ESC 3 n uchun nuqta soni. None — printer o'zi hal qiladi."""
+    key = (line_spacing or DEFAULT_LINE_SPACING).strip().lower()
+    extra = LINE_SPACINGS.get(key, LINE_SPACINGS[DEFAULT_LINE_SPACING])
+    if extra is None:
+        return None
+    return max(1, min(255, FONT_A_H * max(1, height_mult) + extra))
+
+
 def build_escpos_payload(raw_text: str, cut_paper: bool = True,
                          codepage: int = DEFAULT_CODEPAGE,
-                         font_size: str = DEFAULT_FONT_SIZE) -> bytes:
+                         font_size: str = DEFAULT_FONT_SIZE,
+                         char_spacing: Optional[int] = None,
+                         line_spacing: Optional[str] = None) -> bytes:
     """
     Matnni termal printer tushunadigan baytlarga aylantiradi.
 
@@ -303,31 +354,59 @@ def build_escpos_payload(raw_text: str, cut_paper: bool = True,
     # qoldiradi (qog'ozga begona belgi chiqmaydi).
     esc_bold = b"\x1b\x45\x01" + b"\x1b\x47\x01"
 
+    # ESC SP n — har harfning o'ng tomoniga n nuqta bo'sh joy.
+    # Harflar bir-biriga yopishib chiqmasin, keksa odam ham ajrata olsin.
+    spacing = _clamp_char_spacing(char_spacing)
+    esc_char_sp = b"\x1b\x20" + bytes([spacing])
+
+    # ESC 3 n — qatorlar orasidagi masofa. "zich" tanlansa printer
+    # o'zining sukutdagi oralig'ini ishlatadi.
+    spec = _font_spec(font_size)
+    ls_dots = _line_spacing_dots(line_spacing, spec.get("h", 1))
+    esc_line_sp = b"\x1b\x33" + bytes([ls_dots]) if ls_dots is not None else b""
+
     payload = (ESC_INIT + FS_KANJI_OFF + FS_KANJI_OFF2
-               + esc_codepage + ESC_FONT_A + gs_size + esc_bold + body)
+               + esc_codepage + ESC_FONT_A + gs_size + esc_bold
+               + esc_char_sp + esc_line_sp + body)
     if cut_paper:
         payload += ESC_CUT
     return payload
 
 
-def receipt_columns(paper_width: int, font_size: str = DEFAULT_FONT_SIZE) -> int:
+def receipt_columns(paper_width: int, font_size: str = DEFAULT_FONT_SIZE,
+                    char_spacing: Optional[int] = None) -> int:
     """
     Termal printer uchun bir qatordagi belgilar soni.
 
-    203 dpi li ESC/POS printerlarda standart Font A kengligi 12 nuqta =
-    1.5 mm. Shunga ko'ra:
-      - 80mm qog'oz -> bosiladigan maydon ~72mm -> 72 / 1.5 = 48 belgi
-      - 58mm qog'oz -> bosiladigan maydon ~48mm -> 48 / 1.5 = 32 belgi
+    203 dpi li ESC/POS printerlarda Font A kengligi 12 nuqta = 1.5 mm,
+    bosiladigan maydon 80mm qog'ozda 576 nuqta (72mm), 58mm da 384.
 
-    Ilgari 80mm uchun 42 qo'yilgan edi: chek qog'ozning faqat ~87% ini
-    egallab, tor va kichik bo'lib chiqardi.
+    Bitta belgining egallaydigan joyi:
+        (12 + harflar_orasi) x kenglik_ko'paytirgichi
+
+    MUHIM: harflar orasiga bo'sh joy qo'shilsa (ESC SP) bitta belgi
+    kengroq bo'ladi va qatorga kamroq belgi sig'adi. Buni hisobga
+    olmasak matn qog'ozdan chiqib, chek buzilib ketardi.
     """
-    base = 48 if paper_width >= 80 else 32
-    # Harf eni 2 barobar bo'lsa, qatorga sig'adigan belgilar soni yarmiga
-    # tushadi — aks holda matn qog'ozdan chiqib, chek buzilib ketadi.
-    # Pastki chegara 16 edi: 58mm qog'ozda 3x shriftda (10 belgi) matn
-    # qog'ozdan chiqib, raqamlar o'rtasidan uzilib ketardi.
-    return max(10, base // _font_spec(font_size)["w"])
+    dots = PRINT_DOTS_80 if paper_width >= 80 else PRINT_DOTS_58
+    spacing = _clamp_char_spacing(char_spacing)
+    cell = (FONT_A_W + spacing) * max(1, _font_spec(font_size)["w"])
+    return max(10, dots // cell)
+
+
+def printer_options(settings: Any) -> Dict[str, Any]:
+    """Restoran sozlamalaridan chop etish parametrlarini yig'ib beradi.
+
+    Hamma joyda bir xil bo'lishi uchun (oshxona begunogi, mijoz cheki,
+    smena hisoboti, sinov cheki) — bitta manba.
+    """
+    cs = getattr(settings, "printer_char_spacing", None)
+    return {
+        "codepage": getattr(settings, "printer_codepage", None) or DEFAULT_CODEPAGE,
+        "font_size": getattr(settings, "printer_font_size", None) or DEFAULT_FONT_SIZE,
+        "char_spacing": _clamp_char_spacing(cs),
+        "line_spacing": getattr(settings, "printer_line_spacing", None) or DEFAULT_LINE_SPACING,
+    }
 
 
 def merge_receipt_items(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -378,12 +457,13 @@ def format_kitchen_ticket(
     paper_width: int = 80,
     station_title: Optional[str] = None,
     font_size: str = DEFAULT_FONT_SIZE,
+    char_spacing: Optional[int] = None,
     is_reprint: bool = False,
 ) -> str:
     """
     Oshxona / Bar begunogi (Runner ticket) — To'liq Kirill alifbosida
     """
-    col_width = receipt_columns(paper_width, font_size)
+    col_width = receipt_columns(paper_width, font_size, char_spacing)
     sep = "-" * col_width
     dt = order_time or datetime.now()
     dt_str = dt.strftime("%d.%m.%Y | %H:%M")
@@ -439,6 +519,10 @@ def format_kitchen_ticket(
             unit_cyr = latin_to_cyrillic(item.get("unit") or "kg")
             if wt:
                 lines.extend(_name_amount_block(name, f"{wt:g} {unit_cyr}", col_width))
+            elif item.get("manual_price") is not None:
+                # Ofitsiant summani o'zi yozgan — demak taom allaqachon
+                # tortilgan/o'lchangan, oshxonaga "ТОРТИЛСИН!" chiqmasin.
+                lines.extend(_name_amount_block(name, f"{qty} та", col_width))
             else:
                 lines.extend(_name_amount_block(name, "ТОРТИЛСИН!", col_width))
             continue
@@ -476,11 +560,12 @@ def format_pre_check(
     created_at: Optional[datetime] = None,
     paper_width: int = 80,
     font_size: str = DEFAULT_FONT_SIZE,
+    char_spacing: Optional[int] = None,
 ) -> str:
     """
     Mijoz hisob cheki (Pre-check / Bill) — To'liq Kirill alifbosida
     """
-    col_width = receipt_columns(paper_width, font_size)
+    col_width = receipt_columns(paper_width, font_size, char_spacing)
     sep = "-" * col_width
     double_sep = "=" * col_width
     dt = created_at or datetime.now()
@@ -533,10 +618,11 @@ def format_pre_check(
 
         lines.extend(_wrap_words(f"{idx}. {name}", col_width, indent="   "))
 
-        # Tortiladigan taom hali tortilmagan bo'lsa narx YOZILMAYDI:
+        # Tortiladigan taom hali narxlanmagan bo'lsa narx YOZILMAYDI:
         # ilgari "1 x 120 000" deb 1 kg narxi chiqib ketardi va mijoz
         # hali aniqlanmagan summani ko'rardi.
-        if it.get("is_weighted") and not it.get("weight"):
+        if (it.get("is_weighted") and not it.get("weight")
+                and it.get("manual_price") is None):
             unit_cyr = latin_to_cyrillic(it.get("unit") or "kg")
             lines.append(_amount_line(f"   1 {unit_cyr} = {unit_price:,.0f}".replace(",", " "),
                                       "ТОРТИЛМАГАН" if col_width >= 12 else "ТОРТИЛМ.",
@@ -549,7 +635,17 @@ def format_pre_check(
         # yoziladi — mijoz nechchi kg olganini va nega shuncha pul
         # ekanini chekning o'zidan ko'radi.
         wt = it.get("weight")
-        if it.get("is_weighted") and wt:
+        manual = it.get("manual_price")
+        if it.get("is_weighted") and manual is not None:
+            # Ofitsiant summani o'zi yozgan. Og'irlik ham kiritilgan
+            # bo'lsa uni ko'rsatamiz, aks holda faqat summa chiqadi —
+            # mijoz "1 kg narxi x soni" degan noto'g'ri hisobni ko'rmaydi.
+            if wt:
+                unit_cyr = latin_to_cyrillic(it.get("unit") or "kg")
+                calc_str = f"   {wt:g} {unit_cyr}"
+            else:
+                calc_str = "   Нарх:"
+        elif it.get("is_weighted") and wt:
             unit_cyr = latin_to_cyrillic(it.get("unit") or "kg")
             calc_str = f"   {wt:g} {unit_cyr} x {unit_price:,.0f}".replace(",", " ")
             if qty > 1:
@@ -613,11 +709,12 @@ def format_shift_report(
     waiter_breakdown: Optional[List[Dict[str, Any]]] = None,
     paper_width: int = 80,
     font_size: str = DEFAULT_FONT_SIZE,
+    char_spacing: Optional[int] = None,
 ) -> str:
     """
     X-Report (oraliq hisobot) yoki Z-Report (kassani yopish) — To'liq Kirill alifbosida
     """
-    col_width = receipt_columns(paper_width, font_size)
+    col_width = receipt_columns(paper_width, font_size, char_spacing)
     sep = "-" * col_width
     double_sep = "=" * col_width
 
@@ -733,6 +830,8 @@ def print_to_network_printer(
     cut_paper: bool = True,
     codepage: int = DEFAULT_CODEPAGE,
     font_size: str = DEFAULT_FONT_SIZE,
+    char_spacing: Optional[int] = None,
+    line_spacing: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Wi-Fi yoki Ethernet (LAN kabel) orqali ulangan Xprinterga
@@ -751,7 +850,8 @@ def print_to_network_printer(
     try:
         # Matnni ESC/POS baytlariga aylantirish (kod sahifasi bilan)
         payload = build_escpos_payload(raw_text, cut_paper=cut_paper,
-                                       codepage=codepage, font_size=font_size)
+                                       codepage=codepage, font_size=font_size,
+                                       char_spacing=char_spacing, line_spacing=line_spacing)
 
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         s.settimeout(3.5)
@@ -778,6 +878,8 @@ def print_to_windows_printer(
     cut_paper: bool = True,
     codepage: int = DEFAULT_CODEPAGE,
     font_size: str = DEFAULT_FONT_SIZE,
+    char_spacing: Optional[int] = None,
+    line_spacing: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     USB, Windows Spooler yoki Tarmoq (LAN/Wi-Fi IP) orqali chop etish
@@ -787,7 +889,8 @@ def print_to_windows_printer(
     # Agar kiritilgan qiymat IP manzil bo'lsa -> Tarmoq orqali yuborish!
     if is_ip_address(target):
         return print_to_network_printer(target, raw_text=raw_text, cut_paper=cut_paper,
-                                        codepage=codepage, font_size=font_size)
+                                        codepage=codepage, font_size=font_size,
+                                        char_spacing=char_spacing, line_spacing=line_spacing)
 
     if platform.system() != "Windows":
         return {"success": False, "error": "USB to'g'ridan-to'g'ri chop etish faqat Windows tizimida ishlaydi. Tarmoq printeri uchun IP manzil kiriting (masalan: 192.168.1.100)."}
@@ -818,7 +921,8 @@ def print_to_windows_printer(
 
         # Matnni ESC/POS baytlariga aylantirish (kod sahifasi bilan)
         payload = build_escpos_payload(raw_text, cut_paper=cut_paper,
-                                       codepage=codepage, font_size=font_size)
+                                       codepage=codepage, font_size=font_size,
+                                       char_spacing=char_spacing, line_spacing=line_spacing)
 
         hPrinter = win32print.OpenPrinter(target)
         try:

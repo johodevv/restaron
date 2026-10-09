@@ -51,12 +51,16 @@ export const WaiterDashboard = () => {
 
   // Active Table & Active Order (Left POS Panel)
   const [selectedTable, setSelectedTable] = useState(null);
+  // Stol zonasi (Zal / Terrassa / Ko'cha / VIP). '' — hammasi.
+  const [selectedZone, setSelectedZone] = useState('');
   const [activeOrder, setActiveOrder] = useState(null);
   const [orderLoading, setOrderLoading] = useState(false);
 
   // Tortiladigan taom (baliq, go'sht) og'irligini kiritish oynasi
   const [weightModalItem, setWeightModalItem] = useState(null);
   const [weightValue, setWeightValue] = useState('');
+  // Tortiladigan taomning SUMMASI — ofitsiant kg emas, pulini yozadi
+  const [priceValue, setPriceValue] = useState('');
   const [savingWeight, setSavingWeight] = useState(false);
 
   // O'lchanadigan taom hajmi (1.5 L kola, 1.4 kg baliq) uchun oyna
@@ -82,6 +86,26 @@ export const WaiterDashboard = () => {
 
   // Waiter KPI today
   const [waiterKpi, setWaiterKpi] = useState({ sales: 0, orders: 0, share: 0 });
+
+  // ─── Stol zonalari (Zal / Terrassa / Ko'cha / VIP) ───────────
+  // Ilgari hamma stollar bitta ro'yxatda aralashib yotardi.
+  // Endi zonani bossangiz faqat o'sha zonaning stollari chiqadi.
+  const zoneNames = React.useMemo(() => {
+    const seen = [];
+    (tables || []).forEach((t) => {
+      const z = (t.room || '').trim();
+      if (z && !seen.includes(z)) seen.push(z);
+    });
+    return seen.sort((a, b) => a.localeCompare(b, 'uz'));
+  }, [tables]);
+
+  const zoneTables = React.useMemo(() => {
+    if (!selectedZone) return tables || [];
+    return (tables || []).filter((t) => (t.room || '').trim() === selectedZone);
+  }, [tables, selectedZone]);
+
+  const zoneCount = (z) =>
+    z ? (tables || []).filter((t) => (t.room || '').trim() === z).length : (tables || []).length;
 
   // Load initial data
   const loadInitialData = async () => {
@@ -183,13 +207,25 @@ export const WaiterDashboard = () => {
   // Ofitsiant baliqni tarozida tortib, aniq og'irligini kiritadi.
   const openWeightModalIfNeeded = (order, menuItemId) => {
     const line = (order?.items || [])
-      .filter((i) => i.menu_item_id === menuItemId && i.is_weighted && !i.weight)
+      .filter(
+        (i) =>
+          i.menu_item_id === menuItemId &&
+          i.is_weighted &&
+          !i.weight &&
+          (i.manual_price === null || i.manual_price === undefined)
+      )
       .pop();
     if (line) {
       setWeightModalItem(line);
       setWeightValue('');
+      setPriceValue('');
     }
   };
+
+  // Tortiladigan taomning narxi kiritilganmi?
+  // Summa yozilgan bo'lsa yetarli — kg kiritish SHART EMAS.
+  const isPriced = (it) =>
+    (it.manual_price !== null && it.manual_price !== undefined) || it.weight > 0;
 
   // Add Item to Table (Click on food card)
   const handleAddItem = async (menuItem) => {
@@ -282,25 +318,34 @@ export const WaiterDashboard = () => {
     }
   };
 
-  // Tortilgan aniq og'irlikni saqlash — narx shu zahoti qayta hisoblanadi
+  // Tortiladigan taom narxini saqlash.
+  // ASOSIY yo'l — ofitsiant SUMMANI yozadi (baliqning kg i emas, puli).
+  // Og'irlik ixtiyoriy: yozilsa chekda va oshxona begunogida ko'rinadi.
   const handleSaveWeight = async () => {
     if (!activeOrder || !weightModalItem) return;
     const w = parseFloat(String(weightValue).replace(',', '.'));
-    if (!w || w <= 0) {
-      alert("Og'irlikni kiriting (masalan: 1.35)");
+    const pr = parseFloat(String(priceValue).replace(/[^0-9.,]/g, '').replace(',', '.'));
+    const hasPrice = !isNaN(pr) && pr >= 0 && String(priceValue).trim() !== '';
+    const hasWeight = !isNaN(w) && w > 0;
+    if (!hasPrice && !hasWeight) {
+      alert('Summani kiriting (masalan: 204000)');
       return;
     }
     setSavingWeight(true);
     try {
+      const body = {};
+      if (hasPrice) body.price = Math.round(pr);
+      if (hasWeight) body.weight = w;
       const updated = await api.patch(
         `/orders/${activeOrder.id}/items/${weightModalItem.id}/weight`,
-        { weight: w }
+        body
       );
       setActiveOrder(updated);
       setWeightModalItem(null);
       setWeightValue('');
+      setPriceValue('');
     } catch (err) {
-      alert(err.message || "Og'irlikni saqlashda xatolik");
+      alert(err.message || 'Narxni saqlashda xatolik');
     } finally {
       setSavingWeight(false);
     }
@@ -695,7 +740,7 @@ export const WaiterDashboard = () => {
                 </div>
               </div>
 
-              {/* Table Switcher Quick Selector */}
+              {/* Tanlangan zonadagi stollarni tez almashtirish */}
               <select
                 value={selectedTable?.id || ''}
                 onChange={(e) => {
@@ -704,7 +749,7 @@ export const WaiterDashboard = () => {
                 }}
                 className="bg-slate-800 border-2 border-slate-700 hover:border-emerald-500 text-sm font-bold text-white rounded-xl px-3 py-2 focus:outline-none focus:border-emerald-500 shadow-sm"
               >
-                {tables.map((tbl) => (
+                {zoneTables.map((tbl) => (
                   <option key={tbl.id} value={tbl.id}>
                     {tbl.room ? `${tbl.room} ` : ''}#{tbl.number} (
                     {tbl.status === 'occupied' ? 'Band' : 'Bo\'sh'})
@@ -712,6 +757,69 @@ export const WaiterDashboard = () => {
                 ))}
               </select>
             </div>
+
+            {/* ─── Zonalar va stollar ─────────────────────────────
+                Ilgari hamma stollar bitta ro'yxatda aralashib yotardi.
+                Endi "Terrassa" ni bossangiz faqat terrassadagi stollar
+                chiqadi. */}
+            {zoneNames.length > 0 && (
+              <div className="px-3 pt-2.5 pb-1 bg-slate-950/60 border-b border-slate-800">
+                <div className="flex items-center gap-1.5 overflow-x-auto pb-1.5">
+                  <button
+                    onClick={() => setSelectedZone('')}
+                    className={`shrink-0 px-3 py-1.5 rounded-xl text-xs font-black transition-all active:scale-95 ${
+                      selectedZone === ''
+                        ? 'bg-emerald-500 text-slate-950 shadow-md'
+                        : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+                    }`}
+                  >
+                    Hammasi {zoneCount('')}
+                  </button>
+                  {zoneNames.map((z) => (
+                    <button
+                      key={z}
+                      onClick={() => setSelectedZone(z)}
+                      className={`shrink-0 px-3 py-1.5 rounded-xl text-xs font-black transition-all active:scale-95 ${
+                        selectedZone === z
+                          ? 'bg-emerald-500 text-slate-950 shadow-md'
+                          : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+                      }`}
+                    >
+                      {z} {zoneCount(z)}
+                    </button>
+                  ))}
+                </div>
+
+                <div className="flex items-center gap-1.5 overflow-x-auto pb-2 pt-0.5">
+                  {zoneTables.length === 0 ? (
+                    <span className="text-[11px] font-bold text-slate-500 py-1.5">
+                      Bu zonada stol yo'q
+                    </span>
+                  ) : (
+                    zoneTables.map((tbl) => {
+                      const active = selectedTable?.id === tbl.id;
+                      const busy = tbl.status === 'occupied';
+                      return (
+                        <button
+                          key={tbl.id}
+                          onClick={() => setSelectedTable(tbl)}
+                          title={`${tbl.room || ''} #${tbl.number}`}
+                          className={`shrink-0 min-w-[56px] px-2.5 py-1.5 rounded-xl text-sm font-black border-2 transition-all active:scale-95 ${
+                            active
+                              ? 'bg-white text-slate-950 border-white shadow-lg'
+                              : busy
+                              ? 'bg-red-500/20 text-red-300 border-red-500/50 hover:border-red-400'
+                              : 'bg-emerald-500/15 text-emerald-300 border-emerald-500/40 hover:border-emerald-400'
+                          }`}
+                        >
+                          #{tbl.number}
+                        </button>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+            )}
 
             {/* Active Items Table (Kattalashtirilgan qulay jadval) */}
             <div className="flex-1 overflow-y-auto">
@@ -742,24 +850,32 @@ export const WaiterDashboard = () => {
                           {it.menu_item_name || 'Taom'}
                         </p>
 
-                        {/* Tortiladigan taom (baliq, go'sht): aniq og'irlik.
+                        {/* Tortiladigan taom (baliq, go'sht): SUMMASI.
                             Kiritilmaguncha chek chiqmaydi. */}
                         {it.is_weighted && (
                           <button
                             onClick={() => {
                               setWeightModalItem(it);
                               setWeightValue(it.weight ? String(it.weight) : '');
+                              setPriceValue(
+                                it.manual_price !== null && it.manual_price !== undefined
+                                  ? String(Math.round(it.manual_price))
+                                  : it.total_price
+                                  ? String(Math.round(it.total_price))
+                                  : ''
+                              );
                             }}
-                            title="Tortilgan aniq og'irlikni kiritish"
+                            title="Summasini kiritish"
                             className={`mt-1 mb-0.5 px-2 py-1 rounded-lg text-[11px] font-black transition-all active:scale-95 block ${
-                              it.weight
+                              isPriced(it)
                                 ? 'bg-cyan-500/25 text-cyan-300 border border-cyan-500/50'
                                 : 'bg-red-600 text-white border border-red-400 animate-pulse'
                             }`}
                           >
-                            {it.weight
-                              ? `⚖️ ${it.weight} ${it.unit || 'kg'}`
-                              : '⚖️ TORTILMAGAN — bosing!'}
+                            {isPriced(it)
+                              ? `💰 ${Math.round(it.total_price || 0).toLocaleString('uz-UZ')} so'm` +
+                                (it.weight ? ` · ${it.weight} ${it.unit || 'kg'}` : '')
+                              : '💰 NARXI YO\'Q — bosing!'}
                           </button>
                         )}
 
@@ -854,17 +970,17 @@ export const WaiterDashboard = () => {
                 </div>
               )}
 
-              {/* Tortilmagan taom ogohlantirishi — chek chiqmaydi */}
-              {(activeOrder?.items || []).some((i) => i.is_weighted && !i.weight) && (
+              {/* Narxi kiritilmagan taom ogohlantirishi — chek chiqmaydi */}
+              {(activeOrder?.items || []).some((i) => i.is_weighted && !isPriced(i)) && (
                 <div className="p-3 mb-3 rounded-2xl bg-red-950/70 border-2 border-red-600 text-red-200 font-black text-xs sm:text-sm flex items-start gap-2 shadow-lg">
-                  <span className="text-lg shrink-0 leading-none">⚖️</span>
+                  <span className="text-lg shrink-0 leading-none">💰</span>
                   <span>
-                    Tortilmagan taom bor:{' '}
+                    Narxi kiritilmagan taom bor:{' '}
                     {(activeOrder?.items || [])
-                      .filter((i) => i.is_weighted && !i.weight)
+                      .filter((i) => i.is_weighted && !isPriced(i))
                       .map((i) => i.menu_item_name)
                       .join(', ')}
-                    . Og'irligi kiritilmaguncha chek chiqmaydi.
+                    . Summasi yozilmaguncha chek chiqmaydi.
                   </span>
                 </div>
               )}
@@ -1022,7 +1138,7 @@ export const WaiterDashboard = () => {
           <div className="bg-slate-900 border-2 border-cyan-600/60 rounded-3xl max-w-md w-full p-5 shadow-2xl">
             <div className="flex items-start justify-between mb-1">
               <div>
-                <h3 className="text-base font-black text-white">⚖️ Tarozida tortish</h3>
+                <h3 className="text-base font-black text-white">💰 Narxini kiritish</h3>
                 <p className="text-xs font-bold text-cyan-300 mt-0.5">
                   {weightModalItem.menu_item_name || 'Taom'}
                 </p>
@@ -1036,9 +1152,8 @@ export const WaiterDashboard = () => {
             </div>
 
             <p className="text-[11px] text-slate-400 mb-3">
-              Mahsulotni tarozida torting va <b className="text-white">aniq</b> og'irligini
-              kiriting. Narx shu zahoti qayta hisoblanadi, chekda ham shu og'irlik
-              yoziladi — mijoz bilan nizo chiqmaydi.
+              Mahsulotni tarozida torting va <b className="text-white">summasini</b> yozing.
+              Chekda aynan shu summa chiqadi — mijoz bilan nizo bo'lmaydi.
             </p>
 
             <div className="p-3 rounded-2xl bg-cyan-500/10 border border-cyan-500/30 mb-3">
@@ -1050,40 +1165,60 @@ export const WaiterDashboard = () => {
               </div>
             </div>
 
-            <label className="block text-[10px] font-black text-slate-400 uppercase tracking-wider mb-1.5">
-              Tortilgan og'irlik ({weightModalItem.unit || 'kg'}):
+            {/* ASOSIY maydon — SUMMA */}
+            <label className="block text-[10px] font-black text-emerald-400 uppercase tracking-wider mb-1.5">
+              Summa (so'm) — shuni yozing:
+            </label>
+            <input
+              type="number"
+              step="1"
+              min="0"
+              inputMode="numeric"
+              autoFocus
+              value={priceValue}
+              onChange={(e) => setPriceValue(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') handleSaveWeight();
+              }}
+              placeholder="masalan: 204000"
+              className="w-full p-3.5 rounded-xl bg-slate-950 border-2 border-emerald-600 text-3xl text-white font-mono font-black text-center focus:outline-none focus:border-emerald-400 mb-1"
+            />
+            {(() => {
+              const pr = parseFloat(String(priceValue).replace(',', '.')) || 0;
+              if (pr <= 0) return <div className="mb-3" />;
+              return (
+                <p className="text-center text-sm font-black text-emerald-400 font-mono mb-3">
+                  {Math.round(pr).toLocaleString('uz-UZ')} so'm
+                </p>
+              );
+            })()}
+
+            {/* IXTIYORIY — og'irlik. Oshxona nechchi kg ekanini bilishi uchun */}
+            <label className="block text-[10px] font-black text-slate-500 uppercase tracking-wider mb-1.5">
+              Og'irlik ({weightModalItem.unit || 'kg'}) — ixtiyoriy
             </label>
             <input
               type="number"
               step="0.01"
               min="0"
               inputMode="decimal"
-              autoFocus
               value={weightValue}
-              onChange={(e) => setWeightValue(e.target.value)}
+              onChange={(e) => {
+                const v = e.target.value;
+                setWeightValue(v);
+                // Og'irlik yozilsa summani TAKLIF qilamiz — ofitsiant
+                // xohlasa uni qo'lda tuzatadi.
+                const w = parseFloat(String(v).replace(',', '.'));
+                if (w > 0) {
+                  setPriceValue(String(Math.round(w * (weightModalItem.unit_price || 0))));
+                }
+              }}
               onKeyDown={(e) => {
                 if (e.key === 'Enter') handleSaveWeight();
               }}
-              placeholder="masalan: 1.35"
-              className="w-full p-3.5 rounded-xl bg-slate-950 border-2 border-cyan-700 text-2xl text-white font-mono font-black text-center focus:outline-none focus:border-cyan-400 mb-3"
+              placeholder="masalan: 1.7 (yozsangiz chekda ko'rinadi)"
+              className="w-full p-2.5 rounded-xl bg-slate-950 border border-slate-700 text-base text-slate-200 font-mono font-bold text-center focus:outline-none focus:border-cyan-500 mb-4"
             />
-
-            {/* Jonli narx hisobi */}
-            {(() => {
-              const w = parseFloat(String(weightValue).replace(',', '.')) || 0;
-              const unitPrice = weightModalItem.unit_price || 0;
-              if (w <= 0) return null;
-              return (
-                <div className="p-3 rounded-2xl bg-emerald-500/15 border border-emerald-500/40 mb-4 text-center">
-                  <p className="text-[11px] font-bold text-slate-300 font-mono">
-                    {w} {weightModalItem.unit || 'kg'} × {unitPrice.toLocaleString('uz-UZ')}
-                  </p>
-                  <p className="text-2xl font-black text-emerald-400 font-mono mt-0.5">
-                    {Math.round(w * unitPrice).toLocaleString('uz-UZ')} so'm
-                  </p>
-                </div>
-              );
-            })()}
 
             <div className="flex items-center gap-2">
               <button
@@ -1097,7 +1232,7 @@ export const WaiterDashboard = () => {
                 disabled={savingWeight}
                 className="flex-1 py-3 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-black text-sm disabled:opacity-40 active:scale-95 transition-all"
               >
-                {savingWeight ? 'Saqlanmoqda...' : 'Saqlash va narxni hisoblash'}
+                {savingWeight ? 'Saqlanmoqda...' : 'Saqlash'}
               </button>
             </div>
           </div>

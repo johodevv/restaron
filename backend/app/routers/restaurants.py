@@ -54,6 +54,8 @@ class SettingsUpdate(BaseModel):
     printer_paper_width: Optional[int] = None
     printer_codepage: Optional[int] = None
     printer_font_size: Optional[str] = None
+    printer_char_spacing: Optional[int] = None
+    printer_line_spacing: Optional[str] = None
     archive_retention_years: Optional[int] = None
     allow_debt_payment: Optional[bool] = None
     enable_telegram_notifications: Optional[bool] = None
