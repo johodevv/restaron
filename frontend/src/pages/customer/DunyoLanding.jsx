@@ -12,6 +12,7 @@ import {
   Star
 } from 'lucide-react';
 import api from '../../utils/api';
+import { preloadImages, collectImageUrls } from '../../utils/preloadImages';
 
 export const DunyoLanding = ({ onOpenLogin }) => {
   // Menyu KATEGORIYALAR bo'yicha ko'rsatiladi (Kaboblar, Salatlar,
@@ -40,6 +41,9 @@ export const DunyoLanding = ({ onOpenLogin }) => {
             .filter((c) => c.items.length > 0);
           setMenuGroups(groups);
           if (groups.length > 0) setActiveCatId(groups[0].id);
+          // Boshqa kategoriyalarning rasmlarini fonda oldindan
+          // yuklaymiz — kategoriya bosilganda rasm darhol chiqadi.
+          preloadImages(collectImageUrls(groups));
         }
       } catch (err) {
         console.warn('Menyuni yuklashda xatolik:', err);

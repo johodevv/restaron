@@ -76,8 +76,25 @@ app.add_middleware(
     expose_headers=["*"],
 )
 
-# Static fayllar (rasmlar, QR kodlar)
-app.mount("/uploads", StaticFiles(directory=settings.UPLOAD_DIR), name="uploads")
+# ─── Static fayllar (rasmlar, QR kodlar) ──────────────────────────
+#
+# Rasm fayl nomi UUID — mazmuni hech qachon o'zgarmaydi. Shuning uchun
+# brauzerga "bu faylni bir yil saqla" deymiz. Aks holda mijoz har safar
+# kategoriyani almashtirganda har bir rasm uchun serverga qayta murojaat
+# qilinadi va menyu sekin ochiladi.
+class CachedStaticFiles(StaticFiles):
+    """Rasmlarni brauzer keshida uzoq saqlaydigan static fayl xizmati."""
+
+    def file_response(self, *args, **kwargs):
+        resp = super().file_response(*args, **kwargs)
+        try:
+            resp.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        except Exception:
+            pass
+        return resp
+
+
+app.mount("/uploads", CachedStaticFiles(directory=settings.UPLOAD_DIR), name="uploads")
 
 # Routerlarni ulash
 app.include_router(auth, prefix="/api/v1")

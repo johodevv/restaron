@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import api from '../../utils/api';
+import { preloadImages, collectImageUrls } from '../../utils/preloadImages';
 import { useAuth } from '../../context/AuthContext';
 import { useWebSocket } from '../../context/WebSocketContext';
 import { ThermalReceiptModal } from '../../components/ThermalReceiptModal';
@@ -119,6 +120,9 @@ export const WaiterDashboard = () => {
 
       setTables(tablesData || []);
       setCategories(menuData || []);
+      // Menyu rasmlarini fonda oldindan yuklaymiz — ofitsiant
+      // kategoriyani almashtirganda rasm kutib turmasin.
+      preloadImages(collectImageUrls(menuData || []));
       if (menuData && menuData.length > 0 && !selectedCatId) {
         setSelectedCatId(menuData[0].id);
       }

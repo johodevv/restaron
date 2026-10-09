@@ -11,6 +11,7 @@ from sqlalchemy.orm import selectinload
 from typing import List, Optional
 
 from app.core.database import get_db
+from app.core.image_utils import compress_image_bytes
 from app.core.security import require_role
 from app.core.config import settings
 from app.models.menu import Category, MenuItem
@@ -75,13 +76,20 @@ def check_image_upload(upload_file: UploadFile) -> str:
 
 
 async def save_upload_file(upload_file: UploadFile, subfolder: str, ext: str = "") -> str:
-    """Rasm saqlash"""
+    """Rasmni SIQIB saqlash.
+
+    Telefondan yuklangan surat 3-8 MB bo'ladi, saytda esa u kichkina
+    kartochkada ko'rsatiladi. Siqilmasa mijozning telefoni har safar
+    o'nlab megabayt yuklab oladi va sayt sekin ishlaydi.
+
+    Shuning uchun har bir rasm saqlashdan oldin kichraytiriladi va
+    qayta siqiladi (1400 nuqta, 82% sifat) — ko'z bilan farqi
+    bilinmaydi, hajmi esa 10-40 barobar kichrayadi.
+    """
     upload_dir = os.path.join(settings.UPLOAD_DIR, subfolder)
     os.makedirs(upload_dir, exist_ok=True)
 
     ext = ext or _image_ext(upload_file.filename) or "jpg"
-    file_name = f"{uuid.uuid4()}.{ext}"
-    file_path = os.path.join(upload_dir, file_name)
 
     content = await upload_file.read()
     if not content:
@@ -93,6 +101,12 @@ async def save_upload_file(upload_file: UploadFile, subfolder: str, ext: str = "
             detail=f"Rasm juda katta ({mb:.1f} MB). Eng ko'pi 12 MB. "
                    f"Telefonda rasmni kichraytirib qayta yuklang.",
         )
+
+    # Siqish — qo'llab bo'lmasa (masalan HEIC) asl fayl saqlanadi.
+    content, ext = compress_image_bytes(content, ext)
+
+    file_name = f"{uuid.uuid4()}.{ext}"
+    file_path = os.path.join(upload_dir, file_name)
 
     async with aiofiles.open(file_path, "wb") as f:
         await f.write(content)

@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import api from '../../utils/api';
+import { preloadImages, collectImageUrls } from '../../utils/preloadImages';
 import { useWebSocket } from '../../context/WebSocketContext';
 import { useLanguage } from '../../context/LanguageContext';
 import {
@@ -45,6 +46,9 @@ export const CustomerMenu = ({
         }))
         .filter((c) => c.items.length > 0);
       setCategories(withItems);
+      // Barcha kategoriyalarning rasmlarini fonda oldindan yuklaymiz —
+      // bo'limni almashtirganda rasm kutilmaydi, darhol chiqadi.
+      preloadImages(collectImageUrls(withItems));
       if (withItems.length > 0 && !selectedCatId) {
         setSelectedCatId(withItems[0].id);
       }
