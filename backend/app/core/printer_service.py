@@ -786,8 +786,16 @@ def format_pre_check(
                 {"title": "НОМИ", "w": max(8, name2), "wrap": True},
                 {"title": "СУММА", "w": sum_w, "align": "right"},
             ]
-            data = [[(f"{r[0]} x{r[1]}" if r[1] not in ("1", "?") else r[0]), r[3]]
-                    for r in rows]
+            def _narrow_name(name: str, qty: str) -> str:
+                # Og'irlik ("1.925 кг") oldiga "x" qo'yilsa ko'paytirish
+                # kabi o'qiladi — faqat DONA soni uchun "x" qo'yamiz.
+                if qty in ("1", "?", ""):
+                    return name
+                if qty.replace(".", "", 1).isdigit():
+                    return f"{name} x{qty}"
+                return f"{name} ({qty})"
+
+            data = [[_narrow_name(r[0], r[1]), r[3]] for r in rows]
         lines.extend(draw_table(cols, data, col_width))
     elif rows:
         # Eng katta shriftda ramka sig'maydi — oddiy ikki qatorli ko'rinish.

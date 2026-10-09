@@ -755,10 +755,26 @@ async def update_item_weight(
             detail="Summani yoki og'irlikni kiriting.",
         )
 
-    order_item.weight = payload.weight if has_weight else None
     # Ofitsiant summani o'zi yozsa — shu summa qoladi. Faqat og'irlik
     # kiritilsa, eski yo'l bilan 1 kg narxiga ko'paytiriladi.
     order_item.manual_price = round(float(payload.price), 2) if has_price else None
+
+    if has_weight:
+        order_item.weight = payload.weight
+    elif has_price:
+        # OG'IRLIKNI O'ZIMIZ HISOBLAYMIZ: summa / 1 kg narxi.
+        # Ofitsiant 204 000 so'm desa, 120 000 so'm/kg baliq uchun
+        # chekda "1.7 кг" deb chiqadi — mijoz nechchi kg olganini
+        # ko'radi va narx qayerdan kelganini tushunadi.
+        unit_price = menu_item.price or 0.0
+        qty = max(1, order_item.quantity or 1)
+        if unit_price > 0:
+            order_item.weight = round(
+                float(order_item.manual_price) / (unit_price * qty), 3)
+        else:
+            order_item.weight = None
+    else:
+        order_item.weight = None
     order_item.total_price = line_total(
         menu_item, order_item.quantity, order_item.weight, order_item.manual_price
     )
