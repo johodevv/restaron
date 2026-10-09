@@ -7,8 +7,6 @@ import { ThermalReceiptModal } from '../../components/ThermalReceiptModal';
 import confetti from 'canvas-confetti';
 import {
   UtensilsCrossed,
-  ShoppingBag,
-  Truck,
   Plus,
   Minus,
   Trash2,
@@ -19,6 +17,7 @@ import {
   Clock,
   CheckCircle2,
   Printer,
+  Receipt,
   Search,
   User,
   Sparkles,
@@ -33,11 +32,11 @@ import {
 } from 'lucide-react';
 
 export const WaiterDashboard = () => {
-  const { user } = useAuth();
+  const { user, isAdmin } = useAuth();
   const { addEventListener, playChime, connected } = useWebSocket();
   const restaurantId = user?.restaurant_id || 1;
 
-  // View mode: 'pos' (Ali Poster stollar zakazi) | 'calls' (Chaqiruvlar) | 'ready' (Oshxonadan tayyor) | 'kpi' (Hisobotim)
+  // Ekran: 'pos' (stollar zakazi) | 'calls' (Chaqiruvlar) | 'ready' (Oshxonadan tayyor)
   const [activeTab, setActiveTab] = useState('pos');
   const [orderType, setOrderType] = useState('table'); // 'table' | 'takeaway' | 'delivery'
 
@@ -62,6 +61,7 @@ export const WaiterDashboard = () => {
   const [weightValue, setWeightValue] = useState('');
   // Tortiladigan taomning SUMMASI — ofitsiant kg emas, pulini yozadi
   const [priceValue, setPriceValue] = useState('');
+  const [printingBill, setPrintingBill] = useState(false);
   const [savingWeight, setSavingWeight] = useState(false);
 
   // O'lchanadigan taom hajmi (1.5 L kola, 1.4 kg baliq) uchun oyna
@@ -453,6 +453,43 @@ export const WaiterDashboard = () => {
   };
 
 
+  // Admin zakas olgandan keyin darhol mijoz chekini chiqarish.
+  // Ofitsiantda bu tugma yo'q — chekni kassa (admin) chiqaradi.
+  const handlePrintBill = async () => {
+    if (!selectedTable) {
+      alert('Avval stolni tanlang');
+      return;
+    }
+    if (!activeOrder || !(activeOrder.items || []).length) {
+      alert("Bu stolda hali zakas yo'q");
+      return;
+    }
+    setPrintingBill(true);
+    try {
+      const res = await api.post(`/tables/${selectedTable.id}/print-bill`, {});
+      if (res.raw_text) {
+        setThermalReceiptText(res.raw_text);
+        setReceiptModalTitle(
+          `Mijoz cheki (${selectedTable.room || 'Zal'} N#${selectedTable.number})`
+        );
+      }
+      // Server `success` maydonida printerdan chiqdi-chiqmaganini aytadi.
+      if (res.success === false) {
+        setReceiptModalOpen(true);
+        alert(
+          `${res.message || 'Chek printerdan chiqmadi'}\n\n` +
+          `Chek ekranda ochildi — "Chop etish" tugmasi orqali chiqarishingiz mumkin.`
+        );
+      } else {
+        alert(`✅ Chek ${res.printer_name || 'kassa printeri'} ga yuborildi`);
+      }
+    } catch (err) {
+      alert(err.message || 'Chek chiqarishda xatolik');
+    } finally {
+      setPrintingBill(false);
+    }
+  };
+
   // Action: "Bordim" (Resolve waiter call)
   const handleResolveCall = async (callId) => {
     try {
@@ -483,60 +520,26 @@ export const WaiterDashboard = () => {
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans select-none">
-      {/* ─── Top Bar (Ali Poster uslubida) ─────────────────────────── */}
+      {/* ─── Yuqori panel ──────────────────────────────────────────── */}
       <header className="h-14 bg-emerald-950/80 border-b border-emerald-800/60 px-4 flex items-center justify-between shadow-lg backdrop-blur-md">
         <div className="flex items-center gap-3">
-          <div className="flex items-center gap-2 font-black text-emerald-400 tracking-wider text-base">
-            <span className="p-1.5 rounded-lg bg-emerald-500/20 text-emerald-400">
-              <UtensilsCrossed className="w-5 h-5" />
-            </span>
-            <span>Ali Poster POS</span>
-          </div>
-
-          {/* Mode Switchers: Stollar | S soboy | Dostavka */}
-          <div className="hidden sm:flex items-center bg-black/40 p-1 rounded-xl border border-emerald-800/40 ml-4">
-            <button
-              onClick={() => {
-                setActiveTab('pos');
-                setOrderType('table');
-              }}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
-                activeTab === 'pos' && orderType === 'table'
-                  ? 'bg-emerald-600 text-white shadow-md'
-                  : 'text-slate-300 hover:text-white'
-              }`}
-            >
-              <span>Столы</span>
-            </button>
-            <button
-              onClick={() => {
-                setActiveTab('pos');
-                setOrderType('takeaway');
-              }}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
-                activeTab === 'pos' && orderType === 'takeaway'
-                  ? 'bg-emerald-600 text-white shadow-md'
-                  : 'text-slate-300 hover:text-white'
-              }`}
-            >
-              <ShoppingBag className="w-3.5 h-3.5" />
-              <span>С собой</span>
-            </button>
-            <button
-              onClick={() => {
-                setActiveTab('pos');
-                setOrderType('delivery');
-              }}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
-                activeTab === 'pos' && orderType === 'delivery'
-                  ? 'bg-emerald-600 text-white shadow-md'
-                  : 'text-slate-300 hover:text-white'
-              }`}
-            >
-              <Truck className="w-3.5 h-3.5" />
-              <span>Доставка</span>
-            </button>
-          </div>
+          {/* "Stollar" — chaqiruvlar yoki tayyor taomlardan POS ekraniga
+              qaytish tugmasi. Olib tashlangan: begona nom va bu
+              restoranda ishlatilmaydigan "С собой" / "Доставка". */}
+          <button
+            onClick={() => {
+              setActiveTab('pos');
+              setOrderType('table');
+            }}
+            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-black transition-all active:scale-95 ${
+              activeTab === 'pos'
+                ? 'bg-emerald-600 text-white shadow-md'
+                : 'bg-black/40 border border-emerald-800/40 text-slate-300 hover:text-white'
+            }`}
+          >
+            <UtensilsCrossed className="w-4 h-4" />
+            <span>Stollar</span>
+          </button>
         </div>
 
         {/* Right Info: Chaqiruvlar badgi, Waiter Name, Sound toggle */}
@@ -717,7 +720,7 @@ export const WaiterDashboard = () => {
           )}
         </div>
       ) : (
-        /* ── POS EKRANI (Ali Poster uslubida yuqori sifatli dizayn) ───────── */
+        /* ── POS EKRANI (stol zakazi) ──────────────────────────────── */
         <div className="flex-1 flex flex-col lg:flex-row overflow-hidden">
           {/* ── Chap Panel: Tanlangan Stol va Zakaz (Katta va qulay shriftlar) ─────────── */}
           <div className="w-full lg:w-[480px] xl:w-[500px] bg-slate-900/95 border-r border-slate-800 flex flex-col justify-between shrink-0 shadow-2xl">
@@ -1033,6 +1036,19 @@ export const WaiterDashboard = () => {
                   <Printer className="w-5 h-5 shrink-0" />
                   <span>{sendingToKitchen ? 'Chop etilmoqda...' : '🔥 Buyurtmani tasdiqlash'}</span>
                 </button>
+
+                {/* Admin zakas olgandan keyin chekni darhol chiqaradi.
+                    Ofitsiantda bu tugma yo'q — chek kassada chiqadi. */}
+                {isAdmin && (
+                  <button
+                    onClick={handlePrintBill}
+                    disabled={!activeOrder || printingBill}
+                    className="py-4 px-3 rounded-2xl bg-gradient-to-r from-sky-500 to-sky-600 hover:from-sky-400 hover:to-sky-500 disabled:opacity-40 text-white font-black text-xs sm:text-sm shadow-xl shadow-sky-500/25 transition-all active:scale-95 flex items-center justify-center gap-1.5"
+                  >
+                    <Receipt className="w-5 h-5 shrink-0" />
+                    <span>{printingBill ? 'Chop etilmoqda...' : '🧾 Chek chiqarish'}</span>
+                  </button>
+                )}
               </div>
             </div>
           </div>
