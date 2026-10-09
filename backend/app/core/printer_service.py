@@ -110,7 +110,7 @@ def _fit(text: str, width: int, align: str = "left") -> str:
 
 
 def draw_table(columns: List[Dict[str, Any]], rows: List[List[str]],
-               col_width: int) -> List[str]:
+               col_width: int, row_sep: bool = True) -> List[str]:
     """Ramkali jadval chizadi.
 
     columns: [{"title": "НОМИ", "w": 14, "align": "left", "wrap": True}, ...]
@@ -118,6 +118,10 @@ def draw_table(columns: List[Dict[str, Any]], rows: List[List[str]],
 
     Birinchi (wrap=True) ustundagi uzun nom bir nechta qatorga bo'linadi,
     qolgan ustunlar faqat birinchi qatorda to'ldiriladi.
+
+    `row_sep` — har taom orasiga ajratuvchi chiziq chiziladi, shunda
+    qaysi narx qaysi taomniki ekani aniq ko'rinadi. Nomi ikki qatorga
+    bo'linsa ham chiziq faqat TAOMLAR orasida turadi.
     """
     widths = [c["w"] for c in columns]
     total = sum(widths) + len(widths) + 1
@@ -140,7 +144,9 @@ def draw_table(columns: List[Dict[str, Any]], rows: List[List[str]],
         for c, w in zip(columns, widths)) + BOX["v"])
     out.append(line(BOX["ml"], BOX["mm"], BOX["mr"]))
 
-    for row in rows:
+    for r_no, row in enumerate(rows):
+        if row_sep and r_no > 0:
+            out.append(line(BOX["ml"], BOX["mm"], BOX["mr"]))
         cells = list(row) + [""] * (len(widths) - len(row))
         wrap_idx = next((i for i, c in enumerate(columns) if c.get("wrap")), 0)
         parts = _wrap_words(str(cells[wrap_idx]), widths[wrap_idx]) or [""]
@@ -157,6 +163,33 @@ def draw_table(columns: List[Dict[str, Any]], rows: List[List[str]],
 
     out.append(line(BOX["bl"], BOX["bm"], BOX["br"]))
     return out
+
+
+def shorten_amount(text: str, width: int) -> str:
+    """Son/og'irlikni ustunga sig'dirish — KESMASDAN.
+
+    "1.925 кг" tor ustunga sig'masa "1.93кг" ga qisqaradi. Ilgari u
+    shunchaki kesilib, oshxonaga "1.925 к" bo'lib chiqardi.
+    """
+    t = str(text)
+    if len(t) <= width:
+        return t
+
+    # Bo'sh joyni olib tashlaymiz: "1.925 кг" -> "1.925кг"
+    packed = t.replace(" ", "")
+    if len(packed) <= width:
+        return packed
+
+    # Kasr xonalarni kamaytiramiz
+    import re
+    m = re.match(r"^(\d+)\.(\d+)(.*)$", packed)
+    if m:
+        whole, frac, tail = m.groups()
+        for keep in (2, 1, 0):
+            cand = f"{whole}.{frac[:keep]}{tail}" if keep else f"{whole}{tail}"
+            if len(cand) <= width:
+                return cand
+    return packed[:width]
 
 
 def _num_width(values: List[str], minimum: int, title: str = "") -> int:
@@ -628,9 +661,13 @@ def format_kitchen_ticket(
             rows.append([f"* {latin_to_cyrillic(item['note'])}", ""])
 
     if rows and col_width >= TABLE_MIN_COLS:
-        # Son ustuni chekning uchdan biridan oshmasin — nomga joy qolsin.
-        amt_w = min(_num_width([r[1] for r in rows], 4, "СОНИ"),
-                    max(5, col_width // 3))
+        # Nomga kamida 10 belgi qoldiramiz, qolgani son ustuniga.
+        amt_cap = max(5, col_width - 10 - 3)
+        amt_w = min(_num_width([r[1] for r in rows], 4, "СОНИ"), amt_cap)
+        # Sig'maydigan og'irlik KESILMAYDI — qisqartiriladi.
+        rows = [[r[0], shorten_amount(r[1], amt_w)] for r in rows]
+        amt_w = max(amt_w, _num_width([r[1] for r in rows], 4, "СОНИ"))
+        amt_w = min(amt_w, amt_cap)
         name_w = max(6, col_width - amt_w - 3)
         lines.extend(draw_table(
             [{"title": "ТАОМ", "w": name_w, "wrap": True},
