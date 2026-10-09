@@ -590,11 +590,17 @@ async def get_table_bill(table_id: int, db: AsyncSession = Depends(get_db)):
                     "is_weighted": weighed,
                     "order_id": o.id,
                     "order_item_id": item.id,
+                    # Bir xil taom bir nechta qatorda bo'lishi mumkin
+                    # (2 marta alohida buyurtma qilingan). Mijoz taomni
+                    # qaytarsa qaysi qatordan olib tashlashni bilish uchun
+                    # HAMMA qator raqamlari saqlanadi.
+                    "order_item_ids": [],
                     "quantity": 0,
                     "unit_price": item.unit_price,
                     "total_price": 0.0,
                     "special_notes": [],
                 }
+            items_map[key]["order_item_ids"].append(item.id)
             items_map[key]["quantity"] += item.quantity
             items_map[key]["total_price"] += item.total_price
             if item.special_note:
@@ -773,6 +779,128 @@ async def checkout_table(
     )
 
     return TableResponse.model_validate(table)
+
+
+class RemoveBillItemsRequest(BaseModel):
+    """Hisobdan taomni olib tashlash (mijoz qaytarib berdi)"""
+    order_item_ids: List[int] = Field(..., min_length=1)
+    quantity: Optional[int] = Field(default=None, ge=1)
+
+
+@router.post("/{table_id}/remove-items", summary="Hisobdan taomni olib tashlash (qaytarilgan taom)")
+async def remove_bill_items(
+    table_id: int,
+    payload: RemoveBillItemsRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role("admin", "developer")),
+):
+    """Mijoz taomni qaytarib bersa — uni hisobdan olib tashlash.
+
+    `quantity` berilmasa qator butunlay o'chiriladi. Berilsa shuncha
+    dona olib tashlanadi (masalan 3 somsadan 1 tasi qaytarildi).
+
+    Bir xil taom bir nechta buyurtma qatorida bo'lishi mumkin, shuning
+    uchun `order_item_ids` ro'yxati yuboriladi va kerakli soni
+    oxirgisidan boshlab ayriladi.
+    """
+    res = await db.execute(select(Table).where(Table.id == table_id))
+    table = res.scalar_one_or_none()
+    if not table:
+        raise HTTPException(status_code=404, detail="Stol topilmadi")
+
+    items_res = await db.execute(
+        select(OrderItem)
+        .options(selectinload(OrderItem.menu_item))
+        .join(Order, Order.id == OrderItem.order_id)
+        .where(
+            OrderItem.id.in_(payload.order_item_ids),
+            Order.table_id == table_id,
+            Order.is_paid == False,
+        )
+        .order_by(OrderItem.id.desc())
+    )
+    items = items_res.scalars().all()
+    if not items:
+        raise HTTPException(
+            status_code=404,
+            detail="Taom topilmadi — hisob allaqachon yopilgan bo'lishi mumkin.",
+        )
+
+    available = sum((i.quantity or 0) for i in items)
+    to_remove = payload.quantity if payload.quantity is not None else available
+    if to_remove > available:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Hisobda bu taomdan {available} ta bor — {to_remove} tasini olib bo'lmaydi.",
+        )
+
+    removed_name = (items[0].menu_item.name if items[0].menu_item else "Taom")
+    removed = 0
+    touched_orders = set()
+
+    for it in items:
+        if removed >= to_remove:
+            break
+        touched_orders.add(it.order_id)
+        qty = it.quantity or 0
+        take = min(qty, to_remove - removed)
+        removed += take
+        if take >= qty:
+            await db.delete(it)
+        else:
+            it.quantity = qty - take
+            # Oshxonaga yuborilgan son ham kamayishi kerak, aks holda
+            # qolgan qism keyin "yangi" bo'lib begunokdan qayta chiqadi.
+            it.sent_quantity = min(it.sent_quantity or 0, it.quantity)
+            mi = it.menu_item
+            if it.manual_price is not None:
+                # Qo'lda yozilgan summa — bu aniq shu baliqning puli,
+                # soniga bog'liq emas, o'zgarmaydi.
+                it.total_price = round(float(it.manual_price), 2)
+            elif mi and getattr(mi, "is_weighted", False) and it.weight:
+                it.total_price = round(
+                    (it.unit_price or 0.0) * float(it.weight) * max(1, it.quantity), 2)
+            else:
+                it.total_price = round((it.unit_price or 0.0) * it.quantity, 2)
+
+    await db.flush()
+
+    # Tegilgan buyurtmalarning summalarini qayta hisoblaymiz
+    ord_res = await db.execute(
+        select(Order).options(selectinload(Order.items)).where(Order.id.in_(touched_orders))
+    )
+    orders = ord_res.scalars().all()
+    set_res = await db.execute(
+        select(RestaurantSettings).where(RestaurantSettings.restaurant_id == table.restaurant_id)
+    )
+    rsettings = set_res.scalar_one_or_none()
+    _cfg = getattr(rsettings, "service_fee_percent", None)
+    cfg_fee = 12.0 if _cfg is None else float(_cfg)
+
+    for o in orders:
+        subtotal = sum((i.total_price or 0.0) for i in o.items)
+        pct = o.service_fee_percent if o.service_fee_percent is not None else cfg_fee
+        o.subtotal = round(subtotal, 2)
+        o.service_fee_percent = pct
+        o.service_fee_amount = round(subtotal * (float(pct) / 100.0), 2)
+        o.total = round(max(0.0, subtotal + o.service_fee_amount - (o.discount or 0.0)), 2)
+
+    await db.flush()
+
+    await manager.broadcast_to_restaurant(table.restaurant_id, {
+        "type": "order_updated",
+        "table_id": table_id,
+        "table_number": table.number,
+        "removed_item": removed_name,
+        "removed_quantity": removed,
+    })
+
+    return {
+        "success": True,
+        "removed_name": removed_name,
+        "removed_quantity": removed,
+        "message": f"{removed_name} — {removed} ta hisobdan olib tashlandi.",
+    }
 
 
 class TableServiceFeeRequest(BaseModel):

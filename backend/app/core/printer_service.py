@@ -80,6 +80,91 @@ def _name_amount_block(name: str, right: str, width: int) -> List[str]:
     return parts
 
 
+# ─── Jadval (ramka) chizish ───────────────────────────────────────────
+#
+# Chek raqamlari ustun bo'lib, chiziqlar bilan ajratilgan holda chiqadi —
+# mijoz qaysi taom qancha turganini bir qarashda ko'radi.
+#
+# Ramka belgilari CP866 (DOS) kodlar jadvalida bor, shuning uchun
+# Xprinter ularni to'g'ri chop etadi.
+# Ramkali jadval shuncha belgidan tor chekka sig'maydi — undan
+# torida oddiy ro'yxat ko'rinishi ishlatiladi (eng katta shrift).
+TABLE_MIN_COLS = 20
+
+BOX = {
+    "tl": "\u250c", "tm": "\u252c", "tr": "\u2510",
+    "ml": "\u251c", "mm": "\u253c", "mr": "\u2524",
+    "bl": "\u2514", "bm": "\u2534", "br": "\u2518",
+    "h": "\u2500", "v": "\u2502",
+}
+
+
+def _fit(text: str, width: int, align: str = "left") -> str:
+    """Matnni ustun kengligiga joylash (kesmasdan — chaqiruvchi bo'ladi)."""
+    t = str(text)[:width]
+    if align == "right":
+        return t.rjust(width)
+    if align == "center":
+        return t.center(width)
+    return t.ljust(width)
+
+
+def draw_table(columns: List[Dict[str, Any]], rows: List[List[str]],
+               col_width: int) -> List[str]:
+    """Ramkali jadval chizadi.
+
+    columns: [{"title": "НОМИ", "w": 14, "align": "left", "wrap": True}, ...]
+    rows:    [["Қўй кабоб", "2", "32 000", "64 000"], ...]
+
+    Birinchi (wrap=True) ustundagi uzun nom bir nechta qatorga bo'linadi,
+    qolgan ustunlar faqat birinchi qatorda to'ldiriladi.
+    """
+    widths = [c["w"] for c in columns]
+    total = sum(widths) + len(widths) + 1
+    # Qog'ozdan chiqib ketmasin — oxirgi ustunni toraytiramiz.
+    if total > col_width:
+        over = total - col_width
+        for i in range(len(widths) - 1, -1, -1):
+            take = min(over, max(0, widths[i] - 2))
+            widths[i] -= take
+            over -= take
+            if over <= 0:
+                break
+
+    def line(left, mid, right):
+        return left + mid.join(BOX["h"] * w for w in widths) + right
+
+    out = [line(BOX["tl"], BOX["tm"], BOX["tr"])]
+    out.append(BOX["v"] + BOX["v"].join(
+        _fit(c["title"], w, c.get("align", "left"))
+        for c, w in zip(columns, widths)) + BOX["v"])
+    out.append(line(BOX["ml"], BOX["mm"], BOX["mr"]))
+
+    for row in rows:
+        cells = list(row) + [""] * (len(widths) - len(row))
+        wrap_idx = next((i for i, c in enumerate(columns) if c.get("wrap")), 0)
+        parts = _wrap_words(str(cells[wrap_idx]), widths[wrap_idx]) or [""]
+        for n, piece in enumerate(parts):
+            vals = []
+            for i, w in enumerate(widths):
+                if i == wrap_idx:
+                    vals.append(_fit(piece, w, columns[i].get("align", "left")))
+                elif n == 0:
+                    vals.append(_fit(cells[i], w, columns[i].get("align", "right")))
+                else:
+                    vals.append(" " * w)
+            out.append(BOX["v"] + BOX["v"].join(vals) + BOX["v"])
+
+    out.append(line(BOX["bl"], BOX["bm"], BOX["br"]))
+    return out
+
+
+def _num_width(values: List[str], minimum: int, title: str = "") -> int:
+    """Raqam ustuni kengligi — eng uzun qiymatga qarab."""
+    longest = max([len(str(v)) for v in values] + [len(title), minimum])
+    return longest
+
+
 def fmt_percent(value: float) -> str:
     """Foizni chekda chiroyli yozish: 12 -> "12", 7.5 -> "7.5".
 
@@ -511,38 +596,54 @@ def format_kitchen_ticket(
         lines.extend(_wrap_words(dt_str.replace("|", " "), col_width, indent="  "))
     lines.append(sep)
 
-    lines.append(_pad_line("ТАОМ", "СОНИ", col_width))
-    lines.append(sep)
-
+    # ─── Taomlar jadvali (ramkali) ───────────────────────────────
+    # Oshpaz qaysi taomdan nechta kerakligini ustunlardan bir qarashda
+    # ko'radi — ilgari nom va soni bir qatorda chalkashib ketardi.
+    rows = []
     for item in merge_receipt_items(items):
         raw_name = item.get("name_cyrillic") or item.get("name") or "Таом"
         name = latin_to_cyrillic(raw_name)
-        # O'lchanadigan taom hajmi (1.5 L / 1.4 kg) nom bilan birga chiqadi —
-        # oshpaz qaysi hajm kerakligini begunokdan ko'radi.
+        # O'lchanadigan taom hajmi (1.5 L / 1.4 kg) nom bilan birga chiqadi.
         size = (item.get("size") or "").strip()
         if size:
             name = f"{name} [{latin_to_cyrillic(size)}]"
         qty = item.get("quantity") or 1
 
-        # Tortiladigan taom: og'irligi ko'rsatiladi, tortilmagan bo'lsa
-        # oshxona ko'rib turishi uchun ogohlantirish chiqadi.
         if item.get("is_weighted"):
             wt = item.get("weight")
             unit_cyr = latin_to_cyrillic(item.get("unit") or "kg")
             if wt:
-                lines.extend(_name_amount_block(name, f"{wt:g} {unit_cyr}", col_width))
+                amount = f"{wt:g} {unit_cyr}"
             elif item.get("manual_price") is not None:
-                # Ofitsiant summani o'zi yozgan — demak taom allaqachon
-                # tortilgan/o'lchangan, oshxonaga "ТОРТИЛСИН!" chiqmasin.
-                lines.extend(_name_amount_block(name, f"{qty} та", col_width))
+                # Summa yozilgan — taom allaqachon tortilgan.
+                amount = f"{qty} та"
             else:
-                lines.extend(_name_amount_block(name, "ТОРТИЛСИН!", col_width))
-            continue
+                # Tor chekda uzun yozuv ustunni yeb qo'yadi.
+                amount = "ТОРТИЛСИН!" if col_width >= 32 else "ТОРТИШ"
+        else:
+            amount = f"{qty} та"
 
-        lines.extend(_name_amount_block(name, f"{qty} та", col_width))
+        rows.append([name, amount])
         if item.get("note"):
-            note_cyr = latin_to_cyrillic(item['note'])
-            lines.extend(_wrap_words(f"  * {note_cyr}", col_width, indent="    "))
+            rows.append([f"* {latin_to_cyrillic(item['note'])}", ""])
+
+    if rows and col_width >= TABLE_MIN_COLS:
+        # Son ustuni chekning uchdan biridan oshmasin — nomga joy qolsin.
+        amt_w = min(_num_width([r[1] for r in rows], 4, "СОНИ"),
+                    max(5, col_width // 3))
+        name_w = max(6, col_width - amt_w - 3)
+        lines.extend(draw_table(
+            [{"title": "ТАОМ", "w": name_w, "wrap": True},
+             {"title": "СОНИ", "w": amt_w, "align": "right"}],
+            rows, col_width,
+        ))
+    elif rows:
+        # Juda tor chek (eng katta shrift) — ramka sig'maydi, nom
+        # so'z o'rtasidan uzilib ketardi. Oddiy ro'yxat ko'rinishi.
+        lines.append(_pad_line("ТАОМ", "СОНИ", col_width))
+        lines.append(sep)
+        for nm, amt in rows:
+            lines.extend(_name_amount_block(nm, amt, col_width))
 
     lines.append(sep)
     if kitchen_note:
@@ -616,8 +717,10 @@ def format_pre_check(
     else:
         lines.append(_pad_line(ofi_s, dt_str, col_width))
     lines.append(sep)
-    lines.append("Таомлар:")
-
+    # ─── Taomlar jadvali (ramkali) ───────────────────────────────
+    # Mijoz qaysi taom qancha turganini ustunlardan bir qarashda
+    # ko'radi: НОМИ | СОНИ | НАРХИ | СУММА.
+    rows = []
     for idx, it in enumerate(merge_receipt_items(items), 1):
         raw_name = it.get("name_cyrillic") or it.get("name") or "Таом"
         name = latin_to_cyrillic(raw_name)
@@ -627,44 +730,71 @@ def format_pre_check(
         qty = it.get("quantity") or 1
         unit_price = it.get("unit_price") or it.get("price") or 0.0
         line_total = it.get("total_price") or (qty * unit_price)
-
-        lines.extend(_wrap_words(f"{idx}. {name}", col_width, indent="   "))
-
-        # Tortiladigan taom hali narxlanmagan bo'lsa narx YOZILMAYDI:
-        # ilgari "1 x 120 000" deb 1 kg narxi chiqib ketardi va mijoz
-        # hali aniqlanmagan summani ko'rardi.
-        if (it.get("is_weighted") and not it.get("weight")
-                and it.get("manual_price") is None):
-            unit_cyr = latin_to_cyrillic(it.get("unit") or "kg")
-            lines.append(_amount_line(f"   1 {unit_cyr} = {unit_price:,.0f}".replace(",", " "),
-                                      "ТОРТИЛМАГАН" if col_width >= 12 else "ТОРТИЛМ.",
-                                      col_width))
-            continue
-
-        tot_str = f"{line_total:,.0f}".replace(",", " ")
-
-        # Tortiladigan taomda hisob "og'irlik x 1 kg narxi" ko'rinishida
-        # yoziladi — mijoz nechchi kg olganini va nega shuncha pul
-        # ekanini chekning o'zidan ko'radi.
         wt = it.get("weight")
         manual = it.get("manual_price")
-        if it.get("is_weighted") and manual is not None:
-            # Ofitsiant summani o'zi yozgan. Og'irlik ham kiritilgan
-            # bo'lsa uni ko'rsatamiz, aks holda faqat summa chiqadi —
-            # mijoz "1 kg narxi x soni" degan noto'g'ri hisobni ko'rmaydi.
-            if wt:
-                unit_cyr = latin_to_cyrillic(it.get("unit") or "kg")
-                calc_str = f"   {wt:g} {unit_cyr}"
-            else:
-                calc_str = "   Нарх:"
-        elif it.get("is_weighted") and wt:
-            unit_cyr = latin_to_cyrillic(it.get("unit") or "kg")
-            calc_str = f"   {wt:g} {unit_cyr} x {unit_price:,.0f}".replace(",", " ")
-            if qty > 1:
-                calc_str = f"   {qty} x {wt:g} {unit_cyr} x {unit_price:,.0f}".replace(",", " ")
+        unit_cyr = latin_to_cyrillic(it.get("unit") or "kg")
+
+        qty_cell = f"{wt:g} {unit_cyr}" if (it.get("is_weighted") and wt) else str(qty)
+        price_cell = f"{unit_price:,.0f}".replace(",", " ")
+        total_cell = f"{line_total:,.0f}".replace(",", " ")
+
+        if it.get("is_weighted") and not wt and manual is None:
+            # Hali narxlanmagan — taxminiy summa YOZILMAYDI, aks holda
+            # mijoz to'lanmaydigan raqamni ko'radi.
+            qty_cell = "?"
+            total_cell = "ТОРТИЛМ." if col_width >= 30 else "—"
+        elif it.get("is_weighted") and manual is not None and not wt:
+            # Summa qo'lda yozilgan, og'irlik yo'q — "1 kg narxi x soni"
+            # degan chalkash hisob ko'rsatilmaydi.
+            price_cell = "—"
+
+        rows.append([f"{idx}.{name}", qty_cell, price_cell, total_cell])
+
+    if rows and col_width >= TABLE_MIN_COLS:
+        qty_w = _num_width([r[1] for r in rows], 2, "#")
+        price_w = _num_width([r[2] for r in rows], 5, "НАРХИ")
+        sum_w = _num_width([r[3] for r in rows], 5, "СУММА")
+
+        # Nomga kamida MIN_NAME belgi qolishi kerak, aks holda taom nomi
+        # so'z o'rtasidan uzilib ketadi ("Шашли / к").
+        MIN_NAME = 10
+        name4 = col_width - (qty_w + price_w + sum_w + 5)
+        name3 = col_width - (qty_w + sum_w + 4)
+        name2 = col_width - (sum_w + 3)
+
+        if name4 >= MIN_NAME:
+            # Keng chek — rasmdagidek to'liq jadval
+            cols = [
+                {"title": "НОМИ", "w": name4, "wrap": True},
+                {"title": "#", "w": qty_w, "align": "right"},
+                {"title": "НАРХИ", "w": price_w, "align": "right"},
+                {"title": "СУММА", "w": sum_w, "align": "right"},
+            ]
+            data = rows
+        elif name3 >= MIN_NAME:
+            # Dona narxi olib tashlanadi, soni va summa qoladi
+            cols = [
+                {"title": "НОМИ", "w": name3, "wrap": True},
+                {"title": "#", "w": qty_w, "align": "right"},
+                {"title": "СУММА", "w": sum_w, "align": "right"},
+            ]
+            data = [[r[0], r[1], r[3]] for r in rows]
         else:
-            calc_str = f"   {qty} x {unit_price:,.0f}".replace(",", " ")
-        lines.append(_amount_line(calc_str, tot_str, col_width))
+            # Juda tor chek (katta shrift) — soni nom ichiga kiritiladi,
+            # shunda nomga ko'proq joy qoladi va so'zlar uzilmaydi.
+            cols = [
+                {"title": "НОМИ", "w": max(8, name2), "wrap": True},
+                {"title": "СУММА", "w": sum_w, "align": "right"},
+            ]
+            data = [[(f"{r[0]} x{r[1]}" if r[1] not in ("1", "?") else r[0]), r[3]]
+                    for r in rows]
+        lines.extend(draw_table(cols, data, col_width))
+    elif rows:
+        # Eng katta shriftda ramka sig'maydi — oddiy ikki qatorli ko'rinish.
+        lines.append("Таомлар:")
+        for nm, q, pr, tot in rows:
+            lines.extend(_wrap_words(nm, col_width, indent="   "))
+            lines.append(_amount_line(f"   {q} x {pr}", tot, col_width))
 
     lines.append(sep)
     # Katta shriftda qator tor (24 yoki 16 belgi) — uzun ruscha-o'zbekcha

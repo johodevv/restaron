@@ -38,6 +38,7 @@ export const BillModal = ({
   const [feeEditOpen, setFeeEditOpen] = useState(false);
   const [feeValue, setFeeValue] = useState('');
   const [savingFee, setSavingFee] = useState(false);
+  const [removingId, setRemovingId] = useState(null);
   const [savingWeight, setSavingWeight] = useState(false);
   const { addEventListener } = useWebSocket();
   // Hisob yopilayotganda kelgan WebSocket xabari eski chekni qaytarib
@@ -114,6 +115,7 @@ export const BillModal = ({
   .bill-fee-amount { display:none; }
   /* Foizni o'zgartirish tugmasi faqat ekran uchun — chekka tushmaydi */
   .bill-fee-box { display:none; }
+  .bill-remove-btn { display:none; }
   svg { display:none; }
 </style></head><body>
 <h1>Hisob — Stol #${bill?.table_number ?? ''}</h1>
@@ -138,6 +140,54 @@ ${node.innerHTML}
       alert(`❌ Chek chiqarishda xatolik: ` + (err.message || ''));
     } finally {
       setPrintingThermal(false);
+    }
+  };
+
+  // Mijoz taomni qaytarib bersa — hisobdan olib tashlash.
+  // Taom allaqachon oshxonadan chiqqan bo'lishi mumkin, shuning uchun
+  // bu amal faqat admin uchun va tasdiqlash so'raladi.
+  const handleRemoveItem = async (item) => {
+    const ids = item.order_item_ids?.length
+      ? item.order_item_ids
+      : item.order_item_id
+      ? [item.order_item_id]
+      : [];
+    if (!ids.length) {
+      alert("Bu qatorni olib tashlab bo'lmaydi (hisob yopilgan bo'lishi mumkin)");
+      return;
+    }
+
+    let qty = item.quantity || 1;
+    if (qty > 1) {
+      const answer = window.prompt(
+        `"${item.name}" — hisobda ${qty} ta bor.\n` +
+          `Nechtasi qaytarildi? (hammasi uchun ${qty} yozing)`,
+        String(qty)
+      );
+      if (answer === null) return;
+      const n = parseInt(String(answer).trim(), 10);
+      if (!n || n < 1 || n > qty) {
+        alert(`1 dan ${qty} gacha son kiriting`);
+        return;
+      }
+      qty = n;
+    } else if (
+      !window.confirm(`"${item.name}" hisobdan olib tashlansinmi?`)
+    ) {
+      return;
+    }
+
+    setRemovingId(item.order_item_id ?? ids[0]);
+    try {
+      await api.post(`/tables/${tableId}/remove-items`, {
+        order_item_ids: ids,
+        quantity: qty,
+      });
+      await fetchBill();
+    } catch (err) {
+      alert(err.message || "Taomni olib tashlashda xatolik");
+    } finally {
+      setRemovingId(null);
     }
   };
 
@@ -589,8 +639,26 @@ ${node.innerHTML}
                         )}
                       </div>
 
-                      <div className="font-bold text-white text-right">
-                        {(item.total_price || 0).toLocaleString()} so'm
+                      <div className="text-right shrink-0">
+                        <div className="font-bold text-white">
+                          {(item.total_price || 0).toLocaleString()} so'm
+                        </div>
+                        {/* Mijoz taomni qaytarib bersa shu tugma bilan
+                            hisobdan olib tashlanadi. Chop etilgan chekka
+                            tushmaydi (bill-remove-btn yashiriladi). */}
+                        {isStaff && (item.order_item_ids?.length || item.order_item_id) && (
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveItem(item)}
+                            disabled={removingId !== null}
+                            title="Mijoz qaytardi — hisobdan olib tashlash"
+                            className="bill-remove-btn mt-1 px-2 py-1 rounded-lg bg-red-600/20 hover:bg-red-600 text-red-300 hover:text-white border border-red-600/40 text-[10px] font-black transition-all active:scale-95 disabled:opacity-40"
+                          >
+                            {removingId === (item.order_item_id ?? item.order_item_ids?.[0])
+                              ? '...'
+                              : '✕ Qaytarildi'}
+                          </button>
+                        )}
                       </div>
                     </div>
                   ))}

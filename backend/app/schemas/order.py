@@ -212,6 +212,9 @@ class BillItemSummary(BaseModel):
     # (masalan 1.5 kg deb olingan baliq 1.7 kg chiqsa).
     order_id: Optional[int] = None
     order_item_id: Optional[int] = None
+    # Shu qatorga tegishli BARCHA buyurtma qatorlari (taom qaytarilganda
+    # aniq shulardan olib tashlanadi)
+    order_item_ids: List[int] = []
     quantity: int
     unit_price: float
     total_price: float
