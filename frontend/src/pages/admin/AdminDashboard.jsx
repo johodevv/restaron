@@ -112,6 +112,9 @@ export const AdminDashboard = () => {
 
   // Zonalar (stol kategoriyalari): Zal, Terrassa, 2-qavat, VIP
   const [zones, setZones] = useState([]);
+  // Stollar bo'limi filtrlari: zona va holat (bo'sh / band)
+  const [tableZoneFilter, setTableZoneFilter] = useState('');     // '' = hammasi
+  const [tableStatusFilter, setTableStatusFilter] = useState(''); // '' | available | occupied | reserved
   const [newZoneName, setNewZoneName] = useState('');
   const [zoneBusy, setZoneBusy] = useState(false);
   const [editingZoneId, setEditingZoneId] = useState(null);
@@ -745,17 +748,63 @@ export const AdminDashboard = () => {
     }
   };
 
+  // ─── Stollar: zona va holat bo'yicha filtr ──────────────────────
+  // "Terrassa" ni bossangiz faqat terrassadagi stollar chiqadi,
+  // "Band" ni bossangiz faqat band stollar.
+  const tableStatusOf = (t) => (t.status || '').toLowerCase();
+
+  const zoneNameOf = (t) => (t.room || '').trim();
+
+  // Zona ro'yxati: sozlamadagi zonalar + stollarda uchraydigan zonalar
+  const tableZoneOptions = (() => {
+    const names = zones.map((z) => z.name);
+    tables.forEach((t) => {
+      const z = zoneNameOf(t);
+      if (z && !names.includes(z)) names.push(z);
+    });
+    const opts = names.map((n) => ({
+      value: n,
+      label: n,
+      count: tables.filter((t) => zoneNameOf(t) === n).length,
+    }));
+    const noZone = tables.filter((t) => !zoneNameOf(t)).length;
+    if (noZone > 0) {
+      opts.push({ value: '__nozone__', label: 'Zonasiz', count: noZone });
+    }
+    return opts.filter((o) => o.count > 0);
+  })();
+
+  const zoneMatches = (t) =>
+    !tableZoneFilter ||
+    (tableZoneFilter === '__nozone__' ? !zoneNameOf(t) : zoneNameOf(t) === tableZoneFilter);
+
+  const statusMatches = (t) =>
+    !tableStatusFilter || tableStatusOf(t) === tableStatusFilter;
+
+  const filteredTables = tables.filter((t) => zoneMatches(t) && statusMatches(t));
+
+  // Tanlangan holat bo'yicha sanoqlar (zona filtri hisobga olinadi)
+  const statusCounts = (() => {
+    const inZone = tables.filter(zoneMatches);
+    return {
+      all: inZone.length,
+      available: inZone.filter((t) => tableStatusOf(t) === 'available').length,
+      occupied: inZone.filter((t) => tableStatusOf(t) === 'occupied').length,
+      reserved: inZone.filter((t) => tableStatusOf(t) === 'reserved').length,
+    };
+  })();
+
   // Stollarni zonalar bo'yicha guruhlash. Zonalar ro'yxatidagi tartib
   // saqlanadi; zonasiz stollar oxirida alohida guruhda chiqadi.
   const tableGroups = (() => {
     const groups = [];
     const used = new Set();
     for (const z of zones) {
-      const items = tables.filter((t) => (t.room || '') === z.name);
+      const items = filteredTables.filter((t) => zoneNameOf(t) === z.name);
       items.forEach((t) => used.add(t.id));
       groups.push({ key: `z${z.id}`, name: z.name, items });
     }
-    const rest = tables.filter((t) => !used.has(t.id));
+    const rest = filteredTables.filter((t) => !used.has(t.id));
     if (rest.length > 0) {
       groups.push({ key: 'nozone', name: 'Zonasiz stollar', items: rest });
     }
@@ -1556,7 +1605,82 @@ export const AdminDashboard = () => {
             </button>
           </form>
 
+          {/* ─── Filtrlar: zona va holat ───────────────────────────
+              "Terrassa" ni bossangiz faqat terrassadagi stollar,
+              "Band" ni bossangiz faqat band stollar chiqadi. */}
+          <div className="space-y-2.5 pt-1">
+            {tableZoneOptions.length > 0 && (
+              <div>
+                <span className="block text-[10px] font-black text-theme-muted uppercase tracking-wider mb-1.5">
+                  Zona bo'yicha
+                </span>
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => setTableZoneFilter('')}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-black transition-all active:scale-95 ${
+                      tableZoneFilter === ''
+                        ? 'bg-theme-primary text-white shadow-glow'
+                        : 'bg-black/30 border border-theme-border text-slate-300 hover:border-theme-primary/50'
+                    }`}
+                  >
+                    Hammasi {tables.length}
+                  </button>
+                  {tableZoneOptions.map((o) => (
+                    <button
+                      key={o.value}
+                      type="button"
+                      onClick={() => setTableZoneFilter(o.value)}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-black transition-all active:scale-95 ${
+                        tableZoneFilter === o.value
+                          ? 'bg-theme-primary text-white shadow-glow'
+                          : 'bg-black/30 border border-theme-border text-slate-300 hover:border-theme-primary/50'
+                      }`}
+                    >
+                      {o.label} {o.count}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div>
+              <span className="block text-[10px] font-black text-theme-muted uppercase tracking-wider mb-1.5">
+                Holati bo'yicha
+              </span>
+              <div className="flex flex-wrap items-center gap-1.5">
+                {[
+                  { v: '', label: 'Hammasi', n: statusCounts.all, cls: 'bg-theme-primary text-white shadow-glow' },
+                  { v: 'available', label: "Bo'sh", n: statusCounts.available, cls: 'bg-emerald-500 text-slate-950 shadow-md' },
+                  { v: 'occupied', label: 'Band', n: statusCounts.occupied, cls: 'bg-red-500 text-white shadow-md' },
+                  { v: 'reserved', label: 'Rezerv', n: statusCounts.reserved, cls: 'bg-amber-500 text-slate-950 shadow-md' },
+                ].map((o) => (
+                  <button
+                    key={o.v || 'all'}
+                    type="button"
+                    onClick={() => setTableStatusFilter(o.v)}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-black transition-all active:scale-95 ${
+                      tableStatusFilter === o.v
+                        ? o.cls
+                        : 'bg-black/30 border border-theme-border text-slate-300 hover:border-theme-primary/50'
+                    }`}
+                  >
+                    {o.label} {o.n}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+
           {/* Tables Grid — zonalar bo'yicha guruhlangan */}
+          {tableGroups.length === 0 && (
+            <div className="p-8 rounded-3xl glass-card border border-theme-border text-center space-y-1">
+              <p className="text-sm font-black text-white">Bu filtrga mos stol yo'q</p>
+              <p className="text-xs text-theme-muted">
+                Yuqoridagi "Hammasi" tugmasini bosib barcha stollarni ko'ring.
+              </p>
+            </div>
+          )}
           {tableGroups.map((group) => (
           <div key={group.key} className="space-y-3">
             <div className="flex items-center gap-2 pt-2">

@@ -662,10 +662,18 @@ def format_pre_check(
     lines.append(_amount_line("Жами:" if narrow else "Жами (Итого):", sub_str, col_width))
 
     if service_fee_percent > 0:
-        fee_title = (f"Хизмат {service_fee_percent:.0f}%:" if narrow
-                     else f"Хизмат ҳақи ({service_fee_percent:.0f}%):")
-        fee_str = f"{service_fee_amount:,.0f}".replace(",", " ")
-        lines.append(_amount_line(fee_title, fee_str, col_width))
+        # MIJOZ CHEKIDA xizmat haqining SUMMASI yozilmaydi — faqat
+        # foizi ko'rinadi ("Хизмат ҳақи: 12%"). Summa baribir umumiy
+        # to'lovga qo'shilgan. Ichki hisobotlarda (smena hisoboti) esa
+        # summa to'liq chiqadi.
+        if col_width < 20:
+            fee_title = "Хизмат:"
+        elif narrow:
+            fee_title = "Хизмат ҳақи:"
+        else:
+            fee_title = "Хизмат ҳақи (Обслуж.):"
+        lines.append(_amount_line(
+            fee_title, f"{service_fee_percent:.0f}%", col_width))
 
     if discount > 0:
         disc_str = f"-{discount:,.0f}".replace(",", " ")

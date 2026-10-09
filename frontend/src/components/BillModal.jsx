@@ -105,6 +105,9 @@ export const BillModal = ({
   .muted { color:#444; }
   .total { font-size:14pt; font-weight:bold; border-top:2px solid #000;
            margin-top:10px; padding-top:8px; }
+  /* Mijozga beriladigan chekda xizmat haqining SUMMASI yozilmaydi —
+     faqat foizi ko'rinadi (termal chekdagidek). */
+  .bill-fee-amount { display:none; }
   svg { display:none; }
 </style></head><body>
 <h1>Hisob — Stol #${bill?.table_number ?? ''}</h1>
@@ -484,7 +487,12 @@ ${node.innerHTML}
                 </div>
                 <div className="flex justify-between text-theme-muted">
                   <span>Xizmat haqi ({bill.service_fee_percent || 10}%):</span>
-                  <span className="font-medium text-white">{(bill.service_fee_amount || 0).toLocaleString()} so'm</span>
+                  {/* Summa faqat EKRANDA ko'rinadi (kassir uchun).
+                      Chop etilgan chekda esa "bill-fee-amount" yashiriladi —
+                      mijoz faqat foizini ko'radi. */}
+                  <span className="font-medium text-white bill-fee-amount">
+                    {(bill.service_fee_amount || 0).toLocaleString()} so'm
+                  </span>
                 </div>
                 {bill.discount > 0 && (
                   <div className="flex justify-between text-emerald-400">
