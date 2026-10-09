@@ -23,7 +23,7 @@ from app.core.printer_service import (
     scan_network_printers,
     format_kitchen_ticket, format_pre_check, format_shift_report,
     get_installed_printers, print_to_windows_printer, DEFAULT_FONT_SIZE,
-    printer_options,
+    printer_options, receipt_title,
 )
 
 router = APIRouter(prefix="/receipts", tags=["🖨️ Cheklar Arxivi va Kassa Hisobotlari"])
@@ -257,7 +257,7 @@ async def print_raw_usb(
         _cfg_fee = getattr(st, "service_fee_percent", None)
         _sample_fee = 12.0 if _cfg_fee is None else float(_cfg_fee)
         text = format_pre_check(
-            restaurant_name=(rest.name if rest else "RestAron"),
+            restaurant_name=receipt_title(st, rest),
             address=(rest.address if rest else None),
             phone=(rest.phone if rest else None),
             table_name="Namuna 1",

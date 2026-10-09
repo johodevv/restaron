@@ -51,7 +51,10 @@ def _sync_sqlite_migrations(sync_conn):
     migrations = {
         "restaurant_settings": [
             ("service_fee_percent", "FLOAT DEFAULT 12.0"),
-            ("receipt_header", "VARCHAR(200) DEFAULT 'RestAron'"),
+            # Sukut bo'yicha BO'SH — shunda chek tepasida restoran nomi
+            # chiqadi. Ilgari bu yerda 'RestAron' turib, haqiqiy nomni
+            # bosib ketardi.
+            ("receipt_header", "VARCHAR(200)"),
             ("receipt_footer", "VARCHAR(500) DEFAULT 'Tashrifingiz uchun rahmat!'"),
             ("receipt_address", "VARCHAR(500)"),
             ("receipt_phone", "VARCHAR(50)"),
@@ -138,6 +141,19 @@ def _sync_sqlite_migrations(sync_conn):
                     added.add((table_name, col_name))
         except Exception as e:
             pass
+
+    # Chek sarlavhasida dasturning eski sukut nomi ("RestAron") qolib
+    # ketgan bo'lsa tozalaymiz — u restoran nomini bosib, chek tepasida
+    # "Dunyo Choyxonasi" o'rniga "RestAron" chiqarardi. Admin ataylab
+    # yozgan boshqa nom o'z holicha qoladi.
+    try:
+        sync_conn.execute(text(
+            "UPDATE restaurant_settings SET receipt_header = NULL "
+            "WHERE LOWER(TRIM(COALESCE(receipt_header, ''))) IN "
+            "('restaron', 'restaron restaurant', 'restaron pos')"
+        ))
+    except Exception:
+        pass
 
     # Yangi "sent_quantity" ustuni qo'shilganda: oshxonaga ALLAQACHON
     # yuborilgan qatorlarni yuborilgan deb belgilaymiz. Aks holda

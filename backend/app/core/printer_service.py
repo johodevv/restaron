@@ -524,6 +524,31 @@ def receipt_columns(paper_width: int, font_size: str = DEFAULT_FONT_SIZE,
     return max(10, dots // cell)
 
 
+# Dasturning eski sukut sarlavhalari. Bular RESTORAN NOMI emas —
+# o'rnatishda avtomatik yozilib qolgan qiymatlar. Shuning uchun ular
+# haqiqiy restoran nomini bosib ketmasligi kerak.
+STALE_RECEIPT_HEADERS = {"restaron", "restaron restaurant", "restaron pos"}
+
+
+def receipt_title(settings: Any, restaurant: Any, fallback: str = "RestAron") -> str:
+    """Chek tepasida chiqadigan nom.
+
+    Tartib:
+      1. Admin "Chek sarlavhasi" ga ataylab biror nom yozgan bo'lsa — o'sha;
+      2. aks holda RESTORAN NOMI ("Dunyo Choyxonasi");
+      3. ikkisi ham yo'q bo'lsa — zahira nom.
+
+    Ilgari 1-qadamda dasturning eski sukut qiymati ("RestAron") ham
+    "admin yozgan nom" deb hisoblanardi va chek tepasida restoran
+    nomi o'rniga o'sha chiqib ketardi.
+    """
+    header = (getattr(settings, "receipt_header", None) or "").strip()
+    if header and header.lower() not in STALE_RECEIPT_HEADERS:
+        return header
+    name = (getattr(restaurant, "name", None) or "").strip()
+    return name or fallback
+
+
 def printer_options(settings: Any) -> Dict[str, Any]:
     """Restoran sozlamalaridan chop etish parametrlarini yig'ib beradi.
 

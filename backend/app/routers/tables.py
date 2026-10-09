@@ -26,7 +26,7 @@ from app.models.restaurant import Restaurant, RestaurantSettings
 from app.models.receipt import ReceiptArchive
 from app.core.printer_service import (
     format_pre_check, print_to_windows_printer, DEFAULT_FONT_SIZE,
-    printer_options,
+    printer_options, receipt_title,
 )
 from app.schemas.table import TableCreate, TableUpdate, TableResponse, TablePublic
 from app.schemas.order import TableBillResponse, BillItemSummary
@@ -1086,7 +1086,7 @@ async def print_table_bill(
     fee_pct = fee_candidates[0] if fee_candidates else (12.0 if _cfg is None else float(_cfg))
     fee_amount = round(subtotal * (fee_pct / 100.0), 2)
     grand_total = subtotal + fee_amount
-    rest_name = settings.receipt_header if (settings and settings.receipt_header) else (table.restaurant.name if table.restaurant else "RestAron")
+    rest_name = receipt_title(settings, table.restaurant)
     table_disp = f"{table.room or 'Zal'} N#{table.number}".strip()
     waiter_disp = ", ".join(waiter_names) if waiter_names else (current_user.full_name or current_user.username)
 

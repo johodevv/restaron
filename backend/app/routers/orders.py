@@ -30,7 +30,7 @@ from app.schemas.order import (
 )
 from app.core.printer_service import (
     format_kitchen_ticket, format_pre_check, print_to_windows_printer,
-    DEFAULT_FONT_SIZE, printer_options,
+    DEFAULT_FONT_SIZE, printer_options, receipt_title,
 )
 from app.core.sms_telegram import send_telegram_alert
 from app.websockets.manager import manager
@@ -1319,7 +1319,7 @@ async def checkout_order(
     ]
 
     bill_text = format_pre_check(
-        restaurant_name=settings.receipt_header if (settings and settings.receipt_header) else rest_name,
+        restaurant_name=receipt_title(settings, restaurant, rest_name),
         # Chek sozlamasida bo'sh bo'lsa — restoran ma'lumotidan olamiz,
         # shunda telefon/manzil chekda ikki joyda sozlanmasdan ham chiqadi.
         address=(getattr(settings, "receipt_address", None) if settings else None)
