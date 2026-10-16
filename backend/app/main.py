@@ -2,6 +2,7 @@
 RestAron — Asosiy FastAPI ilovasi
 """
 import os
+import re
 from datetime import datetime
 import sys
 from contextlib import asynccontextmanager
@@ -20,7 +21,7 @@ from app.core.config import settings
 from app.core.database import create_tables
 
 # Routerlar
-from app.routers import auth, users, restaurants, tables, menu, orders, stats, notifications, reviews, ws, debts, receipts
+from app.routers import auth, users, restaurants, tables, menu, orders, stats, notifications, reviews, ws, debts, receipts, audit
 
 # Upload papkalarini yaratish (import vaqtida kerak)
 os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
@@ -34,16 +35,29 @@ async def lifespan(app: FastAPI):
     """Startup va shutdown hodisalari"""
     # Jadvallarni yaratish
     await create_tables()
-    try:
-        from seed import seed
-        await seed()
-    except Exception as e:
-        print(f"[WARN] Auto seed xatosi: {e}")
+    if os.getenv("DISABLE_AUTO_SEED", "false").lower() not in ("1", "true", "yes"):
+        try:
+            from seed import seed
+            await seed()
+        except Exception as e:
+            print(f"[WARN] Auto seed xatosi: {e}")
+
+    # Printer retry queue workerni ishga tushirish
+    from app.core.printer_queue import printer_queue
+    printer_queue.start_worker()
+
+    # WebSocket heartbeat monitorini ishga tushirish
+    from app.websockets.manager import manager as ws_manager
+    ws_manager.start_heartbeat(interval_seconds=25, timeout_seconds=60)
 
     print(f"[OK] {settings.APP_NAME} ishga tushdi!")
     yield
+    await ws_manager.stop_heartbeat()
+    await printer_queue.stop_worker()
     print("[STOP] Server to'xtatildi.")
 
+
+docs_enabled = bool(settings.DEBUG or getattr(settings, "ENABLE_DOCS", False))
 
 app = FastAPI(
     title=f"{settings.APP_NAME} API",
@@ -61,15 +75,40 @@ app = FastAPI(
 Bearer JWT token ishlatiladi. `/auth/login` orqali token oling.
     """,
     version="1.0.0",
-    docs_url="/docs",
-    redoc_url="/redoc",
+    docs_url="/docs" if docs_enabled else None,
+    redoc_url="/redoc" if docs_enabled else None,
+    openapi_url="/openapi.json" if docs_enabled else None,
     lifespan=lifespan,
 )
 
-# CORS — Restoran ichki Wi-Fi (192.168.x.x), mobil telefonlar, localhost va bulutli domenlarni to'liq qo'llab-quvvatlash
+
+def build_cors_regex() -> str:
+    """Xavfsiz CORS regex: Faqat localhost, restoran Wi-Fi (LAN) va ruxsat berilgan domenlar."""
+    patterns = [
+        r"https?://(localhost|127\.0\.0\.1)(:\d+)?",
+        r"https?://192\.168\.\d+\.\d+(:\d+)?",
+        r"https?://10\.\d+\.\d+\.\d+(:\d+)?",
+        r"https?://172\.(1[6-9]|2\d|3[01])\.\d+\.\d+(:\d+)?",
+    ]
+    for url_val in [settings.FRONTEND_URL, settings.QR_BASE_URL]:
+        if url_val and not any(loc in url_val for loc in ["localhost", "127.0.0.1"]):
+            cleaned = url_val.strip().rstrip("/")
+            if cleaned:
+                patterns.append(re.escape(cleaned) + r"(:\d+)?")
+    allowed_extra = getattr(settings, "ALLOWED_ORIGINS", "")
+    if allowed_extra:
+        for domain in allowed_extra.split(","):
+            cleaned = domain.strip().rstrip("/")
+            if cleaned:
+                patterns.append(re.escape(cleaned) + r"(:\d+)?")
+
+    return rf"^({'|'.join(patterns)})$"
+
+
+# CORS — Restoran ichki Wi-Fi tarmog'i, mobil telefonlar va xavfsiz domenlar
 app.add_middleware(
     CORSMiddleware,
-    allow_origin_regex=r".*",
+    allow_origin_regex=build_cors_regex(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -82,8 +121,27 @@ app.add_middleware(
 # brauzerga "bu faylni bir yil saqla" deymiz. Aks holda mijoz har safar
 # kategoriyani almashtirganda har bir rasm uchun serverga qayta murojaat
 # qilinadi va menyu sekin ochiladi.
+# Agar rasm diskdan o'chirilgan bo'lsa (404), brauzer keshidagi eski nusxa
+# ko'rinmasligi uchun Cache-Control: no-cache qaytaramiz.
+from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.responses import Response, PlainTextResponse
+
+
 class CachedStaticFiles(StaticFiles):
-    """Rasmlarni brauzer keshida uzoq saqlaydigan static fayl xizmati."""
+    """Rasmlarni brauzer keshida saqlaydigan static fayl xizmati."""
+
+    async def get_response(self, path: str, scope) -> Response:
+        try:
+            response = await super().get_response(path, scope)
+            if response.status_code >= 400:
+                response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+            return response
+        except StarletteHTTPException as exc:
+            return PlainTextResponse(
+                exc.detail or "Not Found",
+                status_code=exc.status_code,
+                headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+            )
 
     def file_response(self, *args, **kwargs):
         resp = super().file_response(*args, **kwargs)
@@ -109,6 +167,7 @@ app.include_router(reviews, prefix="/api/v1")
 app.include_router(ws, prefix="/api/v1")
 app.include_router(debts, prefix="/api/v1")
 app.include_router(receipts, prefix="/api/v1")
+app.include_router(audit, prefix="/api/v1")
 
 
 # ─── Health Check ─────────────────────────────────────────
@@ -163,12 +222,60 @@ APP_VERSION = read_app_version()
 
 @app.get("/health", tags=["🏥 Health Check"])
 async def health():
-    return {
-        "status": "healthy",
+    """
+    Tizim salomatligi monitoringi:
+    - Baza bilan real vaqtda aloqa (SELECT 1)
+    - Disk xotirasi holati
+    - Kod versiyasi va vaqt
+    """
+    from starlette.responses import JSONResponse
+    from app.core.database import async_session_factory
+    from app.core.disk_utils import get_free_disk_mb
+
+    db_status = "connected"
+    db_latency_ms = None
+    is_db_healthy = True
+
+    start_time = datetime.now()
+    try:
+        from sqlalchemy import text
+        async with async_session_factory() as session:
+            await session.execute(text("SELECT 1"))
+        db_latency_ms = round((datetime.now() - start_time).total_seconds() * 1000, 2)
+    except Exception as e:
+        db_status = f"unhealthy: {str(e)}"
+        is_db_healthy = False
+
+    free_mb = get_free_disk_mb()
+    disk_healthy = free_mb >= 50.0
+
+    status_str = "healthy"
+    status_code = 200
+    if not is_db_healthy:
+        status_str = "unhealthy"
+        status_code = 503
+    elif not disk_healthy:
+        status_str = "warning_disk_low"
+
+    content = {
+        "status": status_str,
+        "database": {
+            "status": db_status,
+            "latency_ms": db_latency_ms,
+        },
+        "disk": {
+            "free_mb": round(free_mb, 1),
+            "status": "ok" if disk_healthy else "low_space",
+        },
         "app": settings.APP_NAME,
         "version": APP_VERSION["commit"],
         "updated_at": APP_VERSION["date"],
+        "timestamp": datetime.now(timezone.utc).isoformat(),
     }
+
+    if status_code != 200:
+        return JSONResponse(status_code=status_code, content=content)
+    return content
 
 
 # ─── Frontend Statik Fayllarini Taqdim Etish (Standalone Server Rejimi) ───

@@ -17,10 +17,11 @@ router = APIRouter(prefix="/ws", tags=["⚡ WebSocket"])
 
 
 async def authenticate_ws_token(token: str) -> Optional[User]:
-    """Token orqali foydalanuvchini aniqlash"""
+    """Token orqali foydalanuvchini aniqlash va rol mosligini tekshirish"""
     try:
         payload = decode_token(token)
         user_id = payload.get("sub")
+        token_role = payload.get("role")
         if not user_id:
             return None
 
@@ -28,6 +29,9 @@ async def authenticate_ws_token(token: str) -> Optional[User]:
             result = await session.execute(select(User).where(User.id == int(user_id)))
             user = result.scalar_one_or_none()
             if user and user.is_active:
+                user_role_str = user.role.value if hasattr(user.role, "value") else str(user.role)
+                if token_role and token_role != user_role_str:
+                    return None
                 return user
     except Exception:
         return None
@@ -72,6 +76,7 @@ async def websocket_endpoint(
         while True:
             # Mijozdan xabar kutish (keepalive ping/pong yoki buyruqlar)
             message_text = await websocket.receive_text()
+            manager.update_heartbeat(websocket)
             try:
                 data = json.loads(message_text)
                 msg_type = data.get("type", "message")
@@ -84,6 +89,8 @@ async def websocket_endpoint(
                         },
                         websocket,
                     )
+                elif msg_type == "pong":
+                    manager.update_heartbeat(websocket)
                 elif msg_type == "status_check":
                     online_info = manager.get_online_counts(restaurant_id)
                     await manager.send_personal_message(
@@ -96,6 +103,8 @@ async def websocket_endpoint(
             except json.JSONDecodeError:
                 if message_text == "ping":
                     await websocket.send_text("pong")
+                elif message_text == "pong":
+                    manager.update_heartbeat(websocket)
     except WebSocketDisconnect:
         await manager.disconnect(websocket)
     except Exception:

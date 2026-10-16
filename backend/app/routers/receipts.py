@@ -22,7 +22,7 @@ from app.schemas.receipt import (
 from app.core.printer_service import (
     scan_network_printers,
     format_kitchen_ticket, format_pre_check, format_shift_report,
-    get_installed_printers, print_to_windows_printer, DEFAULT_FONT_SIZE,
+    get_installed_printers, async_print_to_windows_printer, DEFAULT_FONT_SIZE,
     printer_options, receipt_title,
 )
 
@@ -139,6 +139,15 @@ async def list_installed_printers(
     return {"printers": printers, "count": len(printers)}
 
 
+@router.get("/printers/queue", summary="Printer qayta urinish navbati holati")
+async def get_printer_queue_status(
+    current_user: User = Depends(require_role("admin", "developer")),
+):
+    """Printer o'chiq bo'lganda navbatga tushgan cheklar ro'yxati va holati"""
+    from app.core.printer_queue import printer_queue
+    return printer_queue.get_status()
+
+
 class CodepageTestRequest(BaseModel):
     printer_name: Optional[str] = None
     codepages: Optional[List[int]] = None
@@ -215,10 +224,69 @@ async def print_receipt_usb(
     if not r or not r.raw_text:
         raise HTTPException(status_code=404, detail="Chek matni topilmadi")
 
-    res = print_to_windows_printer(r.raw_text, printer_name=printer_name)
+    res = await async_print_to_windows_printer(r.raw_text, printer_name=printer_name)
     if not res.get("success"):
         raise HTTPException(status_code=500, detail=res.get("error", "Chop etishda xatolik"))
     return res
+
+
+@router.get("/{receipt_id}/pdf", summary="Arxivlangan kassa chekining PDF faylini yuklab olish")
+async def get_receipt_pdf(
+    receipt_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role("admin", "waiter", "developer", "cashier")),
+):
+    """Kassa to'lov chekining serverda saqlangan PDF nusxasini qaytaradi"""
+    result = await db.execute(select(ReceiptArchive).where(ReceiptArchive.id == receipt_id))
+    r = result.scalar_one_or_none()
+    if not r:
+        raise HTTPException(status_code=404, detail="Chek arxivi topilmadi")
+
+    import os
+    import re
+    from app.core.pdf_generator import PDF_ARCHIVE_BASE, generate_checkout_receipt_pdf_sync
+
+    date_str = r.created_at.strftime("%Y-%m-%d") if r.created_at else datetime.now().strftime("%Y-%m-%d")
+    clean_num = re.sub(r"[^\w\-]", "", (r.receipt_number or "BILL").replace("#", ""))
+    day_folder = os.path.join(PDF_ARCHIVE_BASE, date_str)
+
+    target_file = None
+    if os.path.exists(day_folder):
+        for fname in os.listdir(day_folder):
+            if clean_num in fname and fname.endswith(".pdf"):
+                target_file = os.path.join(day_folder, fname)
+                break
+
+    if not target_file or not os.path.exists(target_file):
+        pdf_payload = {
+            "restaurant_name": "Dunyo Choyxonasi",
+            "address": "Xorazm viloyati, Xiva tumani",
+            "phone": "+998884593400",
+            "order_number": r.receipt_number,
+            "table_name": r.table_name,
+            "waiter_name": r.waiter_name,
+            "items": r.items_json if isinstance(r.items_json, list) else [],
+            "subtotal": r.subtotal,
+            "service_fee_percent": r.service_fee_percent,
+            "service_fee_amount": r.service_fee_amount,
+            "total": r.total_amount,
+            "payment_method": r.payment_method,
+            "cash_amount": r.cash_amount,
+            "card_amount": r.card_amount,
+            "click_amount": r.click_amount,
+            "debt_amount": r.debt_amount,
+            "receipt_note": r.notes,
+            "created_at": r.created_at,
+        }
+        target_file = generate_checkout_receipt_pdf_sync(pdf_payload)
+
+    from fastapi.responses import FileResponse
+    return FileResponse(
+        target_file,
+        media_type="application/pdf",
+        filename=f"Chek_{clean_num}.pdf",
+    )
+
 
 
 @router.post("/print-raw-usb", summary="Ixtiyoriy chek matnini to'g'ridan-to'g'ri USB Xprinter'ga chop etish")
@@ -280,7 +348,7 @@ async def print_raw_usb(
             char_spacing=popts["char_spacing"],
         )
 
-    res = print_to_windows_printer(
+    res = await async_print_to_windows_printer(
         text, printer_name=payload.printer_name,
         cut_paper=payload.cut_paper, **popts,
     )
@@ -294,7 +362,7 @@ async def print_raw_usb(
 async def create_shift_report(
     payload: ShiftReportCreate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role("admin", "developer")),
+    current_user: User = Depends(require_role("admin", "developer", "cashier")),
 ):
     """
     X-Report: Joriy smenadagi oraliq hisobot
@@ -315,7 +383,7 @@ async def create_shift_report(
     # Restoran ma'lumotlarini olish
     rest_res = await db.execute(select(Restaurant).where(Restaurant.id == restaurant_id))
     restaurant = rest_res.scalar_one_or_none()
-    rest_name = restaurant.name if restaurant else "RestAron"
+    rest_name = restaurant.name if restaurant else "Dunyo Choyxonasi"
 
     set_res = await db.execute(select(RestaurantSettings).where(RestaurantSettings.restaurant_id == restaurant_id))
     settings = set_res.scalar_one_or_none()
@@ -338,6 +406,60 @@ async def create_shift_report(
         select(func.count(ShiftReport.id)).where(ShiftReport.restaurant_id == restaurant_id, ShiftReport.report_type == "z_report")
     )
     shift_number = (shift_count_res.scalar() or 0) + 1
+
+    # Smena yopilayotganda (close_shift=True) ochiq (to'lanmagan) buyurtmalarni tekshirish
+    open_orders_count = 0
+    open_warning_text = None
+    if close_shift:
+        open_statuses = [
+            OrderStatus.PENDING,
+            OrderStatus.PREPARING,
+            OrderStatus.READY,
+            OrderStatus.SERVED,
+        ]
+        open_orders_res = await db.execute(
+            select(Order)
+            .options(selectinload(Order.table), selectinload(Order.waiter))
+            .where(
+                Order.restaurant_id == restaurant_id,
+                Order.status.in_(open_statuses),
+                Order.is_paid == False,
+            )
+        )
+        open_orders_list = open_orders_res.scalars().all()
+        open_orders_count = len(open_orders_list)
+
+        force_close = bool(getattr(payload, "force_close", False))
+        if open_orders_count > 0:
+            if not force_close:
+                # Ochiq buyurtmalar mavjud va force_close tasdiqlanmagan -> 400 xatolik
+                open_details = []
+                for o in open_orders_list[:15]:
+                    t_disp = (
+                        f"Stol #{o.table.number}" if (o.table and o.table.number)
+                        else (o.table.name if o.table else (f"Stol #{o.table_id}" if o.table_id else (o.hall_name or "Olib ketish")))
+                    )
+                    w_disp = o.waiter.full_name if o.waiter else "Biriktirilmagan"
+                    open_details.append({
+                        "order_id": o.id,
+                        "order_number": o.order_number,
+                        "table_id": o.table_id,
+                        "table_display": t_disp,
+                        "waiter_name": w_disp,
+                        "total": o.total or 0.0,
+                        "status": o.status.value if hasattr(o.status, "value") else str(o.status),
+                    })
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail={
+                        "error_code": "OPEN_UNPAID_ORDERS_EXIST",
+                        "message": f"Diqqat! Hozirda {open_orders_count} ta stolda to'lanmagan buyurtmalar mavjud. Smenani yopishdan oldin ushbu hisoblarni yoping yoki 'force_close=True' parametri bilan tasdiqlang.",
+                        "open_orders_count": open_orders_count,
+                        "open_orders": open_details,
+                    },
+                )
+            else:
+                open_warning_text = f"Smena {open_orders_count} ta to'lanmagan ochiq buyurtma mavjud bo'lgan holda majburiy yopildi."
 
     # Ushbu smenada yopilgan buyurtmalarni olish
     orders_res = await db.execute(
@@ -476,9 +598,203 @@ async def create_shift_report(
     db.add(rec_archive)
     await db.flush()
 
+    # Smena yopilganda (Z-Report) kassir harakatini Audit Logga qayd qilish
+    if close_shift:
+        from app.core.audit import log_audit_event
+        await log_audit_event(
+            db=db,
+            user=current_user,
+            action="shift_closed",
+            restaurant_id=restaurant_id,
+            entity_type="shift_report",
+            entity_id=shift_report.id,
+            details={
+                "shift_number": shift_number,
+                "total_orders": total_orders,
+                "total_sales": total_sales,
+                "total_cash": total_cash,
+                "total_card": total_card,
+                "total_click": total_click,
+                "total_debt": total_debt,
+                "force_closed": bool(getattr(payload, "force_close", False)),
+                "unpaid_open_orders_count": open_orders_count,
+            },
+        )
+
     res = ShiftReportResponse.model_validate(shift_report)
     res.raw_text = raw_text
+    res.open_orders_warning = open_warning_text
+    res.open_orders_count = open_orders_count
+
+    # Agar USB orqali avtomatik chop etish so'ralgan bo'lsa
+    if getattr(payload, "print_to_usb", False):
+        try:
+            printer_name = getattr(settings, "printer_customer_name", None)
+            res.print_status = await async_print_to_windows_printer(
+                raw_text,
+                printer_name=printer_name,
+                cut_paper=True,
+                **popts,
+            )
+        except Exception as e:
+            res.print_status = {"success": False, "error": str(e)}
+
     return res
+
+
+@router.get("/shift-report/current", summary="Joriy ochiq smenaning jonli hisoboti (Live X-Report preview)")
+async def get_current_shift_preview(
+    restaurant_id: int = Query(..., description="Restoran ID"),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role("admin", "developer", "cashier")),
+):
+    """
+    Smenani yopmasdan, joriy paytgacha bo'lgan barcha savdo, to'lov turlari,
+    ofitsiantlar ulushi va sotilgan taomlar statistikasini real-vaqtda ko'rsatish.
+    """
+    rest_res = await db.execute(select(Restaurant).where(Restaurant.id == restaurant_id))
+    restaurant = rest_res.scalar_one_or_none()
+    rest_name = restaurant.name if restaurant else "Dunyo Choyxonasi"
+
+    # Oxirgi yopilgan Z-Reportni topish (joriy smena ochilgan vaqtini aniqlash)
+    last_z = await db.execute(
+        select(ShiftReport)
+        .where(ShiftReport.restaurant_id == restaurant_id, ShiftReport.report_type == "z_report", ShiftReport.is_closed == True)
+        .order_by(ShiftReport.created_at.desc())
+    )
+    prev_shift = last_z.scalars().first()
+    opened_at = prev_shift.closed_at if prev_shift else datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    now_dt = datetime.now(timezone.utc)
+
+    # Joriy smena raqami
+    shift_count_res = await db.execute(
+        select(func.count(ShiftReport.id)).where(ShiftReport.restaurant_id == restaurant_id, ShiftReport.report_type == "z_report")
+    )
+    shift_number = (shift_count_res.scalar() or 0) + 1
+
+    # Ushbu smenada yopilgan buyurtmalarni olish
+    orders_res = await db.execute(
+        select(Order)
+        .options(
+            selectinload(Order.waiter),
+            selectinload(Order.items).selectinload(OrderItem.menu_item),
+        )
+        .where(
+            Order.restaurant_id == restaurant_id,
+            Order.status == OrderStatus.PAID,
+            Order.is_paid == True,
+            Order.created_at >= opened_at,
+        )
+    )
+    orders = orders_res.scalars().all()
+
+    total_orders = len(orders)
+    total_sales = 0.0
+    total_cash = 0.0
+    total_card = 0.0
+    total_click = 0.0
+    total_debt = 0.0
+    total_service_fee = 0.0
+    total_waiter_earnings = 0.0
+
+    waiter_map = {}
+    items_map = {}
+
+    for o in orders:
+        total_sales += o.total or 0.0
+        total_cash += o.cash_amount or 0.0
+        total_card += o.card_amount or 0.0
+        total_click += o.click_amount or 0.0
+        total_debt += o.debt_amount or 0.0
+        total_service_fee += o.service_fee_amount or 0.0
+        total_waiter_earnings += o.waiter_share_amount or 0.0
+
+        if o.waiter_id:
+            w_id = o.waiter_id
+            if w_id not in waiter_map:
+                waiter_map[w_id] = {
+                    "waiter_id": w_id,
+                    "name": o.waiter.full_name if o.waiter else f"Ofitsiant #{w_id}",
+                    "sales": 0.0,
+                    "orders_count": 0,
+                    "earning": 0.0,
+                }
+            waiter_map[w_id]["sales"] += o.total or 0.0
+            waiter_map[w_id]["orders_count"] += 1
+            waiter_map[w_id]["earning"] += o.waiter_share_amount or 0.0
+
+        for it in o.items:
+            key = str(it.menu_item_id)
+            if key not in items_map:
+                items_map[key] = {
+                    "menu_item_id": it.menu_item_id,
+                    "name": it.menu_item.name if it.menu_item else f"Taom #{it.menu_item_id}",
+                    "quantity": 0,
+                    "total": 0.0,
+                }
+            items_map[key]["quantity"] += it.quantity or 0
+            items_map[key]["total"] += it.total_price or 0.0
+
+    waiter_breakdown = list(waiter_map.values())
+    items_breakdown = sorted(items_map.values(), key=lambda x: x["quantity"], reverse=True)
+
+    # Hozirgi ochiq (to'lanmagan) stollar va buyurtmalar statistikasi
+    open_statuses = [
+        OrderStatus.PENDING,
+        OrderStatus.PREPARING,
+        OrderStatus.READY,
+        OrderStatus.SERVED,
+    ]
+    open_orders_res = await db.execute(
+        select(Order)
+        .options(selectinload(Order.table), selectinload(Order.waiter))
+        .where(
+            Order.restaurant_id == restaurant_id,
+            Order.status.in_(open_statuses),
+            Order.is_paid == False,
+        )
+    )
+    open_orders_list = open_orders_res.scalars().all()
+    open_orders_count = len(open_orders_list)
+    open_orders_total = sum(o.total or 0.0 for o in open_orders_list)
+    open_orders_details = [
+        {
+            "order_id": o.id,
+            "order_number": o.order_number,
+            "table_id": o.table_id,
+            "table_display": (
+                f"Stol #{o.table.number}" if (o.table and o.table.number)
+                else (o.table.name if o.table else (f"Stol #{o.table_id}" if o.table_id else (o.hall_name or "Olib ketish")))
+            ),
+            "waiter_name": o.waiter.full_name if o.waiter else "Biriktirilmagan",
+            "total": round(o.total or 0.0, 2),
+            "status": o.status.value if hasattr(o.status, "value") else str(o.status),
+        }
+        for o in open_orders_list[:20]
+    ]
+
+    return {
+        "restaurant_id": restaurant_id,
+        "restaurant_name": rest_name,
+        "shift_number": shift_number,
+        "report_type": "current_shift_preview",
+        "opened_at": opened_at,
+        "current_time": now_dt,
+        "is_closed": False,
+        "total_orders": total_orders,
+        "total_sales": round(total_sales, 2),
+        "total_cash": round(total_cash, 2),
+        "total_card": round(total_card, 2),
+        "total_click": round(total_click, 2),
+        "total_debt": round(total_debt, 2),
+        "total_service_fee": round(total_service_fee, 2),
+        "total_waiter_earnings": round(total_waiter_earnings, 2),
+        "waiter_breakdown": waiter_breakdown,
+        "items_breakdown": items_breakdown,
+        "open_orders_count": open_orders_count,
+        "open_orders_total": round(open_orders_total, 2),
+        "open_orders": open_orders_details,
+    }
 
 
 @router.get("/shift-reports/all", response_model=List[ShiftReportResponse], summary="Barcha smena hisobotlari")
@@ -494,3 +810,44 @@ async def list_shift_reports(
         .limit(30)
     )
     return result.scalars().all()
+
+
+@router.post("/shift-reports/{report_id}/print-usb", summary="Smena hisobotini to'g'ridan-to'g'ri USB printerga qayta chop etish")
+async def print_shift_report_usb(
+    report_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role("admin", "developer")),
+):
+    """Tanlangan smena hisobotini Xprinter orqali qayta chop etish."""
+    result = await db.execute(select(ShiftReport).where(ShiftReport.id == report_id))
+    report = result.scalar_one_or_none()
+    if not report:
+        raise HTTPException(status_code=404, detail="Smena hisoboti topilmadi")
+
+    rec_num = f"SHIFT-{report.report_type.upper()}-{report.shift_number}"
+    rec_res = await db.execute(
+        select(ReceiptArchive).where(
+            ReceiptArchive.restaurant_id == report.restaurant_id,
+            ReceiptArchive.receipt_number == rec_num,
+        )
+    )
+    rec = rec_res.scalars().first()
+    if not rec or not rec.raw_text:
+        raise HTTPException(status_code=404, detail="Hisobot chek matni topilmadi")
+
+    set_res = await db.execute(
+        select(RestaurantSettings).where(RestaurantSettings.restaurant_id == report.restaurant_id)
+    )
+    settings = set_res.scalar_one_or_none()
+    popts = printer_options(settings)
+    printer_name = getattr(settings, "printer_customer_name", None)
+
+    res = await async_print_to_windows_printer(
+        rec.raw_text,
+        printer_name=printer_name,
+        cut_paper=True,
+        **popts,
+    )
+    if not res.get("success"):
+        raise HTTPException(status_code=500, detail=res.get("error", "Chop etishda xatolik"))
+    return res

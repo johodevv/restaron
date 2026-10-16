@@ -11,7 +11,9 @@ from sqlalchemy.orm import selectinload
 from typing import List, Optional
 
 from app.core.database import get_db
+from app.core.rate_limit import RateLimiter
 from app.core.image_utils import compress_image_bytes
+from app.core.disk_utils import safe_write_upload
 from app.core.security import require_role
 from app.core.config import settings
 from app.models.menu import Category, MenuItem
@@ -35,7 +37,32 @@ ALLOWED_IMAGE_TYPES = {
 ALLOWED_IMAGE_EXTS = {
     "jpg", "jpeg", "png", "webp", "gif", "heic", "heif", "bmp", "avif",
 }
-MAX_IMAGE_BYTES = 12 * 1024 * 1024   # 12 MB
+MAX_IMAGE_BYTES = 5 * 1024 * 1024   # 5 MB
+
+
+def validate_image_magic_bytes(header: bytes) -> bool:
+    """Faylning haqiqiy rasm ekanini bayt imzosi (magic bytes) orqali tekshirish."""
+    if len(header) < 3:
+        return False
+    # JPEG: \xFF\xD8\xFF
+    if header.startswith(b"\xff\xd8\xff"):
+        return True
+    # PNG: \x89PNG\r\n\x1a\n
+    if header.startswith(b"\x89PNG\r\n\x1a\n"):
+        return True
+    # GIF: GIF87a yoki GIF89a
+    if header.startswith(b"GIF87a") or header.startswith(b"GIF89a"):
+        return True
+    # WebP: RIFF....WEBP
+    if header.startswith(b"RIFF") and b"WEBP" in header[:16]:
+        return True
+    # BMP: BM
+    if header.startswith(b"BM"):
+        return True
+    # HEIC / HEIF / AVIF: ftyp
+    if len(header) >= 12 and header[4:8] == b"ftyp":
+        return True
+    return False
 
 
 def _image_ext(filename: Optional[str]) -> str:
@@ -76,15 +103,11 @@ def check_image_upload(upload_file: UploadFile) -> str:
 
 
 async def save_upload_file(upload_file: UploadFile, subfolder: str, ext: str = "") -> str:
-    """Rasmni SIQIB saqlash.
+    """Rasmni tekshirib, SIQIB saqlash.
 
-    Telefondan yuklangan surat 3-8 MB bo'ladi, saytda esa u kichkina
-    kartochkada ko'rsatiladi. Siqilmasa mijozning telefoni har safar
-    o'nlab megabayt yuklab oladi va sayt sekin ishlaydi.
-
-    Shuning uchun har bir rasm saqlashdan oldin kichraytiriladi va
-    qayta siqiladi (1400 nuqta, 82% sifat) — ko'z bilan farqi
-    bilinmaydi, hajmi esa 10-40 barobar kichrayadi.
+    1. Magic bytes va xavfsizlik tekshiruvi.
+    2. Maksimal 5 MB hajm chegarasi.
+    3. Hajmni siqish va xavfsiz UUID nom bilan saqlash.
     """
     upload_dir = os.path.join(settings.UPLOAD_DIR, subfolder)
     os.makedirs(upload_dir, exist_ok=True)
@@ -98,8 +121,13 @@ async def save_upload_file(upload_file: UploadFile, subfolder: str, ext: str = "
         mb = len(content) / (1024 * 1024)
         raise HTTPException(
             status_code=400,
-            detail=f"Rasm juda katta ({mb:.1f} MB). Eng ko'pi 12 MB. "
+            detail=f"Rasm juda katta ({mb:.1f} MB). Eng ko'pi 5 MB. "
                    f"Telefonda rasmni kichraytirib qayta yuklang.",
+        )
+    if not validate_image_magic_bytes(content[:32]):
+        raise HTTPException(
+            status_code=400,
+            detail="Fayl haqiqiy rasm formatida emas (zararli yoki yaroqsiz fayl imzosi). Faqat JPG, PNG, WEBP, GIF ruxsat etiladi.",
         )
 
     # Siqish — qo'llab bo'lmasa (masalan HEIC) asl fayl saqlanadi.
@@ -108,10 +136,26 @@ async def save_upload_file(upload_file: UploadFile, subfolder: str, ext: str = "
     file_name = f"{uuid.uuid4()}.{ext}"
     file_path = os.path.join(upload_dir, file_name)
 
-    async with aiofiles.open(file_path, "wb") as f:
-        await f.write(content)
+    await safe_write_upload(file_path, content)
 
     return f"/uploads/{subfolder}/{file_name}"
+
+
+def _remove_upload_file(url: Optional[str]) -> None:
+    """O'chirilgan yoki yangilangan rasm faylini diskdan tozalash."""
+    if not url:
+        return
+    try:
+        clean_url = url.lstrip("/")
+        if clean_url.startswith("uploads/"):
+            rel_path = clean_url.replace("uploads/", "", 1)
+        else:
+            rel_path = clean_url
+        file_path = os.path.join(settings.UPLOAD_DIR, rel_path)
+        if os.path.exists(file_path) and os.path.isfile(file_path):
+            os.remove(file_path)
+    except Exception:
+        pass
 
 
 # ─── Categories ──────────────────────────────────────────
@@ -243,8 +287,20 @@ async def create_menu_item(
     return MenuItemResponse.model_validate(item)
 
 
-@router.post("/items/{item_id}/image", response_model=MenuItemResponse,
-             summary="Taom rasmi yuklash")
+@router.post(
+    "/items/{item_id}/image",
+    response_model=MenuItemResponse,
+    summary="Taom rasmi yuklash",
+    dependencies=[
+        Depends(
+            RateLimiter(
+                times=10,
+                seconds=60,
+                detail="Rasm yuklash me'yordan oshdi. Iltimos, 1 daqiqa kuting.",
+            )
+        )
+    ],
+)
 async def upload_item_image(
     item_id: int,
     file: UploadFile = File(...),
@@ -258,10 +314,13 @@ async def upload_item_image(
     if not item:
         raise HTTPException(status_code=404, detail="Taom topilmadi")
 
+    old_image_url = item.image_url
     image_url = await save_upload_file(file, "menu_items", ext)
     item.image_url = image_url
     await db.flush()
     await db.refresh(item)
+    if old_image_url and old_image_url != image_url:
+        _remove_upload_file(old_image_url)
     return MenuItemResponse.model_validate(item)
 
 
@@ -309,7 +368,10 @@ async def delete_menu_item(
                    f"\"Stop-list\" tugmasini bosing — chek tarixi saqlanib qoladi.",
         )
 
+    old_image_url = item.image_url
     await db.delete(item)
+    if old_image_url:
+        _remove_upload_file(old_image_url)
 
 
 @router.patch("/items/{item_id}/toggle-stop-list", response_model=MenuItemResponse, summary="Stop-List (Tugadi / Mavjud) 1 bosishda")

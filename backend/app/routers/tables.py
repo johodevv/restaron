@@ -1,7 +1,8 @@
-﻿"""
+"""
 Stollar API â€” QR kod generatsiya bilan
 """
 import os
+import time
 import uuid
 import random
 import qrcode
@@ -25,35 +26,51 @@ from app.models.order import Order, OrderItem, OrderStatus, CallStatus
 from app.models.restaurant import Restaurant, RestaurantSettings
 from app.models.receipt import ReceiptArchive
 from app.core.printer_service import (
-    format_pre_check, print_to_windows_printer, DEFAULT_FONT_SIZE,
+    format_pre_check, async_print_to_windows_printer, DEFAULT_FONT_SIZE,
     printer_options, receipt_title,
 )
+from app.core.printer_queue import print_with_retry
 from app.schemas.table import TableCreate, TableUpdate, TableResponse, TablePublic
 from app.schemas.order import TableBillResponse, BillItemSummary
 from app.websockets.manager import manager
+from app.core.disk_utils import ensure_disk_space
 
-router = APIRouter(prefix="/tables", tags=["ðŸª‘ Stollar"])
+router = APIRouter(prefix="/tables", tags=["🪑 Stollar"])
+
+_cached_qr_base_url: Optional[str] = None
+_qr_base_url_cached_at: float = 0.0
 
 
 def get_qr_base_url() -> str:
-    """QR uchun ishlatilgan base URL ni aniqlash.
+    """QR uchun ishlatilgan base URL ni aniqlash (xotirada 60 soniya keshlanadi).
     SERVER_ONLINE_URL.txt mavjud bo'lsa (Cloudflare tunnel aktiv), uni ishlatadi.
     Aks holda settings.QR_BASE_URL ni ishlatadi."""
-    # SERVER_ONLINE_URL.txt ni 3 ta mumkin yo'ldan qidirish
+    global _cached_qr_base_url, _qr_base_url_cached_at
+    now = time.time()
+    if _cached_qr_base_url and (now - _qr_base_url_cached_at < 60.0):
+        return _cached_qr_base_url
+
+    # SERVER_ONLINE_URL.txt ni mumkin bo'lgan yo'llardan qidirish
     possible_paths = [
         os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "SERVER_ONLINE_URL.txt")),
         os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "SERVER_ONLINE_URL.txt")),
         os.path.abspath("SERVER_ONLINE_URL.txt"),
     ]
+    resolved = settings.QR_BASE_URL.rstrip("/")
     for p in possible_paths:
         if os.path.exists(p):
             try:
-                val = open(p, "r", encoding="utf-8").read().strip()
+                with open(p, "r", encoding="utf-8") as f:
+                    val = f.read().strip()
                 if val.startswith("http"):
-                    return val.rstrip("/")
+                    resolved = val.rstrip("/")
+                    break
             except Exception:
                 pass
-    return settings.QR_BASE_URL.rstrip("/")
+
+    _cached_qr_base_url = resolved
+    _qr_base_url_cached_at = now
+    return resolved
 
 
 def generate_qr_image(url: str, token: str) -> str:
@@ -73,6 +90,7 @@ def generate_qr_image(url: str, token: str) -> str:
     img = qr.make_image(fill_color="black", back_color="white")
     file_name = f"{token}.png"
     file_path = os.path.join(upload_dir, file_name)
+    ensure_disk_space(required_mb=5, path=upload_dir)
     img.save(file_path)
 
     return f"/uploads/qr_codes/{file_name}"
@@ -627,9 +645,9 @@ async def get_table_bill(table_id: int, db: AsyncSession = Depends(get_db)):
     grand_total = round(subtotal + service_fee_amount, 2)
 
     restaurant = table.restaurant
-    restaurant_name = restaurant.name if restaurant else "RestAron"
-    restaurant_phone = restaurant.phone if restaurant else None
-    restaurant_address = restaurant.address if restaurant else None
+    restaurant_name = restaurant.name if restaurant else "Dunyo Choyxonasi"
+    restaurant_phone = restaurant.phone if restaurant else "+998884593400"
+    restaurant_address = restaurant.address if restaurant else "Xorazm viloyati, Xiva tumani"
 
     items_list = [BillItemSummary(**v) for v in items_map.values()]
     waiter_display = ", ".join(waiter_names) if waiter_names else None
@@ -1114,8 +1132,8 @@ async def print_table_bill(
         char_spacing=popts["char_spacing"],
     )
 
-    # 1-Printer (USB yoki LAN IP) ga chop etish
-    p_res = print_to_windows_printer(bill_text, printer_name=cust_printer, **popts)
+    # 1-Printer (USB yoki LAN IP) ga asinxron chop etish (retry queue bilan, non-blocking)
+    p_res = await print_with_retry(bill_text, printer_name=cust_printer, **popts)
 
     archive = ReceiptArchive(
         restaurant_id=table.restaurant_id,
@@ -1137,16 +1155,18 @@ async def print_table_bill(
     await db.commit()
 
     printed_ok = bool(p_res.get("success", False))
+    is_queued = bool(p_res.get("queued", False))
+    msg = (
+        f"Chek {cust_printer} printeriga yuborildi"
+        if printed_ok and not is_queued else
+        (p_res.get("warning") or f"Printerga ({cust_printer}) ulanib bo'lmadi, navbatga olindi")
+        if is_queued else
+        f"Printerga ({cust_printer}) yuborib bo'lmadi: {p_res.get('error') or 'xatolik'}. Chek matni ekranda ko'rsatildi."
+    )
     return {
         "success": printed_ok,
         "printer_name": cust_printer,
-        "message": (
-            f"Chek {cust_printer} printeriga yuborildi"
-            if printed_ok else
-            f"Printerga ({cust_printer}) yuborib bo'lmadi: "
-            f"{p_res.get('message') or p_res.get('error') or 'printer topilmadi'}. "
-            f"Chek matni ekranda ko'rsatildi."
-        ),
+        "message": msg,
         "raw_text": bill_text,
         "total": grand_total,
     }

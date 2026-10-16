@@ -79,6 +79,9 @@ export const AuthProvider = ({ children }) => {
     isWaiter: user?.role === 'waiter',
     isChef: user?.role === 'chef',
     isAdmin: user?.role === 'admin' || user?.role === 'developer',
+    isCashier: user?.role === 'cashier' || user?.role === 'admin' || user?.role === 'developer',
+    canCheckout: user?.role === 'admin' || user?.role === 'cashier' || user?.role === 'developer',
+    canManageOrders: user?.role === 'admin' || user?.role === 'cashier' || user?.role === 'developer',
     isDev: user?.role === 'developer',
   };
 

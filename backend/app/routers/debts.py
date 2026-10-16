@@ -160,6 +160,24 @@ async def pay_debt(
 
     await db.flush()
     await db.refresh(debt)
+
+    # Audit log: qarzga to'lov kiritildi
+    from app.core.audit import log_audit_event
+    await log_audit_event(
+        db=db,
+        restaurant_id=debt.restaurant_id,
+        action="debt_payment",
+        user=current_user,
+        entity_type="debt",
+        entity_id=debt.id,
+        details={
+            "customer_name": debt.customer_name,
+            "paid_amount": payload.payment_amount,
+            "remaining_amount": debt.remaining_amount,
+            "status": debt.status,
+        },
+    )
+
     return debt
 
 
@@ -184,7 +202,7 @@ async def send_debt_sms(
 
     rest_res = await db.execute(select(Restaurant).where(Restaurant.id == debt.restaurant_id))
     restaurant = rest_res.scalar_one_or_none()
-    rest_name = restaurant.name if restaurant else "RestAron"
+    rest_name = restaurant.name if restaurant else "Dunyo Choyxonasi"
 
     # SMS matnini shakllantirish
     if payload and payload.custom_message:

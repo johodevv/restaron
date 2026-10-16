@@ -10,11 +10,12 @@ from app.routers.reviews import router as reviews
 from app.routers.ws import router as ws
 from app.routers.debts import router as debts
 from app.routers.receipts import router as receipts
+from app.routers.audit import router as audit
 
 __all__ = [
     "auth", "users", "restaurants", "tables",
     "menu", "orders", "stats", "notifications", "reviews", "ws",
-    "debts", "receipts"
+    "debts", "receipts", "audit"
 ]
 
 

@@ -3,6 +3,7 @@ Xprinter Termal Chek Xizmati (58mm va 80mm)
 Oshxona begunogi (Kitchen runner), Mijoz hisob cheki (Bill / Pre-check)
 va Kassa smena hisoboti (X/Z Report) generatsiya qilish
 """
+import asyncio
 from datetime import datetime
 from typing import List, Dict, Any, Optional
 
@@ -530,7 +531,7 @@ def receipt_columns(paper_width: int, font_size: str = DEFAULT_FONT_SIZE,
 STALE_RECEIPT_HEADERS = {"restaron", "restaron restaurant", "restaron pos"}
 
 
-def receipt_title(settings: Any, restaurant: Any, fallback: str = "RestAron") -> str:
+def receipt_title(settings: Any, restaurant: Any, fallback: str = "Dunyo Choyxonasi") -> str:
     """Chek tepasida chiqadigan nom.
 
     Tartib:
@@ -748,12 +749,12 @@ def format_pre_check(
 
     lines = []
     lines.append(double_sep)
-    rest_cyr = latin_to_cyrillic(restaurant_name or "RestAron")
+    rest_cyr = latin_to_cyrillic(restaurant_name or "Dunyo Choyxonasi")
     lines.append(_center_line(rest_cyr.upper(), col_width))
-    if address:
-        lines.append(_center_line(latin_to_cyrillic(address), col_width))
-    if phone:
-        lines.append(_center_line(f"Тел: {phone}", col_width))
+    addr = address or "Xorazm viloyati, Xiva tumani"
+    lines.append(_center_line(latin_to_cyrillic(addr), col_width))
+    ph = phone or "+998884593400"
+    lines.append(_center_line(f"Тел: {ph}", col_width))
     if wifi_pass:
         lines.append(_center_line(f"Wi-Fi: {wifi_pass}", col_width))
     lines.append(sep)
@@ -902,7 +903,7 @@ def format_pre_check(
                                  col_width, indent="  "))
         lines.append(sep)
 
-    foot = footer_text or "Ташрифингиз учун раҳмат! Яна келинг!"
+    foot = footer_text or "Ташрифингиз учун раҳмат! Дунё Чойхонаси (+998884593400)"
     lines.append(_center_line(latin_to_cyrillic(foot), col_width))
 
     return "\n".join(lines) + "\n\n\n"
@@ -942,7 +943,7 @@ def format_shift_report(
 
     lines = []
     lines.append(double_sep)
-    lines.append(_center_line(latin_to_cyrillic(restaurant_name).upper(), col_width))
+    lines.append(_center_line(latin_to_cyrillic(restaurant_name or "Dunyo Choyxonasi").upper(), col_width))
     lines.append(_center_line(title, col_width))
     lines.append(sep)
 
@@ -1160,6 +1161,31 @@ def print_to_windows_printer(
     except Exception as e:
         logger.error(f"Xprinter USB chop etishda xatolik: {e}")
         return {"success": False, "error": str(e)}
+
+
+async def async_print_to_windows_printer(
+    raw_text: str,
+    printer_name: Optional[str] = None,
+    cut_paper: bool = True,
+    codepage: int = DEFAULT_CODEPAGE,
+    font_size: str = DEFAULT_FONT_SIZE,
+    char_spacing: Optional[int] = None,
+    line_spacing: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    Sinxron printer chop etishni alohida thread'da (asyncio.to_thread) asinxron bajaradi.
+    Printer sekin yoki ulanmagan bo'lsa ham FastAPI async event loop'i muzlamaydi.
+    """
+    return await asyncio.to_thread(
+        print_to_windows_printer,
+        raw_text=raw_text,
+        printer_name=printer_name,
+        cut_paper=cut_paper,
+        codepage=codepage,
+        font_size=font_size,
+        char_spacing=char_spacing,
+        line_spacing=line_spacing,
+    )
 
 
 def scan_network_printers(port: int = 9100, timeout: float = 0.35) -> List[Dict[str, Any]]:

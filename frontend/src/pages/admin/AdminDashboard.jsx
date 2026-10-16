@@ -11,9 +11,13 @@ import { ReceiptsArchiveTab } from './ReceiptsArchiveTab';
 import { PaymentsReportTab } from './PaymentsReportTab';
 import { WaiterKpiTab } from './WaiterKpiTab';
 import WaiterDashboard from '../waiter/WaiterDashboard';
-import { RestaurantSettingsTab } from './RestaurantSettingsTab';
+import OrdersView from './OrdersView';
+import POSView from './POSView';
+import RestaurantSettingsTab from './RestaurantSettingsTab';
 import {
   LayoutDashboard,
+  ShoppingBag,
+  Bike,
   UtensilsCrossed,
   Table as TableIcon,
   Users,
@@ -823,7 +827,7 @@ export const AdminDashboard = () => {
             <span>RestAron Boshqaruv Markazi</span>
           </div>
           <h1 className="text-2xl sm:text-3xl font-extrabold text-white tracking-tight">
-            Restoran Admin Paneli
+            Dunyo Choyxonasi — Restoran Admin Paneli
           </h1>
           <p className="text-xs text-theme-muted mt-1">
             Menyular, rasmlar, stollar holati, QR kodlar va buyurtmalar nazorati.
@@ -941,6 +945,8 @@ export const AdminDashboard = () => {
           // Admin ham xuddi ofitsiantdek zakas olishi mumkin — kassada
           // o'tirgan xodim stolga taom qo'shib, oshxonaga yuboradi.
           { key: 'pos', label: 'Zakas olish (POS)', icon: ShoppingCart },
+          { key: 'takeaway', label: 'Olib ketish', icon: ShoppingBag },
+          { key: 'delivery', label: 'Dastavka', icon: Bike },
           { key: 'menu', label: 'Menyu & Taomlar', icon: UtensilsCrossed },
           { key: 'tables', label: 'Stollar & QR', icon: TableIcon },
           { key: 'staff', label: 'Xodimlar', icon: Users },
@@ -957,6 +963,8 @@ export const AdminDashboard = () => {
           return (
             <button
               key={t.key}
+              data-tab={t.key}
+              id={`admin-tab-${t.key}`}
               onClick={() => setTab(t.key)}
               className={`flex items-center gap-2 px-4 py-2.5 rounded-2xl text-xs font-bold whitespace-nowrap transition-all ${
                 isActive
@@ -1119,8 +1127,24 @@ export const AdminDashboard = () => {
             taomlarni bosing va <b>"Buyurtmani tasdiqlash"</b> tugmasi bilan
             oshxonaga yuboring. Buyurtma sizning nomingizga yoziladi.
           </div>
-          <WaiterDashboard />
+          <POSView showModeSwitch={true} canCheckout={true} restaurantId={restaurantId} />
         </div>
+      )}
+
+      {/* TAB: OLIB KETISH (TAKEAWAY) */}
+      {tab === 'takeaway' && (
+        <OrdersView
+          restaurantId={user?.restaurant_id || 1}
+          initialType="takeaway"
+        />
+      )}
+
+      {/* TAB: DASTAVKA (DELIVERY) */}
+      {tab === 'delivery' && (
+        <OrdersView
+          restaurantId={user?.restaurant_id || 1}
+          initialType="delivery"
+        />
       )}
 
       {tab === 'menu' && (

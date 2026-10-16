@@ -39,6 +39,10 @@ SERVER_ONLINE_URL.txt
 server_pids.json
 server_status.json
 server.log
+uvicorn.log
+*.log
+backend/receipts_archive/
+scratch/
 
 # Generated patch exports (git format-patch natijasi — tarixga kirmasligi kerak)
 *.patch

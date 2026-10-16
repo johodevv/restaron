@@ -99,11 +99,36 @@ async def update_user(
         raise HTTPException(status_code=404, detail="Foydalanuvchi topilmadi")
 
     update_data = payload.model_dump(exclude_unset=True)
+
+    # O'z profilini adashib nofaol qilib qo'yishdan himoya
+    if current_user.id == user.id and update_data.get("is_active") is False:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="O'z profilingizni nofaol holatga o'tkaza olmaysiz! Bu tizimga kira olmay qolishingizga sabab bo'ladi.",
+        )
+
     for field, value in update_data.items():
         setattr(user, field, value)
 
+    # Agar foydalanuvchi faolsizlantirilsa yoki paroli o'zgarsa, uning barcha tokenlarini bekor qilish
+    from app.core.security import revoke_user_tokens
+    if update_data.get("is_active") is False or "password" in update_data:
+        revoke_user_tokens(user.id)
+
     await db.flush()
     await db.refresh(user)
+
+    from app.core.audit import log_audit_event
+    await log_audit_event(
+        db=db,
+        restaurant_id=user.restaurant_id or 1,
+        action="user_updated",
+        user=current_user,
+        entity_type="user",
+        entity_id=user.id,
+        details={"updated_fields": list(update_data.keys()), "target_username": user.username},
+    )
+
     return UserResponse.model_validate(user)
 
 
@@ -117,4 +142,20 @@ async def delete_user(
     user = result.scalar_one_or_none()
     if not user:
         raise HTTPException(status_code=404, detail="Foydalanuvchi topilmadi")
+
+    # O'chirilayotgan xodimning barcha sessiyalarini darhol bekor qilish
+    from app.core.security import revoke_user_tokens
+    revoke_user_tokens(user.id)
+
+    from app.core.audit import log_audit_event
+    await log_audit_event(
+        db=db,
+        restaurant_id=user.restaurant_id or 1,
+        action="user_deleted",
+        user=current_user,
+        entity_type="user",
+        entity_id=user.id,
+        details={"deleted_username": user.username},
+    )
+
     await db.delete(user)

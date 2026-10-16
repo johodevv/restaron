@@ -1,3 +1,4 @@
+from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase
 from app.core.config import settings
@@ -6,15 +7,36 @@ is_sqlite = "sqlite" in settings.DATABASE_URL
 engine_kwargs = {
     "echo": settings.DEBUG,
 }
-if not is_sqlite:
+if is_sqlite:
+    # SQLite uchun bloklanishlarni oldini oluvchi 30 soniyalik kutish va multi-threading sozlamalari
     engine_kwargs.update({
-        "pool_pre_ping": True,
-        "pool_size": 10,
-        "max_overflow": 20,
+        "connect_args": {
+            "timeout": 30.0,
+            "check_same_thread": False,
+        },
+    })
+else:
+    # PostgreSQL (asyncpg) uchun Connection Pooling — High Concurrency (10,000+ buyurtma va rush hour)
+    engine_kwargs.update({
+        "pool_pre_ping": True,                      # Uzilgan ulanishlarni avtomatik aniqlash va tiklash
+        "pool_size": getattr(settings, "DB_POOL_SIZE", 10),        # Asosiy doimiy faol ulanishlar soni
+        "max_overflow": getattr(settings, "DB_MAX_OVERFLOW", 20),  # Rushtaymda qo'shimcha ochiladigan ulanishlar (jami 30 ta)
+        "pool_timeout": getattr(settings, "DB_POOL_TIMEOUT", 30),  # Pool band bo'lsa navbatda kutish vaqti (soniya)
+        "pool_recycle": getattr(settings, "DB_POOL_RECYCLE", 1800), # 30 daqiqada ulanishni yangilash (firewall/TCP drop oldini olish)
     })
 
 # Async engine
 engine = create_async_engine(settings.DATABASE_URL, **engine_kwargs)
+
+if is_sqlite:
+    @event.listens_for(engine.sync_engine, "connect")
+    def set_sqlite_pragma(dbapi_connection, connection_record):
+        """SQLite WAL (Write-Ahead Logging) rejimi: bir vaqtda bir nechta o'qish va yozish imkoni"""
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.execute("PRAGMA synchronous=NORMAL")
+        cursor.execute("PRAGMA busy_timeout=30000")
+        cursor.close()
 
 # Session factory
 AsyncSessionLocal = async_sessionmaker(

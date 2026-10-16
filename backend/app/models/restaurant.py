@@ -38,7 +38,6 @@ class Restaurant(Base):
     orders = relationship("Order", back_populates="restaurant")
     settings = relationship("RestaurantSettings", back_populates="restaurant", uselist=False,
                            cascade="all, delete-orphan")
-    themes = relationship("RestaurantTheme", back_populates="restaurant", cascade="all, delete-orphan")
     commission_logs = relationship("CommissionLog", back_populates="restaurant")
     debts = relationship("Debt", back_populates="restaurant", cascade="all, delete-orphan")
     receipt_archives = relationship("ReceiptArchive", back_populates="restaurant", cascade="all, delete-orphan")
@@ -72,12 +71,10 @@ class RestaurantSettings(Base):
     service_fee_percent = Column(Float, default=12.0)
 
     # Chek sozlamalari (Xprinter uchun)
-    # Bo'sh bo'lsa chekda RESTORAN NOMI chiqadi (default "RestAron" edi va
-    # haqiqiy nom o'rniga shu yozilib qolardi)
-    receipt_header = Column(String(200), default=None, nullable=True)
-    receipt_footer = Column(String(500), default="Tashrifingiz uchun rahmat!")
-    receipt_address = Column(String(500), nullable=True)
-    receipt_phone = Column(String(50), nullable=True)
+    receipt_header = Column(String(200), default="Dunyo Choyxonasi", nullable=True)
+    receipt_footer = Column(String(500), default="Tashrifingiz uchun rahmat! Dunyo Choyxonasi (+998884593400)")
+    receipt_address = Column(String(500), default="Xorazm viloyati, Xiva tumani", nullable=True)
+    receipt_phone = Column(String(50), default="+998884593400", nullable=True)
     receipt_wifi_pass = Column(String(100), nullable=True)
     # Kirill kod sahifasi raqami (ESC t n). Epson standartida PC866 = 17,
     # lekin ba'zi Xprinter modellarida boshqacha. Chek tushunarsiz yoki
@@ -134,38 +131,3 @@ class RestaurantSettings(Base):
 
     # Relationships
     restaurant = relationship("Restaurant", back_populates="settings")
-
-
-class Theme(Base):
-    """Mavjud dizayn temalari (tizimda oldindan yuklangan)"""
-    __tablename__ = "themes"
-
-    id = Column(Integer, primary_key=True, index=True)
-    name = Column(String(100), nullable=False)
-    slug = Column(String(50), unique=True, nullable=False)
-    description = Column(Text, nullable=True)
-    preview_url = Column(String(500), nullable=True)  # Preview rasm
-
-    # Tema konfiguratsiyasi (ranglar, font, stil)
-    config = Column(JSON, nullable=False, default={})
-
-    is_active = Column(Boolean, default=True)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-
-    # Relationships
-    restaurant_themes = relationship("RestaurantTheme", back_populates="theme")
-
-
-class RestaurantTheme(Base):
-    """Admin tanlagan 2 ta tema"""
-    __tablename__ = "restaurant_themes"
-
-    id = Column(Integer, primary_key=True, index=True)
-    restaurant_id = Column(Integer, ForeignKey("restaurants.id", ondelete="CASCADE"), nullable=False)
-    theme_id = Column(Integer, ForeignKey("themes.id"), nullable=False)
-    slot = Column(Integer, nullable=False)  # 1 yoki 2 (admin 2 ta tanlaydi)
-    is_default = Column(Boolean, default=False)  # Default tema
-
-    # Relationships
-    restaurant = relationship("Restaurant", back_populates="themes")
-    theme = relationship("Theme", back_populates="restaurant_themes")

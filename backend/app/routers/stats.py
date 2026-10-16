@@ -2,7 +2,7 @@ import os
 import socket
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func
+from sqlalchemy import select, func, and_
 from datetime import datetime, timedelta, timezone
 from typing import Optional, List, Dict, Any
 
@@ -184,28 +184,33 @@ async def get_revenue_chart(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_role("admin", "developer")),
 ):
-    """Har kunlik daromad (grafik uchun)"""
+    """Har kunlik daromad (grafik uchun bitta SQL so'rov bilan)"""
+    start_date = (datetime.now(timezone.utc) - timedelta(days=days - 1)).replace(
+        hour=0, minute=0, second=0, microsecond=0
+    )
+    date_col = func.date(Order.created_at).label("order_date")
+    result = await db.execute(
+        select(date_col, func.count(Order.id), func.sum(Order.total))
+        .where(
+            Order.restaurant_id == restaurant_id,
+            Order.created_at >= start_date,
+            Order.status != OrderStatus.CANCELLED,
+        )
+        .group_by(date_col)
+    )
+    daily_stats = {
+        str(row[0]): {"orders": row[1] or 0, "revenue": round(float(row[2] or 0), 2)}
+        for row in result.all()
+    }
+
     data = []
     for i in range(days - 1, -1, -1):
-        day_start = (datetime.now(timezone.utc) - timedelta(days=i)).replace(
-            hour=0, minute=0, second=0, microsecond=0
-        )
-        day_end = day_start + timedelta(days=1)
-
-        result = await db.execute(
-            select(func.count(Order.id), func.sum(Order.total))
-            .where(
-                Order.restaurant_id == restaurant_id,
-                Order.created_at >= day_start,
-                Order.created_at < day_end,
-                Order.status != OrderStatus.CANCELLED,
-            )
-        )
-        count, revenue = result.one()
+        day_str = (datetime.now(timezone.utc) - timedelta(days=i)).strftime("%Y-%m-%d")
+        stats = daily_stats.get(day_str, {"orders": 0, "revenue": 0.0})
         data.append({
-            "date": day_start.strftime("%Y-%m-%d"),
-            "orders": count or 0,
-            "revenue": round(float(revenue or 0), 2),
+            "date": day_str,
+            "orders": stats["orders"],
+            "revenue": stats["revenue"],
         })
 
     return data
@@ -214,37 +219,63 @@ async def get_revenue_chart(
 @router.get("/waiter-performance", summary="Ofitsiantlar ko'rsatkichi")
 async def get_waiter_performance(
     restaurant_id: int,
-    days: int = Query(default=30),
+    days: int = Query(default=30, ge=1, le=365),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_role("admin", "developer")),
 ):
-    """Har bir ofitsiantning ishlash statistikasi"""
+    """Har bir ofitsiantning ishlash statistikasi (tanlangan davr bo'yicha)"""
     since = datetime.now(timezone.utc) - timedelta(days=days)
+
+    # Bug 8 fix: Sana filtri JOIN ON shartida to'g'ri qo'llanilgan.
+    # OUTER JOIN bilan bu shunday ishlaydi: sana filtridan tashqaridagi buyurtmalar
+    # NULL qaytaradi va count(Order.id) ularni 0 sifatida hisoblaydi — BU TO'G'RI.
+    # Qo'shimcha tuzatishlar:
+    #   1) Order.status filtri — faqat SERVED/PAID buyurtmalar hisoblansin (bekor qilinganlar emas)
+    #   2) Review uchun ham sana filtri to'g'ri qo'llanilgan (allaqachon bor edi)
+    completed_statuses = ["served", "paid"]
 
     result = await db.execute(
         select(
             User.id,
             User.full_name,
+            User.username,
             func.count(Order.id).label("orders_served"),
-            func.sum(Order.total).label("total_revenue"),
-            func.avg(Review.service_rating).label("avg_rating"),
+            func.coalesce(func.sum(Order.total), 0.0).label("total_revenue"),
+            func.coalesce(func.avg(Review.service_rating), 0.0).label("avg_rating"),
         )
-        .join(Order, Order.waiter_id == User.id, isouter=True)
-        .join(Review, Review.waiter_id == User.id, isouter=True)
+        .outerjoin(
+            Order,
+            and_(
+                Order.waiter_id == User.id,
+                Order.restaurant_id == restaurant_id,
+                Order.created_at >= since,
+                Order.status.in_(completed_statuses),  # Faqat yakunlangan buyurtmalar
+            ),
+        )
+        .outerjoin(
+            Review,
+            and_(
+                Review.waiter_id == User.id,
+                Review.created_at >= since,
+            ),
+        )
         .where(
             User.restaurant_id == restaurant_id,
             User.role == UserRole.WAITER,
+            User.is_active == True,  # Faqat faol ofitsiantlar
         )
-        .group_by(User.id, User.full_name)
+        .group_by(User.id, User.full_name, User.username)
+        .order_by(func.count(Order.id).desc())
     )
 
     return [
         {
             "id": row.id,
-            "name": row.full_name,
+            "name": row.full_name or row.username,
             "orders_served": int(row.orders_served or 0),
             "total_revenue": round(float(row.total_revenue or 0), 2),
             "avg_rating": round(float(row.avg_rating or 0), 2),
+            "period_days": days,
         }
         for row in result.all()
     ]
@@ -376,41 +407,50 @@ async def get_waiter_kpi_detail(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_role("admin", "developer")),
 ):
-    """Ofitsiantlarning aniq savdosi, xizmat haqi va daromadlari tahlili"""
+    """Ofitsiantlarning aniq savdosi, xizmat haqi va daromadlari tahlili (bitta SQL query bilan)"""
     dt_start = datetime.strptime(start_date, "%Y-%m-%d").replace(tzinfo=timezone.utc) if start_date else datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
     dt_end = datetime.strptime(end_date, "%Y-%m-%d").replace(hour=23, minute=59, second=59, tzinfo=timezone.utc) if end_date else dt_start + timedelta(days=1)
 
-    waiters_res = await db.execute(
-        select(User).where(User.restaurant_id == restaurant_id, User.role == UserRole.WAITER)
-    )
-    waiters = waiters_res.scalars().all()
-
-    kpi_list = []
-    for w in waiters:
-        orders_res = await db.execute(
-            select(
-                func.count(Order.id),
-                func.coalesce(func.sum(Order.total), 0.0),
-                func.coalesce(func.sum(Order.service_fee_amount), 0.0),
-                func.coalesce(func.sum(Order.waiter_share_amount), 0.0),
-            ).where(
-                Order.waiter_id == w.id,
+    query = (
+        select(
+            User.id,
+            User.username,
+            User.full_name,
+            User.commission_percent,
+            func.count(Order.id).label("orders_count"),
+            func.coalesce(func.sum(Order.total), 0.0).label("total_sales"),
+            func.coalesce(func.sum(Order.service_fee_amount), 0.0).label("total_service_fee"),
+            func.coalesce(func.sum(Order.waiter_share_amount), 0.0).label("earned_share"),
+        )
+        .outerjoin(
+            Order,
+            and_(
+                Order.waiter_id == User.id,
                 Order.created_at >= dt_start,
                 Order.created_at <= dt_end,
                 Order.status.in_([OrderStatus.PAID, OrderStatus.SERVED]),
-            )
+            ),
         )
-        count, rev, s_fee, w_share = orders_res.one()
+        .where(
+            User.restaurant_id == restaurant_id,
+            User.role == UserRole.WAITER,
+        )
+        .group_by(User.id)
+        .order_by(User.id)
+    )
+    res = await db.execute(query)
 
+    kpi_list = []
+    for row in res.all():
         kpi_list.append({
-            "waiter_id": w.id,
-            "username": w.username,
-            "full_name": w.full_name,
-            "commission_percent": w.commission_percent or 0.0,
-            "orders_count": int(count or 0),
-            "total_sales": float(rev or 0.0),
-            "total_service_fee": float(s_fee or 0.0),
-            "earned_share": float(w_share or 0.0),
+            "waiter_id": row[0],
+            "username": row[1],
+            "full_name": row[2],
+            "commission_percent": row[3] or 0.0,
+            "orders_count": int(row[4] or 0),
+            "total_sales": float(row[5] or 0.0),
+            "total_service_fee": float(row[6] or 0.0),
+            "earned_share": float(row[7] or 0.0),
         })
 
     return kpi_list

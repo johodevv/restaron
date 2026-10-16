@@ -39,6 +39,8 @@ class ShiftReportCreate(BaseModel):
     # X-hisobot — smenani YOPMAYDIGAN oraliq hisobot, Z-hisobot esa smenani yopadi.
     # None bo'lsa report_type bo'yicha avtomatik aniqlanadi (x_report -> False, z_report -> True).
     close_shift: Optional[bool] = None
+    print_to_usb: Optional[bool] = False
+    force_close: Optional[bool] = False  # Ochiq stollar bo'lsa ham tasdiqlash bilan majburiy yopish
 
 
 class ShiftReportResponse(BaseModel):
@@ -62,6 +64,9 @@ class ShiftReportResponse(BaseModel):
     is_closed: bool
     created_at: datetime
     raw_text: Optional[str] = None
+    print_status: Optional[Any] = None
+    open_orders_warning: Optional[str] = None
+    open_orders_count: Optional[int] = None
 
     class Config:
         from_attributes = True

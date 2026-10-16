@@ -58,8 +58,32 @@ export const DunyoLanding = ({ onOpenLogin }) => {
 
   return (
     <div className="min-h-screen bg-theme-bg text-theme-text selection:bg-amber-500/30">
+      {/* ─── Top Navbar ───────────────────────────────────── */}
+      <header className="border-b border-theme-border/40 bg-theme-surface/80 backdrop-blur-md px-4 sm:px-6 py-3 sticky top-0 z-40">
+        <div className="max-w-6xl mx-auto flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-amber-500 to-orange-500 flex items-center justify-center text-slate-950 font-black shadow-glow">
+              <UtensilsCrossed className="w-5 h-5 text-slate-950" />
+            </div>
+            <div>
+              <span className="font-black text-white text-base tracking-tight block">Dunyo Choyxonasi</span>
+              <span className="text-[10px] text-amber-400 font-bold block -mt-0.5">Xorazm, Xiva</span>
+            </div>
+          </div>
+
+          <button
+            id="landing-login-btn"
+            onClick={onOpenLogin}
+            className="px-4 py-2 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30 text-amber-300 font-bold text-xs flex items-center gap-1.5 transition-all active:scale-95 shadow-sm"
+          >
+            <ShieldCheck className="w-4 h-4 text-amber-400" />
+            <span>Xodimlar & Admin</span>
+          </button>
+        </div>
+      </header>
+
       {/* ─── Hero Section ───────────────────────────────────── */}
-      <section className="relative overflow-hidden pt-12 pb-16 px-4 sm:px-6 lg:px-8 border-b border-theme-border/50">
+      <section className="relative overflow-hidden pt-10 pb-16 px-4 sm:px-6 lg:px-8 border-b border-theme-border/50">
         {/* Background glow */}
         <div className="absolute inset-0 bg-radial-at-t from-amber-500/10 via-transparent to-transparent pointer-events-none" />
         <div className="absolute top-10 right-10 w-96 h-96 bg-amber-600/10 rounded-full blur-3xl pointer-events-none" />

@@ -4,14 +4,14 @@ Buyurtma sxemalari (Pydantic)
 from pydantic import BaseModel, Field
 from typing import Optional, List
 from datetime import datetime
-from app.models.order import OrderStatus, CallStatus
+from app.models.order import OrderStatus, CallStatus, OrderType
 
 
 # ─── OrderItem ────────────────────────────────────────────
 class OrderItemCreate(BaseModel):
     menu_item_id: int
     quantity: int = Field(..., gt=0, le=50)
-    special_note: Optional[str] = None
+    special_note: Optional[str] = Field(default=None, max_length=255)
     # O'lchanadigan taom hajmi: "1.5 L", "1.4 kg" (ixtiyoriy)
     portion_size: Optional[str] = Field(default=None, max_length=50)
     # Tortiladigan taomning aniq og'irligi (kg/l). Narx shunga ko'paytiriladi.
@@ -50,21 +50,27 @@ class OrderItemResponse(BaseModel):
 
 # ─── Order ────────────────────────────────────────────────
 class OrderCreate(BaseModel):
-    table_id: int
-    customer_name: Optional[str] = None
-    customer_note: Optional[str] = None
-    items: List[OrderItemCreate] = Field(..., min_length=1)
+    restaurant_id: Optional[int] = None     # Stolsiz buyurtmalarda (takeaway / delivery) talab qilinadi
+    table_id: Optional[int] = None
+    order_type: str = "dine_in"             # "dine_in", "takeaway", "delivery"
+    customer_name: Optional[str] = Field(default=None, max_length=100)
+    customer_phone: Optional[str] = Field(default=None, max_length=30)
+    delivery_address: Optional[str] = Field(default=None, max_length=500)
+    customer_note: Optional[str] = Field(default=None, max_length=500)
+    items: List[OrderItemCreate] = Field(..., min_length=1, max_length=100)
 
 
 class WaiterOrderCreate(BaseModel):
-    """Ofitsiant yoki kassir yangi zakaz yaratishi (Ali Poster uslubida)"""
+    """Ofitsiant yoki kassir yangi zakaz yaratishi (dine_in, takeaway, delivery)"""
     restaurant_id: int
     table_id: Optional[int] = None
-    order_type: str = "table"               # "table" (Столы), "takeaway" (С собой), "delivery" (Доставка)
-    hall_name: Optional[str] = None         # "Балкон", "Хона", "Тераса"
-    customer_name: Optional[str] = None
-    kitchen_note: Optional[str] = None      # Комент. к кухне
-    receipt_note: Optional[str] = None      # Комент. к чеку
+    order_type: str = "dine_in"             # "dine_in", "takeaway", "delivery", "table"
+    hall_name: Optional[str] = Field(default=None, max_length=100)         # "Балкон", "Хона", "Тераса"
+    customer_name: Optional[str] = Field(default=None, max_length=100)
+    customer_phone: Optional[str] = Field(default=None, max_length=30)      # Delivery / Takeaway uchun
+    delivery_address: Optional[str] = Field(default=None, max_length=500)   # Delivery manzili
+    kitchen_note: Optional[str] = Field(default=None, max_length=500)      # Комент. к кухне
+    receipt_note: Optional[str] = Field(default=None, max_length=500)      # Комент. к чеку
     items: List[OrderItemCreate] = []
 
 
@@ -100,8 +106,8 @@ class UpdateItemSizeRequest(BaseModel):
 
 class OrderNoteUpdate(BaseModel):
     """Oshxona yoki chek izohini yangilash"""
-    kitchen_note: Optional[str] = None
-    receipt_note: Optional[str] = None
+    kitchen_note: Optional[str] = Field(default=None, max_length=500)
+    receipt_note: Optional[str] = Field(default=None, max_length=500)
 
 
 class OrderCheckoutRequest(BaseModel):
@@ -114,40 +120,42 @@ class OrderCheckoutRequest(BaseModel):
     discount: float = 0.0
     service_fee_percent: Optional[float] = None
     # Qarz (Nasiya) uchun ma'lumotlar
-    debt_customer_name: Optional[str] = None
-    debt_customer_phone: Optional[str] = None
+    debt_customer_name: Optional[str] = Field(default=None, max_length=100)
+    debt_customer_phone: Optional[str] = Field(default=None, max_length=30)
     debt_due_date: Optional[datetime] = None
-    debt_note: Optional[str] = None
+    debt_note: Optional[str] = Field(default=None, max_length=500)
     print_receipt: bool = True
 
 
 class CallWaiterRequest(BaseModel):
-    table_id: int
-    note: Optional[str] = None
+    table_id: int = Field(..., gt=0)
+    note: Optional[str] = Field(default=None, max_length=255)
 
 
 class OrderStatusUpdate(BaseModel):
     status: OrderStatus
-    note: Optional[str] = None
+    note: Optional[str] = Field(default=None, max_length=255)
 
 
 class OrderDeliverRequest(BaseModel):
     """Ofitsiant 'Yetkazib berdim' tugmasini bosganda ixtiyoriy izoh"""
-    note: Optional[str] = None
+    note: Optional[str] = Field(default=None, max_length=255)
 
 
 class OrderResponse(BaseModel):
     id: int
     order_number: str
     restaurant_id: int
-    table_id: int
+    table_id: Optional[int] = None
     table_number: Optional[int] = None
     room: Optional[str] = None
     waiter_id: Optional[int] = None
     waiter_name: Optional[str] = None
     customer_name: Optional[str] = None
+    customer_phone: Optional[str] = None
     customer_note: Optional[str] = None
-    order_type: str = "table"
+    delivery_address: Optional[str] = None
+    order_type: str = "dine_in"
     hall_name: Optional[str] = None
     kitchen_note: Optional[str] = None
     receipt_note: Optional[str] = None
@@ -179,10 +187,14 @@ class OrderResponse(BaseModel):
 
 
 class OrderSummary(BaseModel):
-    """Ro'yxat uchun qisqartirilgan buyurtma"""
+    """Ro'yxat uchun qisqartirilgan buyurtma (Zal, Olib ketish va Dostavka moslashgan)"""
     id: int
     order_number: str
-    table_id: int
+    order_type: str = "dine_in"
+    customer_name: Optional[str] = None
+    customer_phone: Optional[str] = None
+    delivery_address: Optional[str] = None
+    table_id: Optional[int] = None
     table_number: Optional[int] = None
     waiter_id: Optional[int] = None
     waiter_name: Optional[str] = None

@@ -20,6 +20,14 @@ class OrderStatus(str, enum.Enum):
     PAID = "paid"                 # To'landi
 
 
+class OrderType(str, enum.Enum):
+    """Buyurtma turlari (Zalda / Olib ketish / Yetkazib berish)"""
+    DINE_IN = "dine_in"           # Zalda o'tirib tanovvul qilish (Stol)
+    TAKEAWAY = "takeaway"         # Olib ketish (С собой)
+    DELIVERY = "delivery"         # Yetkazib berish (Доставка)
+    TABLE = "table"               # Legacy / Oldingi POS mosligi
+
+
 class CallStatus(str, enum.Enum):
     """Ofitsiant chaqirish statusi"""
     PENDING = "pending"
@@ -34,17 +42,19 @@ class Order(Base):
     order_number = Column(String(20), unique=True, nullable=False, index=True)  # #0001
 
     restaurant_id = Column(Integer, ForeignKey("restaurants.id"), nullable=False)
-    table_id = Column(Integer, ForeignKey("tables.id"), nullable=False)
+    table_id = Column(Integer, ForeignKey("tables.id"), nullable=True)  # NULL for delivery/takeaway
     waiter_id = Column(Integer, ForeignKey("users.id"), nullable=True)  # Tayinlangan ofitsiant
 
     # Mijoz ma'lumoti (ixtiyoriy)
     customer_name = Column(String(100), nullable=True)
+    customer_phone = Column(String(30), nullable=True)     # Delivery uchun telefon raqam
     customer_note = Column(Text, nullable=True)
+    delivery_address = Column(Text, nullable=True)          # Delivery uchun yetkazib berish manzili
 
     status = Column(SAEnum(OrderStatus), default=OrderStatus.PENDING, nullable=False)
 
-    # Zakaz turi va joy (Ali Poster uslubida)
-    order_type = Column(String(50), default="table")     # "table" (Столы), "takeaway" (С собой), "delivery" (Доставка)
+    # Zakaz turi va joy (dine_in, takeaway, delivery)
+    order_type = Column(String(50), default="dine_in")
     hall_name = Column(String(100), nullable=True)       # "Балкон", "Хона", "Тераса", "Куча", "Зал"
     kitchen_note = Column(Text, nullable=True)           # Комент. к кухне
     receipt_note = Column(Text, nullable=True)           # Комент. к чеку

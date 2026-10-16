@@ -4,6 +4,7 @@ import { preloadImages, collectImageUrls } from '../../utils/preloadImages';
 import { useAuth } from '../../context/AuthContext';
 import { useWebSocket } from '../../context/WebSocketContext';
 import { ThermalReceiptModal } from '../../components/ThermalReceiptModal';
+import CheckoutModal from '../../components/CheckoutModal';
 import confetti from 'canvas-confetti';
 import {
   UtensilsCrossed,
@@ -28,17 +29,30 @@ import {
   TrendingUp,
   Image as ImageIcon,
   Flame,
-  Check
+  Check,
+  ShoppingBag,
+  Bike
 } from 'lucide-react';
 
-export const WaiterDashboard = () => {
-  const { user, isAdmin } = useAuth();
+export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckout: propCanCheckout } = {}) => {
+  const { user, isAdmin, isCashier, canCheckout: authCanCheckout } = useAuth();
   const { addEventListener, playChime, connected } = useWebSocket();
   const restaurantId = user?.restaurant_id || 1;
 
+  // Vakolatlarni qat'iy ajratish:
+  // Ofitsiant (waiter) roli hech qachon rejim almashtira olmaydi va to'lov (checkout) qila olmaydi!
+  const isPrivileged = user?.role === 'admin' || user?.role === 'cashier' || user?.role === 'developer';
+  const canCheckout = propCanCheckout !== undefined ? propCanCheckout : isPrivileged;
+  const showModeSwitch = propShowModeSwitch !== undefined ? propShowModeSwitch : isPrivileged;
+
   // Ekran: 'pos' (stollar zakazi) | 'calls' (Chaqiruvlar) | 'ready' (Oshxonadan tayyor)
   const [activeTab, setActiveTab] = useState('pos');
-  const [orderType, setOrderType] = useState('table'); // 'table' | 'takeaway' | 'delivery'
+  // Rejim: 'table' (Stolda) | 'takeaway' (Olib ketish) | 'delivery' (Dastavka)
+  // Ofitsiantda doimo 'table' bo'lib turadi va rejim almashtirgich ko'rinmaydi.
+  const [orderType, setOrderType] = useState('table');
+  const [customerName, setCustomerName] = useState('');
+  const [customerPhone, setCustomerPhone] = useState('');
+  const [deliveryAddress, setDeliveryAddress] = useState('');
 
   // Data states
   const [tables, setTables] = useState([]);
@@ -76,6 +90,31 @@ export const WaiterDashboard = () => {
   const [sendingToKitchen, setSendingToKitchen] = useState(false);
 
   // Checkout modal
+  const [checkoutModalOpen, setCheckoutModalOpen] = useState(false);
+
+  const handleCheckoutPaid = (res) => {
+    setCheckoutModalOpen(false);
+    if (res?.raw_text) {
+      setThermalReceiptText(res.raw_text);
+      setReceiptModalTitle(`Kassa Cheki #${res?.order_id || activeOrder?.id || ''}`);
+      setReceiptModalOpen(true);
+    }
+    if (selectedTable) {
+      setTables((prev) =>
+        prev.map((t) =>
+          t.id === selectedTable.id
+            ? { ...t, is_occupied: false, status: 'available', active_order_id: null }
+            : t
+        )
+      );
+      setSelectedTable((prev) =>
+        prev ? { ...prev, is_occupied: false, status: 'available', active_order_id: null } : null
+      );
+    }
+    setActiveOrder(null);
+    confetti({ particleCount: 50, spread: 60, origin: { y: 0.8 } });
+    loadInitialData();
+  };
 
   // Xprinter Thermal Receipt Modal
   const [receiptModalOpen, setReceiptModalOpen] = useState(false);
@@ -248,21 +287,28 @@ export const WaiterDashboard = () => {
         // Yangi buyurtma ochish
         const payload = {
           restaurant_id: restaurantId,
-          table_id: selectedTable?.id,
-          order_type: orderType,
-          hall_name: selectedTable?.room || 'Zal',
+          order_type: orderType === 'table' ? 'dine_in' : orderType,
           items: [{ menu_item_id: menuItem.id, quantity: 1 }],
         };
+        if (orderType === 'table') {
+          payload.table_id = selectedTable?.id;
+          payload.hall_name = selectedTable?.room || 'Zal';
+        } else {
+          payload.customer_name = customerName.trim() || (orderType === 'takeaway' ? 'Olib ketish mijoz' : 'Dastavka mijoz');
+          payload.customer_phone = customerPhone.trim() || null;
+          if (orderType === 'delivery') {
+            payload.delivery_address = deliveryAddress.trim() || "Manzil";
+          }
+        }
         const newOrd = await api.post('/orders/waiter-create', payload);
         setActiveOrder(newOrd);
         openWeightModalIfNeeded(newOrd, menuItem.id);
-        // Stol endi band. Sarlavhadagi belgi ham yangilanishi uchun
-        // selectedTable ni ham yangilaymiz — aks holda ro'yxatda "Band",
-        // sarlavhada esa "Bo'sh" deb turib, ofitsiantni chalg'itadi.
-        setTables((prev) =>
-          prev.map((t) => (t.id === selectedTable?.id ? { ...t, status: 'occupied' } : t))
-        );
-        setSelectedTable((prev) => (prev ? { ...prev, status: 'occupied' } : prev));
+        if (orderType === 'table') {
+          setTables((prev) =>
+            prev.map((t) => (t.id === selectedTable?.id ? { ...t, status: 'occupied' } : t))
+          );
+          setSelectedTable((prev) => (prev ? { ...prev, status: 'occupied' } : prev));
+        }
       } else {
         // Mavjud buyurtmaga qo'shish
         // Agar taom savatda allaqachon bo'lsa -> sonini +1 qilamiz.
@@ -511,12 +557,18 @@ export const WaiterDashboard = () => {
     }
   };
 
-  // Filter items in right panel
-  const activeCategory = categories.find((c) => c.id === selectedCatId);
+  // Filter items in right panel with reliable fallback
+  const activeCategory = categories.find((c) => c.id === selectedCatId) || categories[0];
   const allItems = categories.flatMap((c) => c.items || []);
   const displayedItems = searchItemQuery.trim()
-    ? allItems.filter((i) => i.name.toLowerCase().includes(searchItemQuery.toLowerCase()))
-    : activeCategory?.items || [];
+    ? allItems.filter(
+        (i) =>
+          (i.name && i.name.toLowerCase().includes(searchItemQuery.toLowerCase())) ||
+          (i.name_cyrillic && i.name_cyrillic.toLowerCase().includes(searchItemQuery.toLowerCase()))
+      )
+    : activeCategory?.items && activeCategory.items.length > 0
+    ? activeCategory.items
+    : allItems;
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans select-none">
@@ -724,6 +776,125 @@ export const WaiterDashboard = () => {
         <div className="flex-1 flex flex-col lg:flex-row overflow-hidden">
           {/* ── Chap Panel: Tanlangan Stol va Zakaz (Katta va qulay shriftlar) ─────────── */}
           <div className="w-full lg:w-[480px] xl:w-[500px] bg-slate-900/95 border-r border-slate-800 flex flex-col justify-between shrink-0 shadow-2xl">
+            {/* 
+              Rejim almashtirgich (Faqat Admin / Kassir uchun):
+              🟢 "Stolda" | 🛍️ "Olib ketish" | 🛵 "Dastavka"
+              Ofitsiantda (role === 'waiter') bu rejimlar BUTUNLAY YASHIRILADI.
+            */}
+            {showModeSwitch && canCheckout && (
+              <div className="p-2.5 bg-slate-950 border-b border-slate-800 flex items-center justify-between gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setOrderType('table');
+                    if (selectedTable) fetchTableActiveOrder(selectedTable);
+                  }}
+                  className={`flex-1 py-1.5 px-2.5 rounded-xl text-xs font-black transition-all flex items-center justify-center gap-1.5 ${
+                    orderType === 'table'
+                      ? 'bg-emerald-600 text-white shadow-md'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  <span className="w-2 h-2 rounded-full bg-emerald-400"></span>
+                  <span>🟢 Stolda</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setOrderType('takeaway');
+                    setActiveOrder(null);
+                  }}
+                  className={`flex-1 py-1.5 px-2.5 rounded-xl text-xs font-black transition-all flex items-center justify-center gap-1.5 ${
+                    orderType === 'takeaway'
+                      ? 'bg-amber-600 text-white shadow-md'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  <ShoppingBag className="w-3.5 h-3.5 text-amber-300" />
+                  <span>🛍️ Olib ketish</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setOrderType('delivery');
+                    setActiveOrder(null);
+                  }}
+                  className={`flex-1 py-1.5 px-2.5 rounded-xl text-xs font-black transition-all flex items-center justify-center gap-1.5 ${
+                    orderType === 'delivery'
+                      ? 'bg-cyan-600 text-white shadow-md'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  <Bike className="w-3.5 h-3.5 text-cyan-300" />
+                  <span>🛵 Dastavka</span>
+                </button>
+              </div>
+            )}
+
+            {/* Olib ketish / Dastavka mijoz maydonlari */}
+            {showModeSwitch && canCheckout && orderType !== 'table' && (
+              <div className="p-3 bg-slate-950/90 border-b border-slate-800 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-black text-white flex items-center gap-1.5">
+                    {orderType === 'takeaway' ? (
+                      <>
+                        <ShoppingBag className="w-3.5 h-3.5 text-amber-400" />
+                        <span>Olib ketish mijoz rekvizitlari:</span>
+                      </>
+                    ) : (
+                      <>
+                        <Bike className="w-3.5 h-3.5 text-cyan-400" />
+                        <span>Yetkazib berish (Dastavka) rekvizitlari:</span>
+                      </>
+                    )}
+                  </span>
+                  {activeOrder && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setActiveOrder(null);
+                        setCustomerName('');
+                        setCustomerPhone('');
+                        setDeliveryAddress('');
+                      }}
+                      className="text-[10px] text-amber-400 underline font-bold"
+                    >
+                      + Yangi zakaz
+                    </button>
+                  )}
+                </div>
+
+                <div className="grid grid-cols-2 gap-2">
+                  <input
+                    type="text"
+                    placeholder="Mijoz ismi"
+                    value={customerName}
+                    onChange={(e) => setCustomerName(e.target.value)}
+                    className="w-full px-3 py-1.5 rounded-xl bg-slate-900 border border-slate-700 text-xs text-white focus:outline-none focus:border-amber-400"
+                  />
+                  <input
+                    type="text"
+                    placeholder="+998 90 123 45 67"
+                    value={customerPhone}
+                    onChange={(e) => setCustomerPhone(e.target.value)}
+                    className="w-full px-3 py-1.5 rounded-xl bg-slate-900 border border-slate-700 text-xs text-white focus:outline-none focus:border-amber-400"
+                  />
+                </div>
+
+                {orderType === 'delivery' && (
+                  <input
+                    type="text"
+                    placeholder="Yetkazib berish manzili (ko'cha, uy...)"
+                    value={deliveryAddress}
+                    onChange={(e) => setDeliveryAddress(e.target.value)}
+                    className="w-full px-3 py-1.5 rounded-xl bg-slate-900 border border-slate-700 text-xs text-white focus:outline-none focus:border-cyan-400"
+                  />
+                )}
+              </div>
+            )}
+
             {/* Table Header Bar */}
             <div className="p-4 bg-slate-950/80 border-b border-slate-800 flex items-center justify-between">
               <div>
@@ -1025,8 +1196,7 @@ export const WaiterDashboard = () => {
                 </button>
               </div>
 
-              {/* Asosiy POS amali. "To'lov / Hisob" olib tashlandi —
-                  to'lovni kassada o'tirgan xodim admin panelda qabul qiladi. */}
+              {/* Asosiy POS amallari */}
               <div className="grid grid-cols-1 gap-2.5">
                 <button
                   onClick={() => handleSendToKitchen(false)}
@@ -1037,15 +1207,31 @@ export const WaiterDashboard = () => {
                   <span>{sendingToKitchen ? 'Chop etilmoqda...' : '🔥 Buyurtmani tasdiqlash'}</span>
                 </button>
 
+                {/* 
+                  CRITICAL: "To'landi va stolni bo'shatish" (Checkout) tugmasi
+                  FAKAT Admin yoki Kassir uchun ko'rinadi. 
+                  Ofitsiantda (role === 'waiter') bu tugma BUTUNLAY YASHIRILADI.
+                */}
+                {canCheckout && (
+                  <button
+                    onClick={() => setCheckoutModalOpen(true)}
+                    disabled={!activeOrder || (activeOrder?.items || []).length === 0}
+                    className="py-4 px-3 rounded-2xl bg-gradient-to-r from-emerald-600 to-emerald-700 hover:from-emerald-500 hover:to-emerald-600 disabled:opacity-40 text-white font-black text-xs sm:text-sm shadow-xl shadow-emerald-600/30 transition-all active:scale-95 flex items-center justify-center gap-2"
+                  >
+                    <CheckCircle2 className="w-5 h-5 shrink-0" />
+                    <span>To'landi va stolni bo'shatish</span>
+                  </button>
+                )}
+
                 {/* Admin zakas olgandan keyin chekni darhol chiqaradi.
                     Ofitsiantda bu tugma yo'q — chek kassada chiqadi. */}
                 {isAdmin && (
                   <button
                     onClick={handlePrintBill}
                     disabled={!activeOrder || printingBill}
-                    className="py-4 px-3 rounded-2xl bg-gradient-to-r from-sky-500 to-sky-600 hover:from-sky-400 hover:to-sky-500 disabled:opacity-40 text-white font-black text-xs sm:text-sm shadow-xl shadow-sky-500/25 transition-all active:scale-95 flex items-center justify-center gap-1.5"
+                    className="py-3 px-3 rounded-2xl bg-gradient-to-r from-sky-500 to-sky-600 hover:from-sky-400 hover:to-sky-500 disabled:opacity-40 text-white font-bold text-xs sm:text-sm shadow-xl shadow-sky-500/25 transition-all active:scale-95 flex items-center justify-center gap-1.5"
                   >
-                    <Receipt className="w-5 h-5 shrink-0" />
+                    <Receipt className="w-4 h-4 shrink-0" />
                     <span>{printingBill ? 'Chop etilmoqda...' : '🧾 Chek chiqarish'}</span>
                   </button>
                 )}
@@ -1382,6 +1568,17 @@ export const WaiterDashboard = () => {
             </div>
           </div>
         </div>
+      )}
+
+      {/* ─── Kassa To'lov Oynasi (CheckoutModal) — Faqat Admin/Kassir uchun ─── */}
+      {canCheckout && (
+        <CheckoutModal
+          isOpen={checkoutModalOpen}
+          onClose={() => setCheckoutModalOpen(false)}
+          order={activeOrder}
+          tableLabel={selectedTable ? `${selectedTable.room ? selectedTable.room + ' - ' : ''}Stol #${selectedTable.number}` : "Stol buyurtmasi"}
+          onPaid={handleCheckoutPaid}
+        />
       )}
 
       {/* ─── Xprinter Thermal Receipt Modal ─────────────────────────── */}

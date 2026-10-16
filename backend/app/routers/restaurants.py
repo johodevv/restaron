@@ -11,7 +11,7 @@ from typing import Optional, List
 
 from app.core.database import get_db
 from app.core.security import require_role
-from app.models.restaurant import Restaurant, RestaurantSettings, Theme, RestaurantTheme
+from app.models.restaurant import Restaurant, RestaurantSettings
 from app.models.commission import CommissionLog
 from app.models.order import Order, OrderStatus
 from app.models.user import User
@@ -75,13 +75,6 @@ class SettingsUpdate(BaseModel):
     auto_print_customer_bill: Optional[bool] = None
     direct_qr_access: Optional[bool] = None
     enable_chef_kds: Optional[bool] = None
-
-
-
-class ThemeSelect(BaseModel):
-    theme_id: int
-    slot: int = Field(..., ge=1, le=2)
-    is_default: bool = False
 
 
 @router.post("/", status_code=201, summary="Yangi restoran yaratish")
@@ -181,54 +174,6 @@ async def update_settings(
         setattr(settings, field, value)
     await db.flush()
     return {"success": True}
-
-
-@router.post("/{restaurant_id}/themes", summary="Tema tanlash")
-async def select_theme(
-    restaurant_id: int,
-    payload: ThemeSelect,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role("admin", "developer")),
-):
-    """Admin 2 ta slot uchun tema tanlaydi"""
-    # Avvalgi slot tozalash
-    result = await db.execute(
-        select(RestaurantTheme).where(
-            RestaurantTheme.restaurant_id == restaurant_id,
-            RestaurantTheme.slot == payload.slot,
-        )
-    )
-    existing = result.scalar_one_or_none()
-    if existing:
-        await db.delete(existing)
-
-    rt = RestaurantTheme(
-        restaurant_id=restaurant_id,
-        theme_id=payload.theme_id,
-        slot=payload.slot,
-        is_default=payload.is_default,
-    )
-    db.add(rt)
-    await db.flush()
-    return {"success": True, "slot": payload.slot, "theme_id": payload.theme_id}
-
-
-# ─── Barcha Temalar ────────────────────────────────────
-@router.get("/themes/all", summary="Mavjud temalar ro'yxati")
-async def list_themes(db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(Theme).where(Theme.is_active == True))
-    themes = result.scalars().all()
-    return [
-        {
-            "id": t.id,
-            "name": t.name,
-            "slug": t.slug,
-            "description": t.description,
-            "preview_url": t.preview_url,
-            "config": t.config,
-        }
-        for t in themes
-    ]
 
 
 # ─── Developer: Komissiya va Platforma Monitoringi ─────────

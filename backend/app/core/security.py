@@ -1,6 +1,8 @@
+import uuid
+import time
 import bcrypt
 from datetime import datetime, timedelta, timezone
-from typing import Optional
+from typing import Optional, Dict
 from jose import JWTError, jwt
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -11,6 +13,65 @@ from app.core.config import settings
 from app.core.database import get_db
 
 security = HTTPBearer()
+security_optional = HTTPBearer(auto_error=False)
+
+# Qora ro'yxat (Blacklist): jti -> expires_at_timestamp
+_blacklisted_jtis: Dict[str, float] = {}
+# Foydalanuvchi bo'yicha bekor qilish vaqti: user_id -> revoked_after_timestamp
+_user_revocation_timestamps: Dict[int, float] = {}
+
+
+def revoke_token(token_or_jti: str) -> bool:
+    """Bitta tokenni yoki JTI ni yaroqsiz qilish (logout yoki xavfsizlik uchun)"""
+    if not token_or_jti:
+        return False
+    if "." in token_or_jti:
+        try:
+            payload = jwt.decode(token_or_jti, settings.SECRET_KEY, algorithms=[settings.ALGORITHM], options={"verify_exp": False})
+            jti = payload.get("jti")
+            exp = payload.get("exp")
+            if jti:
+                _blacklisted_jtis[jti] = float(exp) if exp else time.time() + 86400
+                return True
+        except Exception:
+            pass
+    else:
+        _blacklisted_jtis[token_or_jti] = time.time() + 86400
+        return True
+    return False
+
+
+def revoke_user_tokens(user_id: int) -> None:
+    """Foydalanuvchining barcha faol tokenlarini bekor qilish (ishdan bo'shatilganda/parol o'zgarganda)"""
+    _user_revocation_timestamps[int(user_id)] = time.time()
+
+
+def is_token_revoked(payload: dict) -> bool:
+    """Token qora ro'yxatda yoki foydalanuvchi sessiyasi bekor qilinganligini tekshirish"""
+    jti = payload.get("jti")
+    now = time.time()
+
+    # Eskirgan jti larni xotiradan tozalash
+    if len(_blacklisted_jtis) > 1000:
+        stale = [k for k, v in _blacklisted_jtis.items() if v < now]
+        for k in stale:
+            _blacklisted_jtis.pop(k, None)
+
+    if jti and jti in _blacklisted_jtis:
+        return True
+
+    user_id = payload.get("sub") or payload.get("user_id")
+    iat = payload.get("iat")
+    if user_id:
+        try:
+            uid = int(user_id)
+            revoked_at = _user_revocation_timestamps.get(uid)
+            if revoked_at is not None and (iat is None or iat <= revoked_at + 1):
+                return True
+        except (ValueError, TypeError):
+            pass
+
+    return False
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
@@ -28,13 +89,18 @@ def get_password_hash(password: str) -> str:
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
     to_encode = data.copy()
+    now_dt = datetime.now(timezone.utc)
     if expires_delta:
-        expire = datetime.now(timezone.utc) + expires_delta
+        expire = now_dt + expires_delta
     else:
-        expire = datetime.now(timezone.utc) + timedelta(
+        expire = now_dt + timedelta(
             minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES
         )
-    to_encode.update({"exp": expire})
+    to_encode.update({
+        "exp": expire,
+        "iat": int(now_dt.timestamp()),
+        "jti": str(uuid.uuid4()),
+    })
     return jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
 
 
@@ -43,6 +109,12 @@ def decode_token(token: str) -> dict:
         payload = jwt.decode(
             token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM]
         )
+        if is_token_revoked(payload):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Ushbu sessiya bekor qilingan (token revoked). Iltimos, qaytadan tizimga kiring.",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
         return payload
     except JWTError:
         raise HTTPException(
@@ -60,13 +132,23 @@ async def get_current_user(
 
     payload = decode_token(credentials.credentials)
     user_id: str = payload.get("sub")
+    token_role: Optional[str] = payload.get("role")
+
     if user_id is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Token ma'lumotlari noto'g'ri",
         )
 
-    result = await db.execute(select(User).where(User.id == int(user_id)))
+    try:
+        uid = int(user_id)
+    except (ValueError, TypeError):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token formati noto'g'ri",
+        )
+
+    result = await db.execute(select(User).where(User.id == uid))
     user = result.scalar_one_or_none()
 
     if user is None:
@@ -79,7 +161,48 @@ async def get_current_user(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Foydalanuvchi faol emas",
         )
+
+    # Rol o'zgargan bo'lsa tokenni rad etish
+    user_role_str = user.role.value if hasattr(user.role, "value") else str(user.role)
+    if token_role and token_role != user_role_str:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Foydalanuvchi roli o'zgargan. Iltimos, qaytadan tizimga kiring.",
+        )
+
     return user
+
+
+async def get_optional_current_user(
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security_optional),
+    db: AsyncSession = Depends(get_db),
+):
+    """Autentifikatsiya ixtiyoriy bo'lgan endpointlar uchun (masalan, buyurtma kuzatish)"""
+    if not credentials or not credentials.credentials:
+        return None
+    try:
+        from app.models.user import User
+
+        payload = jwt.decode(
+            credentials.credentials, settings.SECRET_KEY, algorithms=[settings.ALGORITHM]
+        )
+        user_id = payload.get("sub")
+        token_role = payload.get("role")
+        if not user_id:
+            return None
+
+        result = await db.execute(select(User).where(User.id == int(user_id)))
+        user = result.scalar_one_or_none()
+        if not user or not user.is_active:
+            return None
+
+        user_role_str = user.role.value if hasattr(user.role, "value") else str(user.role)
+        if token_role and token_role != user_role_str:
+            return None
+
+        return user
+    except Exception:
+        return None
 
 
 def require_role(*roles: str):

@@ -1,21 +1,43 @@
+# ─── RestAron Backend — Kutubxonalar ro'yxati ──────────────────────────────
+# O'CHIRILGANLAR (xavfsiz, ishlatilmayotgan):
+#   alembic==1.13.1       → manual ALTER TABLE (database.py) ishlatilgan; Alembic yo'q
+#   asyncpg==0.29.0       → SQLite ishlatilmoqda, PostgreSQL drayveri kerak emas
+#   psycopg2-binary==2.9.9→ SQLite ishlatilmoqda, PostgreSQL drayveri kerak emas
+#   APScheduler==3.10.4   → hech qayerda ishlatilmaydi
+#   passlib[bcrypt]==1.7.4→ bcrypt to'g'ridan-to'g'ri import qilingan (security.py)
+#   websockets==12.0      → FastAPI o'zining WS implementatsiyasini ishlatadi
+#
+# PostgreSQL'ga o'tganda qaytarish: asyncpg, psycopg2-binary, alembic
+
+# ─── Core Framework ──────────────────────────────────────────────────────────
 fastapi==0.111.0
 uvicorn[standard]==0.29.0
+
+# ─── ORM & Database ──────────────────────────────────────────────────────────
 sqlalchemy==2.0.30
-alembic==1.13.1
-asyncpg==0.29.0
-psycopg2-binary==2.9.9
-python-jose[cryptography]==3.3.0
-passlib[bcrypt]==1.7.4
-python-multipart==0.0.9
-Pillow==10.3.0
-qrcode[pil]==7.4.2
-python-dotenv==1.0.1
+aiosqlite==0.20.0          # SQLite async drayveri (Local dev)
+asyncpg>=0.29.0            # PostgreSQL async drayveri (Production High-Concurrency)
+psycopg2-binary>=2.9.9     # PostgreSQL sync drayveri (Migratsiya va utilities)
+
+# ─── Auth & Security ─────────────────────────────────────────────────────────
+python-jose[cryptography]==3.3.0   # JWT token
+bcrypt>=4.0.0                       # Parol xeshlash (security.py da to'g'ridan-to'g'ri)
+
+# ─── Validation & Config ─────────────────────────────────────────────────────
 pydantic[email]==2.7.1
 pydantic-settings==2.2.1
-websockets==12.0
+python-dotenv==1.0.1
+python-multipart==0.0.9   # File upload (FastAPI)
+
+# ─── Image & QR & PDF ────────────────────────────────────────────────────────
+Pillow==10.3.0
+qrcode[pil]==7.4.2
+reportlab>=4.0.0               # Kassa cheklari uchun PDF generatsiya (receipts_archive)
+
+# ─── HTTP & Async Utils ──────────────────────────────────────────────────────
 aiofiles==23.2.1
-httpx==0.27.0
-APScheduler==3.10.4
-psutil==5.9.8
-aiosqlite==0.20.0
-pywin32>=306; sys_platform == 'win32'
+httpx==0.27.0              # Telegram bot, tashqi API chaqiruvlar
+
+# ─── System ──────────────────────────────────────────────────────────────────
+psutil==5.9.8              # Server monitoring (server_manager.py)
+pywin32>=306; sys_platform == 'win32'   # Windows printer API

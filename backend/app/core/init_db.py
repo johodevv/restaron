@@ -4,98 +4,12 @@ from sqlalchemy import select
 from app.core.database import AsyncSessionLocal
 from app.core.security import get_password_hash
 from app.models.user import User, UserRole
-from app.models.restaurant import Restaurant, RestaurantSettings, Theme
+from app.models.restaurant import Restaurant, RestaurantSettings
 from app.models.table import Table
 from app.models.menu import Category, MenuItem
 
 logger = logging.getLogger("init_db")
 
-THEMES = [
-    {
-        "name": "Elegant Dark",
-        "slug": "elegant-dark",
-        "description": "Qora fon, oltin ranglar — premium restoran uchun",
-        "config": {
-            "primary": "#D4AF37",
-            "secondary": "#1a1a2e",
-            "background": "#0f0f1a",
-            "surface": "#1a1a2e",
-            "text": "#ffffff",
-            "accent": "#e8b86d",
-            "font": "Playfair Display",
-        },
-    },
-    {
-        "name": "Fresh Green",
-        "slug": "fresh-green",
-        "description": "Yashil va oq — sog'lom taomlar uchun",
-        "config": {
-            "primary": "#2ECC71",
-            "secondary": "#27AE60",
-            "background": "#f0faf4",
-            "surface": "#ffffff",
-            "text": "#1a1a1a",
-            "accent": "#16A085",
-            "font": "Nunito",
-        },
-    },
-    {
-        "name": "Warm Sunset",
-        "slug": "warm-sunset",
-        "description": "To'q sariq va to'q qizil — issiq, qulay muhit",
-        "config": {
-            "primary": "#E67E22",
-            "secondary": "#C0392B",
-            "background": "#FFF8F0",
-            "surface": "#ffffff",
-            "text": "#2C1810",
-            "accent": "#F39C12",
-            "font": "Lato",
-        },
-    },
-    {
-        "name": "Ocean Blue",
-        "slug": "ocean-blue",
-        "description": "Ko'k gradiyent — zamonaviy, sof dizayn",
-        "config": {
-            "primary": "#2980B9",
-            "secondary": "#1ABC9C",
-            "background": "#EBF5FB",
-            "surface": "#ffffff",
-            "text": "#1a1a1a",
-            "accent": "#21618C",
-            "font": "Inter",
-        },
-    },
-    {
-        "name": "Royal Purple",
-        "slug": "royal-purple",
-        "description": "Binafsha va oltin — hashamatli tuyg'u",
-        "config": {
-            "primary": "#8E44AD",
-            "secondary": "#D4AC0D",
-            "background": "#F9F0FF",
-            "surface": "#ffffff",
-            "text": "#1a1a1a",
-            "accent": "#9B59B6",
-            "font": "Raleway",
-        },
-    },
-    {
-        "name": "Minimalist White",
-        "slug": "minimalist-white",
-        "description": "Sof oq — eng sodda va zamonaviy",
-        "config": {
-            "primary": "#2C3E50",
-            "secondary": "#BDC3C7",
-            "background": "#FAFAFA",
-            "surface": "#ffffff",
-            "text": "#2C3E50",
-            "accent": "#E74C3C",
-            "font": "Roboto",
-        },
-    },
-]
 
 async def seed_initial_data():
     """Boshlang'ich ma'lumotlarni tekshirish va yaratish"""
@@ -113,13 +27,7 @@ async def seed_initial_data():
                 )
                 db.add(dev)
 
-            # 2. Temalar
-            for theme_data in THEMES:
-                t_res = await db.execute(select(Theme).where(Theme.slug == theme_data["slug"]))
-                if not t_res.scalar_one_or_none():
-                    db.add(Theme(**theme_data))
-
-            # 3. Dunyo Choyxonasi
+            # 2. Dunyo Choyxonasi
             res = await db.execute(select(Restaurant).where(Restaurant.id == 1))
             restaurant = res.scalar_one_or_none()
             if not restaurant:
@@ -131,25 +39,34 @@ async def seed_initial_data():
                     name="Dunyo Choyxonasi",
                     slug="dunyo-choyxonasi",
                     description="O'zbekona mehmondo'stlik, shinam so'rilar va haqiqiy milliy taomlar maskani",
-                    address="Toshkent shahri, Chilonzor tumani",
-                    phone="+998 71 200 00 00",
+                    address="Xorazm viloyati, Xiva tumani",
+                    phone="+998884593400",
                     commission_percent=5.0,
                 )
                 db.add(restaurant)
                 await db.flush()
 
-                settings_obj = RestaurantSettings(restaurant_id=restaurant.id)
+                settings_obj = RestaurantSettings(
+                    restaurant_id=restaurant.id,
+                    receipt_header="Dunyo Choyxonasi",
+                    receipt_address="Xorazm viloyati, Xiva tumani",
+                    receipt_phone="+998884593400",
+                    receipt_footer="Tashrifingiz uchun rahmat! Dunyo Choyxonasi (+998884593400)",
+                )
                 db.add(settings_obj)
             else:
                 restaurant.name = "Dunyo Choyxonasi"
                 restaurant.description = "O'zbekona mehmondo'stlik, shinam so'rilar va haqiqiy milliy taomlar maskani"
-                restaurant.phone = "+998 71 200 00 00"
+                restaurant.address = "Xorazm viloyati, Xiva tumani"
+                restaurant.phone = "+998884593400"
 
             # 4. Demo xodimlar
             demo_users = [
-                {"username": "admin", "full_name": "Dunyo Choyxonasi Admin", "role": UserRole.ADMIN, "pass": "admin123"},
-                {"username": "waiter", "full_name": "Asosiy Ofitsiant", "role": UserRole.WAITER, "pass": "waiter123"},
-                {"username": "ofitsiant1", "full_name": "Akbar Ofitsiant", "role": UserRole.WAITER, "pass": "waiter123"},
+                {"username": "admin", "full_name": "Dunyo Choyxonasi Admin", "role": UserRole.ADMIN, "pass": "01020307m"},
+                {"username": "maqsad", "full_name": "Restoran Admin", "role": UserRole.ADMIN, "pass": "01020307m"},
+                {"username": "waiter", "full_name": "Asosiy Ofitsiant", "role": UserRole.WAITER, "pass": "01020307m"},
+                {"username": "ofitsiant", "full_name": "Ofitsiant", "role": UserRole.WAITER, "pass": "01020307m"},
+                {"username": "ofitsiant1", "full_name": "Akbar Ofitsiant", "role": UserRole.WAITER, "pass": "01020307m"},
                 {"username": "cook", "full_name": "Bosh Oshpaz", "role": UserRole.CHEF, "pass": "cook123"},
                 {"username": "chef", "full_name": "Chef Oshpaz", "role": UserRole.CHEF, "pass": "chef123"},
                 {"username": "oshpaz1", "full_name": "Zafar Oshpaz", "role": UserRole.CHEF, "pass": "chef123"},
@@ -168,7 +85,10 @@ async def seed_initial_data():
                     ))
                 else:
                     existing_u.hashed_password = get_password_hash(u["pass"])
+                    existing_u.role = u["role"]
                     existing_u.is_active = True
+                    if not existing_u.restaurant_id:
+                        existing_u.restaurant_id = restaurant.id
 
             # 5. Stollar (12 ta)
             for i in range(1, 13):

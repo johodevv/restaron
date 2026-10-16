@@ -3,16 +3,18 @@ Buyurtmalar API — Mijoz, Ofitsiant, Oshpaz, Admin
 To'liq WebSocket integratsiyasi va 'Yetkazib berdim' funksiyasi bilan
 """
 from datetime import datetime, timezone
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, and_, update
+from sqlalchemy import select, func, and_, update, text
 from sqlalchemy.orm import selectinload
+from sqlalchemy.exc import IntegrityError
 from typing import List, Optional
 
 from app.core.database import get_db
-from app.core.security import get_current_user, require_role
+from app.core.rate_limit import RateLimiter
+from app.core.security import get_current_user, get_optional_current_user, require_role
 from app.models.order import Order, OrderItem, OrderStatus, CallStatus
-from app.models.menu import MenuItem
+from app.models.menu import MenuItem, Category
 from app.models.table import Table, TableStatus
 from app.models.user import User, UserRole
 from app.models.restaurant import Restaurant, RestaurantSettings
@@ -29,9 +31,10 @@ from app.schemas.order import (
     OrderNoteUpdate, OrderCheckoutRequest
 )
 from app.core.printer_service import (
-    format_kitchen_ticket, format_pre_check, print_to_windows_printer,
+    format_kitchen_ticket, format_pre_check, async_print_to_windows_printer,
     DEFAULT_FONT_SIZE, printer_options, receipt_title,
 )
+from app.core.printer_queue import print_with_retry, printer_queue
 from app.core.sms_telegram import send_telegram_alert
 from app.websockets.manager import manager
 
@@ -41,6 +44,21 @@ router = APIRouter(prefix="/orders", tags=["📋 Buyurtmalar"])
 def generate_order_number(restaurant_id: int, count: int) -> str:
     """Buyurtma raqami formati: #R1-0001"""
     return f"#R{restaurant_id}-{count:04d}"
+
+
+async def get_next_order_sequence(db: AsyncSession, restaurant_id: int) -> int:
+    """
+    MAX(id) asosida keyingi sequence raqamni olish.
+    COUNT yerine MAX ishlatiladi: o'chirilgan buyurtmalar COUNT ni kamaytiradi,
+    lekin MAX hech qachon kamaymaydi — bu race condition va duplicate ni to'liq bartaraf etadi.
+    """
+    result = await db.execute(
+        select(func.max(Order.id)).where(Order.restaurant_id == restaurant_id)
+    )
+    max_id = result.scalar() or 0
+    # Barcha restoran buyurtmalari uchun global max ni ham hisoblaymiz
+    # chunki order_number UNIQUE constraint global (restaurant prefix bilan ajratiladi)
+    return max_id + 1
 
 
 async def create_notification(
@@ -69,41 +87,34 @@ async def create_notification(
 
 async def auto_assign_waiter(db: AsyncSession, restaurant_id: int) -> Optional[User]:
     """
-    Eng kam faol buyurtmaga ega bo'lgan faol ofitsiantni avtomatik tanlash
+    Eng kam faol buyurtmaga ega bo'lgan faol ofitsiantni bitta SQL query orqali tanlash
     """
-    waiters_res = await db.execute(
-        select(User).where(
+    active_statuses = [
+        OrderStatus.PENDING,
+        OrderStatus.CONFIRMED,
+        OrderStatus.PREPARING,
+        OrderStatus.READY,
+    ]
+    query = (
+        select(User)
+        .outerjoin(
+            Order,
+            and_(
+                Order.waiter_id == User.id,
+                Order.status.in_(active_statuses),
+            ),
+        )
+        .where(
             User.restaurant_id == restaurant_id,
             User.role == UserRole.WAITER,
             User.is_active == True,
         )
+        .group_by(User.id)
+        .order_by(func.count(Order.id).asc(), User.id.asc())
+        .limit(1)
     )
-    waiters = waiters_res.scalars().all()
-    if not waiters:
-        return None
-
-    # Faol buyurtmalar soni bo'yicha eng bo'sh ofitsiantni topish
-    best_waiter = None
-    min_count = float("inf")
-
-    for waiter in waiters:
-        count_res = await db.execute(
-            select(func.count(Order.id)).where(
-                Order.waiter_id == waiter.id,
-                Order.status.in_([
-                    OrderStatus.PENDING,
-                    OrderStatus.CONFIRMED,
-                    OrderStatus.PREPARING,
-                    OrderStatus.READY,
-                ]),
-            )
-        )
-        active_count = count_res.scalar() or 0
-        if active_count < min_count:
-            min_count = active_count
-            best_waiter = waiter
-
-    return best_waiter
+    res = await db.execute(query)
+    return res.scalar_one_or_none()
 
 
 async def load_order_full(db: AsyncSession, order_id: int) -> Optional[Order]:
@@ -191,11 +202,16 @@ def missing_weight_items(order: Order) -> List[str]:
 
 
 async def recalc_order_totals(db: AsyncSession, order: Order) -> None:
-    """Buyurtma summalarini qatorlardan qayta hisoblash"""
-    res = await db.execute(select(OrderItem).where(OrderItem.order_id == order.id))
-    subtotal = sum((i.total_price or 0.0) for i in res.scalars().all())
+    """Buyurtma summalarini qatorlardan qayta hisoblash (xotiradagi items tekshiriladi)"""
+    from sqlalchemy import inspect as sa_inspect
+    insp = sa_inspect(order)
+    if insp and "items" in insp.dict and order.items is not None:
+        subtotal = sum((i.total_price or 0.0) for i in order.items)
+    else:
+        res = await db.execute(select(OrderItem).where(OrderItem.order_id == order.id))
+        subtotal = sum((i.total_price or 0.0) for i in res.scalars().all())
     fee_pct = order_fee_percent(order)
-    order.subtotal = subtotal
+    order.subtotal = round(subtotal, 2)
     order.service_fee_amount = round(subtotal * (fee_pct / 100.0), 2)
     order.total = round(subtotal + order.service_fee_amount - (order.discount or 0.0), 2)
 
@@ -203,7 +219,8 @@ async def recalc_order_totals(db: AsyncSession, order: Order) -> None:
 def build_order_response(order: Order, table_number: Optional[int] = None, waiter_name: Optional[str] = None) -> OrderResponse:
     """OrderResponse obyektini xavfsiz va to'liq yaratish"""
     items_response = []
-    for item in order.items:
+    for item in (order.items or []):
+        menu_item = getattr(item, "menu_item", None)
         items_response.append(
             OrderItemResponse(
                 id=item.id,
@@ -216,22 +233,24 @@ def build_order_response(order: Order, table_number: Optional[int] = None, waite
                 item_time=item.item_time,
                 weight=item.weight,
                 manual_price=item.manual_price,
-                is_weighted=bool(getattr(item.menu_item, "is_weighted", False)) if item.menu_item else False,
-                unit=(getattr(item.menu_item, "unit", "dona") or "dona") if item.menu_item else "dona",
+                is_weighted=bool(getattr(menu_item, "is_weighted", False)) if menu_item else False,
+                unit=(getattr(menu_item, "unit", "dona") or "dona") if menu_item else "dona",
                 sent_to_kitchen=bool(item.sent_to_kitchen),
                 sent_to_kitchen_at=item.sent_to_kitchen_at,
                 sent_quantity=int(item.sent_quantity or 0),
                 is_prepared=bool(item.is_prepared),
                 prepared_at=item.prepared_at,
-                menu_item_name=item.menu_item.name if item.menu_item else None,
-                menu_item_image=item.menu_item.image_url if item.menu_item else None,
+                menu_item_name=menu_item.name if menu_item else None,
+                menu_item_image=menu_item.image_url if menu_item else None,
             )
         )
 
-    t_num = table_number if table_number is not None else (order.table.number if order.table else None)
-    t_room = order.table.room if order.table else None
+    tbl = getattr(order, "table", None)
+    t_num = table_number if table_number is not None else (tbl.number if tbl else None)
+    t_room = tbl.room if tbl else None
+    wtr = getattr(order, "waiter", None)
     w_name = waiter_name if waiter_name is not None else (
-        (order.waiter.full_name or order.waiter.username) if order.waiter else None
+        (wtr.full_name or wtr.username) if wtr else None
     )
 
     return OrderResponse(
@@ -244,7 +263,9 @@ def build_order_response(order: Order, table_number: Optional[int] = None, waite
         waiter_id=order.waiter_id,
         waiter_name=w_name,
         customer_name=order.customer_name,
+        customer_phone=getattr(order, "customer_phone", None),
         customer_note=order.customer_note,
+        delivery_address=getattr(order, "delivery_address", None),
         order_type=order.order_type or "table",
         hall_name=order.hall_name or t_room,
         kitchen_note=order.kitchen_note,
@@ -277,42 +298,95 @@ def build_order_response(order: Order, table_number: Optional[int] = None, waite
 
 
 # ─── Mijoz: Buyurtma berish ────────────────────────────────
-@router.post("/", response_model=OrderResponse, status_code=201, summary="Buyurtma berish (mijoz)")
-async def create_order(payload: OrderCreate, db: AsyncSession = Depends(get_db)):
-    """QR orqali kirgan mijoz buyurtma beradi (auth talab qilinmaydi)"""
-    result = await db.execute(select(Table).where(Table.id == payload.table_id))
-    table = result.scalar_one_or_none()
-    if not table:
-        raise HTTPException(status_code=404, detail="Stol topilmadi")
-
-    # Sozlamalarni tekshirish: mijozga saytdan to'g'ridan-to'g'ri buyurtma berish ruxsat etilganmi?
-    set_res = await db.execute(select(RestaurantSettings).where(RestaurantSettings.restaurant_id == table.restaurant_id))
-    settings = set_res.scalar_one_or_none()
-    if settings and not settings.allow_orders_from_qr and not settings.allow_orders:
-        raise HTTPException(
-            status_code=400,
-            detail="Hurmatli mijoz! Buyurtmani ofitsiant stolingizga kelib qabul qiladi. Iltimos menyuni ko'rib chiqing va 'Ofitsiantni chaqirish' tugmasini bosing."
+@router.post(
+    "/",
+    response_model=OrderResponse,
+    status_code=201,
+    summary="Buyurtma berish (mijoz)",
+    dependencies=[
+        Depends(
+            RateLimiter(
+                times=5,
+                seconds=60,
+                detail="Qisqa vaqt ichida juda ko'p buyurtma yuborildi. Iltimos, 1 daqiqadan so'ng qayta urinib ko'ring.",
+            )
         )
+    ],
+)
+async def create_order(payload: OrderCreate, db: AsyncSession = Depends(get_db)):
+    """QR orqali yoki onlayn kirgan mijoz buyurtma beradi (auth talab qilinmaydi, rate-limit va validatsiya bilan)"""
+    table = None
+    table_id = payload.table_id
+    norm_order_type = payload.order_type or ("dine_in" if table_id else "takeaway")
+    if norm_order_type == "table":
+        norm_order_type = "dine_in"
 
-    # Stol holatini band qilish
-    table.status = TableStatus.OCCUPIED
+    if table_id:
+        result = await db.execute(select(Table).where(Table.id == table_id))
+        table = result.scalar_one_or_none()
+        if not table or not table.is_active:
+            raise HTTPException(status_code=404, detail="Stol topilmadi yoki faol emas")
+        restaurant_id = table.restaurant_id
+    else:
+        if not payload.restaurant_id:
+            raise HTTPException(
+                status_code=400,
+                detail="Stolsiz buyurtma (takeaway yoki delivery) uchun restaurant_id ko'rsatilishi shart"
+            )
+        restaurant_id = payload.restaurant_id
+
+    # Delivery uchun telefon va manzil tekshiruvi
+    if norm_order_type == "delivery":
+        if not payload.customer_phone:
+            raise HTTPException(
+                status_code=400,
+                detail="Yetkazib berish (delivery) uchun mijoz telefon raqami kiritilishi shart"
+            )
+        if not payload.delivery_address:
+            raise HTTPException(
+                status_code=400,
+                detail="Yetkazib berish (delivery) uchun yetkazish manzili kiritilishi shart"
+            )
+
+    # Restoran sozlamalarini tekshirish
+    set_res = await db.execute(select(RestaurantSettings).where(RestaurantSettings.restaurant_id == restaurant_id))
+    settings = set_res.scalar_one_or_none()
+    if settings:
+        if table:
+            qr_allowed = bool(settings.allow_orders_from_qr)
+            general_allowed = bool(settings.allow_orders)
+            if not qr_allowed and not general_allowed:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Hurmatli mijoz! Ushbu restoranda QR orqali buyurtma berish vaqtincha to'xtatilgan. Buyurtmani ofitsiant stolingizga kelib qabul qiladi."
+                )
+        else:
+            if not bool(settings.allow_orders):
+                raise HTTPException(
+                    status_code=400,
+                    detail="Hurmatli mijoz! Ushbu restoranda onlayn buyurtma berish vaqtincha to'xtatilgan."
+                )
+
+    # Agar stol mavjud bo'lsa, holatini band qilish
+    if table:
+        table.status = TableStatus.OCCUPIED
 
     # Avtomatik ofitsiant tayinlash
-    assigned_waiter = await auto_assign_waiter(db, table.restaurant_id)
+    assigned_waiter = await auto_assign_waiter(db, restaurant_id)
 
-    # Buyurtma raqamini aniqlash
-    count_result = await db.execute(
-        select(func.count(Order.id)).where(Order.restaurant_id == table.restaurant_id)
-    )
-    count = count_result.scalar() + 1
-    order_number = generate_order_number(table.restaurant_id, count)
+    # Buyurtma raqamini aniqlash (MAX asosida, race-condition safe)
+    seq = await get_next_order_sequence(db, restaurant_id)
+    order_number = generate_order_number(restaurant_id, seq)
 
     order = Order(
         order_number=order_number,
-        restaurant_id=table.restaurant_id,
-        table_id=payload.table_id,
+        restaurant_id=restaurant_id,
+        table_id=table.id if table else None,
         waiter_id=assigned_waiter.id if assigned_waiter else None,
+        order_type=norm_order_type,
         customer_name=payload.customer_name,
+        customer_phone=payload.customer_phone,
+        delivery_address=payload.delivery_address,
         customer_note=payload.customer_note,
         status=OrderStatus.PENDING,
     )
@@ -323,13 +397,20 @@ async def create_order(payload: OrderCreate, db: AsyncSession = Depends(get_db))
     items_details = []
     for item_data in payload.items:
         item_result = await db.execute(
-            select(MenuItem).where(MenuItem.id == item_data.menu_item_id, MenuItem.is_available == True)
+            select(MenuItem)
+            .join(Category, Category.id == MenuItem.category_id)
+            .where(
+                MenuItem.id == item_data.menu_item_id,
+                Category.restaurant_id == restaurant_id,
+                MenuItem.is_available == True,
+                MenuItem.is_stop_list == False,
+            )
         )
         menu_item = item_result.scalar_one_or_none()
         if not menu_item:
             raise HTTPException(
                 status_code=404,
-                detail=f"Taom #{item_data.menu_item_id} topilmadi yoki mavjud emas",
+                detail=f"Taom #{item_data.menu_item_id} topilmadi, mavjud emas yoki stop-listda",
             )
 
         total_price = line_total(menu_item, item_data.quantity, item_data.weight)
@@ -346,7 +427,7 @@ async def create_order(payload: OrderCreate, db: AsyncSession = Depends(get_db))
             weight=item_data.weight,
         )
         db.add(order_item)
-        menu_item.total_ordered += item_data.quantity
+        menu_item.total_ordered = (menu_item.total_ordered or 0) + item_data.quantity
 
         items_details.append({
             "name": menu_item.name,
@@ -360,20 +441,22 @@ async def create_order(payload: OrderCreate, db: AsyncSession = Depends(get_db))
     order.total = subtotal
 
     waiter_name = (assigned_waiter.full_name or assigned_waiter.username) if assigned_waiter else None
+    order_type_label = "Yetkazib berish" if norm_order_type == "delivery" else ("Olib ketish" if norm_order_type == "takeaway" else f"Stol #{table.number if table else ''}")
 
     # Bildirishnoma (DB)
     await create_notification(
         db=db,
-        restaurant_id=table.restaurant_id,
+        restaurant_id=restaurant_id,
         ntype=NotificationType.NEW_ORDER,
-        title=f"Yangi buyurtma — Stol #{table.number}",
-        message=f"{order_number} buyurtma keldi. Jami: {subtotal:,.0f} so'm. Ofitsiant: {waiter_name or 'Tayinlanmagan'}",
+        title=f"Yangi buyurtma — {order_type_label}",
+        message=f"{order_number} buyurtma keldi. Jami: {subtotal:,.0f} so'm. Xodim: {waiter_name or 'Tayinlanmagan'}",
         target=NotificationTarget.ALL_STAFF,
         data={
             "order_id": order.id,
             "order_number": order_number,
-            "table_id": table.id,
-            "table_number": table.number,
+            "table_id": table.id if table else None,
+            "table_number": table.number if table else None,
+            "order_type": norm_order_type,
             "waiter_id": assigned_waiter.id if assigned_waiter else None,
             "waiter_name": waiter_name,
             "total": subtotal,
@@ -387,11 +470,14 @@ async def create_order(payload: OrderCreate, db: AsyncSession = Depends(get_db))
         "type": "new_order",
         "order_id": order.id,
         "order_number": order.order_number,
-        "table_id": table.id,
-        "table_number": table.number,
+        "table_id": table.id if table else None,
+        "table_number": table.number if table else None,
+        "order_type": norm_order_type,
         "waiter_id": assigned_waiter.id if assigned_waiter else None,
         "waiter_name": waiter_name,
         "customer_name": order.customer_name,
+        "customer_phone": order.customer_phone,
+        "delivery_address": order.delivery_address,
         "customer_note": order.customer_note,
         "subtotal": subtotal,
         "total": subtotal,
@@ -400,35 +486,36 @@ async def create_order(payload: OrderCreate, db: AsyncSession = Depends(get_db))
     }
 
     # Oshpaz, Ofitsiant va Adminga
-    await manager.broadcast_to_roles(table.restaurant_id, ["chef", "waiter", "admin"], ws_payload)
+    await manager.broadcast_to_roles(restaurant_id, ["chef", "waiter", "admin"], ws_payload)
 
     # Agar ofitsiant biriktirilgan bo'lsa, unga maxsus shaxsiy bildirishnoma
     if assigned_waiter:
         await manager.send_to_user(
-            table.restaurant_id,
+            restaurant_id,
             assigned_waiter.id,
             {
                 "type": "order_assigned",
-                "title": f"Sizga buyurtma tayinlandi — Stol #{table.number}",
+                "title": f"Sizga buyurtma tayinlandi — {order_type_label}",
                 "message": f"Buyurtma {order_number} sizga biriktirildi.",
                 "order_id": order.id,
-                "table_id": table.id,
-                "table_number": table.number,
+                "table_id": table.id if table else None,
+                "table_number": table.number if table else None,
             },
         )
 
-    # Stoldagi mijozga tasdiq
-    await manager.broadcast_to_table(
-        table.restaurant_id,
-        table.id,
-        {
-            "type": "order_placed",
-            "order_id": order.id,
-            "order_number": order.order_number,
-            "status": "pending",
-            "message": "Buyurtmangiz qabul qilindi va oshxonaga uzatildi!",
-        },
-    )
+    # Agar stoldan berilgan bo'lsa, stoldagi mijozga tasdiq
+    if table:
+        await manager.broadcast_to_table(
+            table.restaurant_id,
+            table.id,
+            {
+                "type": "order_placed",
+                "order_id": order.id,
+                "order_number": order.order_number,
+                "status": "pending",
+                "message": "Buyurtmangiz qabul qilindi va oshxonaga uzatildi!",
+            },
+        )
 
     # To'liq qayta yuklash
     refreshed = await db.execute(
@@ -441,7 +528,7 @@ async def create_order(payload: OrderCreate, db: AsyncSession = Depends(get_db))
         .where(Order.id == order.id)
     )
     full_order = refreshed.scalar_one()
-    return build_order_response(full_order, table.number, waiter_name)
+    return build_order_response(full_order, table.number if table else None, waiter_name)
 
 
 # ─── Ofitsiant / Kassa: Yangi buyurtma yaratish (Ali Poster POS) ───
@@ -449,12 +536,15 @@ async def create_order(payload: OrderCreate, db: AsyncSession = Depends(get_db))
 async def waiter_create_order(
     payload: WaiterOrderCreate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role("waiter", "admin", "developer")),
+    current_user: User = Depends(require_role("waiter", "admin", "developer", "cashier")),
 ):
     """Ofitsiant yoki kassir stol, olib ketish (s soboy) yoki yetkazish uchun buyurtma yaratadi"""
     table = None
     table_id = payload.table_id
     hall_name = payload.hall_name
+    norm_order_type = payload.order_type or "dine_in"
+    if norm_order_type == "table":
+        norm_order_type = "dine_in"
 
     if table_id:
         result = await db.execute(select(Table).where(Table.id == table_id))
@@ -465,25 +555,67 @@ async def waiter_create_order(
         if not hall_name:
             hall_name = table.room or f"Zal"
 
+        # Stolda allaqachon to'lanmagan faol buyurtma mavjud bo'lsa,
+        # yangi dublikat hisob ochmasdan mavjud buyurtmaga biriktiramiz:
+        existing_order_res = await db.execute(
+            select(Order)
+            .where(
+                Order.table_id == table_id,
+                Order.is_paid == False,
+                Order.status.in_([
+                    OrderStatus.PENDING,
+                    OrderStatus.CONFIRMED,
+                    OrderStatus.PREPARING,
+                    OrderStatus.READY,
+                    OrderStatus.SERVED,
+                ]),
+            )
+            .order_by(Order.created_at.desc())
+        )
+        existing_order = existing_order_res.scalars().first()
+        if existing_order:
+            if payload.items:
+                return await waiter_add_items(
+                    order_id=existing_order.id,
+                    payload=WaiterAddItemsRequest(items=payload.items, send_to_kitchen_immediately=False),
+                    db=db,
+                    current_user=current_user,
+                )
+            else:
+                loaded = await load_order_full(db, existing_order.id)
+                return build_order_response(loaded or existing_order)
+    else:
+        # Takeaway va Delivery uchun avtomatik zal/manzil nomi
+        if not hall_name:
+            if norm_order_type == "delivery":
+                hall_name = "Yetkazib berish"
+            elif norm_order_type == "takeaway":
+                hall_name = "Olib ketish"
+            else:
+                hall_name = "Kassa"
+
     # Restoran sozlamalarini olish (xizmat foizi)
     set_res = await db.execute(select(RestaurantSettings).where(RestaurantSettings.restaurant_id == payload.restaurant_id))
     settings = set_res.scalar_one_or_none()
     service_fee_pct = settings.service_fee_percent if settings else 12.0
 
-    count_result = await db.execute(
-        select(func.count(Order.id)).where(Order.restaurant_id == payload.restaurant_id)
-    )
-    count = (count_result.scalar() or 0) + 1
-    order_number = generate_order_number(payload.restaurant_id, count)
+    # Buyurtma raqami (Bug 1 fix: MAX asosida, race-condition safe)
+    seq = await get_next_order_sequence(db, payload.restaurant_id)
+    order_number = generate_order_number(payload.restaurant_id, seq)
+
+    # Delivery/takeaway da table_id=None
+    resolved_table_id = table_id if table else None
 
     order = Order(
         order_number=order_number,
         restaurant_id=payload.restaurant_id,
-        table_id=table_id if table else (payload.table_id or 1),
+        table_id=resolved_table_id,
         waiter_id=current_user.id,
-        order_type=payload.order_type,
+        order_type=norm_order_type,
         hall_name=hall_name,
         customer_name=payload.customer_name,
+        customer_phone=payload.customer_phone,
+        delivery_address=payload.delivery_address,
         kitchen_note=payload.kitchen_note,
         receipt_note=payload.receipt_note,
         service_fee_percent=service_fee_pct,
@@ -500,7 +632,12 @@ async def waiter_create_order(
         item_res = await db.execute(select(MenuItem).where(MenuItem.id == item_data.menu_item_id))
         menu_item = item_res.scalar_one_or_none()
         if not menu_item:
-            continue
+            # Bug 3 fix: continue o'rniga 404 xato — ofitsiant kamroq taomli buyurtma
+            # yaratganini bilmay qoladi. Aniq xato xabar ko'rsatish to'g'riroq.
+            raise HTTPException(
+                status_code=404,
+                detail=f"Taom #{item_data.menu_item_id} menuda topilmadi yoki mavjud emas",
+            )
 
         tot_price = line_total(menu_item, item_data.quantity, item_data.weight)
         subtotal += tot_price
@@ -519,7 +656,7 @@ async def waiter_create_order(
             sent_quantity=0,
         )
         db.add(order_item)
-        menu_item.total_ordered += item_data.quantity
+        menu_item.total_ordered = (menu_item.total_ordered or 0) + item_data.quantity
         items_details.append({
             "name": menu_item.name,
             "quantity": item_data.quantity,
@@ -578,7 +715,7 @@ async def waiter_add_items(
     order_id: int,
     payload: WaiterAddItemsRequest,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role("waiter", "admin", "developer")),
+    current_user: User = Depends(require_role("waiter", "admin", "developer", "cashier")),
 ):
     """Ofitsiant faol buyurtmaga qo'shimcha taomlar qo'shadi"""
     res = await db.execute(
@@ -625,7 +762,7 @@ async def waiter_add_items(
             sent_quantity=(item_data.quantity if payload.send_to_kitchen_immediately else 0),
         )
         db.add(order_item)
-        menu_item.total_ordered += item_data.quantity
+        menu_item.total_ordered = (menu_item.total_ordered or 0) + item_data.quantity
         added_details.append({
             "name": menu_item.name,
             "quantity": item_data.quantity,
@@ -667,7 +804,7 @@ async def update_item_quantity(
     item_id: int,
     payload: UpdateItemQtyRequest,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role("waiter", "admin", "developer")),
+    current_user: User = Depends(require_role("waiter", "admin", "developer", "cashier")),
 ):
     item_res = await db.execute(
         select(OrderItem).where(OrderItem.id == item_id, OrderItem.order_id == order_id)
@@ -695,7 +832,7 @@ async def update_item_quantity(
     await recalc_order_totals(db, order)
 
     await db.flush()
-    order = await load_order_full(db, order.id) or order
+    order = await load_order_full(db, order_id) or order
     return build_order_response(order)
 
 
@@ -707,7 +844,7 @@ async def update_item_weight(
     item_id: int,
     payload: UpdateItemWeightRequest,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role("waiter", "admin", "developer")),
+    current_user: User = Depends(require_role("waiter", "admin", "developer", "cashier")),
 ):
     """Tortiladigan taom (baliq, go'sht) narxini belgilash.
 
@@ -728,10 +865,7 @@ async def update_item_weight(
     if not order_item:
         raise HTTPException(status_code=404, detail="Taom topilmadi")
 
-    order_res = await db.execute(
-        select(Order).options(selectinload(Order.items)).where(Order.id == order_id)
-    )
-    order = order_res.scalar_one_or_none()
+    order = await load_order_full(db, order_id)
     if not order:
         raise HTTPException(status_code=404, detail="Buyurtma topilmadi")
     if order.status in (OrderStatus.PAID, OrderStatus.CANCELLED):
@@ -793,7 +927,7 @@ async def update_item_size(
     item_id: int,
     payload: UpdateItemSizeRequest,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role("waiter", "admin", "developer")),
+    current_user: User = Depends(require_role("waiter", "admin", "developer", "cashier")),
 ):
     """Ofitsiant o'lchanadigan taomning hajmini kiritadi: "1.5 L", "1.4 kg".
 
@@ -807,8 +941,7 @@ async def update_item_size(
     if not order_item:
         raise HTTPException(status_code=404, detail="Taom topilmadi")
 
-    order_res = await db.execute(select(Order).where(Order.id == order_id))
-    order = order_res.scalar_one_or_none()
+    order = await load_order_full(db, order_id)
     if not order:
         raise HTTPException(status_code=404, detail="Buyurtma topilmadi")
     if order.status in (OrderStatus.PAID, OrderStatus.CANCELLED):
@@ -828,7 +961,7 @@ async def delete_order_item(
     order_id: int,
     item_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role("waiter", "admin", "developer")),
+    current_user: User = Depends(require_role("waiter", "admin", "developer", "cashier")),
 ):
     item_res = await db.execute(
         select(OrderItem).where(OrderItem.id == item_id, OrderItem.order_id == order_id)
@@ -854,7 +987,7 @@ async def delete_order_item(
     order.total = subtotal + order.service_fee_amount - (order.discount or 0.0)
 
     await db.flush()
-    order = await load_order_full(db, order.id) or order
+    order = await load_order_full(db, order_id) or order
     return build_order_response(order)
 
 
@@ -1074,14 +1207,19 @@ async def send_to_kitchen(
         print_error = None
         if auto_print:
             try:
-                p_res = print_to_windows_printer(
+                p_res = await print_with_retry(
                     ticket_text, printer_name=station_printer, **popts
                 )
                 print_status = p_res.get("success", False)
-                if not print_status:
-                    print_error = p_res.get("error") or p_res.get("message")
+                if p_res.get("queued"):
+                    print_error = p_res.get("warning", "Printerga ulanib bo'lmadi (navbatga olindi)")
+                elif not print_status:
+                    print_error = p_res.get("error", "Chop etishda xatolik")
             except Exception as e:
-                print_error = str(e)
+                printer_queue.enqueue(
+                    ticket_text, printer_name=station_printer, **popts
+                )
+                print_error = f"{str(e)} (navbatga qo'yildi)"
         else:
             print_error = "Avtomatik chop etish sozlamalarda o'chirilgan"
 
@@ -1149,7 +1287,7 @@ async def checkout_order(
     order_id: int,
     payload: OrderCheckoutRequest,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role("waiter", "admin", "developer")),
+    current_user: User = Depends(require_role("admin", "cashier", "developer")),
 ):
     """
     1. To'lov turlarini hisoblaydi (Naqd, Karta, Click, Nasiya)
@@ -1188,7 +1326,7 @@ async def checkout_order(
 
     rest_res = await db.execute(select(Restaurant).where(Restaurant.id == order.restaurant_id))
     restaurant = rest_res.scalar_one_or_none()
-    rest_name = restaurant.name if restaurant else "RestAron"
+    rest_name = restaurant.name if restaurant else "Dunyo Choyxonasi"
 
     # Xizmat haqi foizi tartibi:
     #   1) to'lov oynasida ataylab boshqa foiz yuborilgan bo'lsa — o'sha;
@@ -1300,7 +1438,21 @@ async def checkout_order(
     paper_width = settings.printer_paper_width if settings else 80
     popts = printer_options(settings)
     fsize = popts["font_size"]
-    table_disp = f"{order.hall_name or (order.table.room if order.table else '')} N#{order.table.number if order.table else ''}".strip()
+
+    # Delivery / Takeaway uchun stol yo'q: qiymat sifatida mijoz ismi / manzil ko'rsatiladi
+    if order.table:
+        table_disp = f"{order.hall_name or order.table.room or ''} N#{order.table.number}".strip()
+    elif order.order_type == "delivery":
+        parts = []
+        if order.customer_name:
+            parts.append(order.customer_name)
+        if getattr(order, "delivery_address", None):
+            parts.append(order.delivery_address)
+        table_disp = (" — ".join(parts) or "Yetkazib berish") if parts else "Yetkazib berish"
+    elif order.order_type == "takeaway":
+        table_disp = f"Olib ketish: {order.customer_name or ''}" .strip().rstrip(":")
+    else:
+        table_disp = f"{order.hall_name or ''} N#{order.table_id or ''}".strip()
     waiter_disp = (order.waiter.full_name or order.waiter.username) if order.waiter else current_user.full_name
 
     items_for_receipt = [
@@ -1323,9 +1475,9 @@ async def checkout_order(
         # Chek sozlamasida bo'sh bo'lsa — restoran ma'lumotidan olamiz,
         # shunda telefon/manzil chekda ikki joyda sozlanmasdan ham chiqadi.
         address=(getattr(settings, "receipt_address", None) if settings else None)
-                or (restaurant.address if restaurant else None),
+                or (restaurant.address if restaurant else "Xorazm viloyati, Xiva tumani"),
         phone=(getattr(settings, "receipt_phone", None) if settings else None)
-              or (restaurant.phone if restaurant else None),
+              or (restaurant.phone if restaurant else "+998884593400"),
         table_name=table_disp,
         waiter_name=waiter_disp,
         order_number=order.order_number,
@@ -1336,7 +1488,7 @@ async def checkout_order(
         discount=discount,
         total=total,
         receipt_note=order.receipt_note,
-        footer_text=settings.receipt_footer if settings else "Tashrifingiz uchun rahmat!",
+        footer_text=settings.receipt_footer if (settings and settings.receipt_footer) else "Tashrifingiz uchun rahmat! Dunyo Choyxonasi (+998884593400)",
         created_at=order.created_at,
         paper_width=paper_width,
         font_size=fsize,
@@ -1367,24 +1519,79 @@ async def checkout_order(
     db.add(archive)
     await db.flush()
 
-    # Avtomatik 1-Printer (Mijoz kassa cheki) ga chop etish
+    # Audit log: kassir to'lovni qabul qildi
+    from app.core.audit import log_audit_event
+    await log_audit_event(
+        db=db,
+        restaurant_id=order.restaurant_id,
+        action="order_checkout",
+        user=current_user,
+        entity_type="order",
+        entity_id=order.id,
+        details={
+            "order_number": order.order_number,
+            "total": total,
+            "payment_method": order.payment_method,
+            "cash": round(cash_in, 2),
+            "table_id": order.table_id,
+        },
+    )
+
+    # Avtomatik 1-Printer (Mijoz kassa cheki) ga asinxron chop etish (non-blocking)
     if getattr(settings, "auto_print_customer_bill", True):
         cust_printer = getattr(settings, "printer_customer_name", None) or "X-Q80A"
         try:
-            print_to_windows_printer(bill_text, printer_name=cust_printer, **popts)
+            await print_with_retry(bill_text, printer_name=cust_printer, **popts)
         except Exception:
-            pass
+            printer_queue.enqueue(bill_text, printer_name=cust_printer, **popts)
 
+    # Faqat kassa cheklari (checkout / final bill) uchun PDF arxiv saqlash (non-blocking)
+    try:
+        from app.core.pdf_generator import async_save_checkout_receipt_pdf
+        pdf_payload = {
+            "restaurant_name": receipt_title(settings, restaurant, rest_name),
+            "address": (getattr(settings, "receipt_address", None) if settings else None) or (restaurant.address if restaurant else "Xorazm viloyati, Xiva tumani"),
+            "phone": (getattr(settings, "receipt_phone", None) if settings else None) or (restaurant.phone if restaurant else "+998884593400"),
+            "order_number": order.order_number,
+            "order_type": order.order_type or "dine_in",
+            "table_name": table_disp,
+            "waiter_name": waiter_disp,
+            "customer_name": order.customer_name,
+            "customer_phone": getattr(order, "customer_phone", None),
+            "delivery_address": getattr(order, "delivery_address", None),
+            "items": items_for_receipt,
+            "subtotal": subtotal,
+            "service_fee_percent": fee_pct,
+            "service_fee_amount": fee_amount,
+            "discount": discount,
+            "total": total,
+            "payment_method": order.payment_method,
+            "cash_amount": order.cash_amount,
+            "card_amount": order.card_amount,
+            "click_amount": order.click_amount,
+            "debt_amount": order.debt_amount,
+            "receipt_note": order.receipt_note,
+            "footer_text": settings.receipt_footer if (settings and settings.receipt_footer) else "Tashrifingiz uchun rahmat! Dunyo Choyxonasi (+998884593400)",
+            "wifi_pass": settings.receipt_wifi_pass if settings else None,
+            "created_at": order.created_at,
+        }
+        await async_save_checkout_receipt_pdf(pdf_payload)
+    except Exception as exc:
+        import logging
+        logging.getLogger("orders").warning(f"Kassa PDF chekini arxivlashda xatolik: {exc}")
+
+    status_lbl = f"Stol #{order.table.number}" if order.table else f"Buyurtma {order.order_number}"
     await manager.broadcast_to_restaurant(order.restaurant_id, {
         "type": "order_paid",
         "order_id": order.id,
         "order_number": order.order_number,
         "table_id": order.table_id,
         "table_number": order.table.number if order.table else None,
+        "order_type": order.order_type,
         "total": total,
         "payment_method": order.payment_method,
         "raw_text": bill_text,
-        "message": f"Stol #{order.table.number if order.table else ''} to'landi va yopildi ✅",
+        "message": f"{status_lbl} to'landi va yopildi ✅",
     })
 
     if order.table:
@@ -1413,13 +1620,31 @@ async def checkout_order(
 
 
 # ─── Ofitsiant chaqirish ────────────────────────────────────
-@router.post("/call-waiter", status_code=200, summary="Ofitsiant chaqirish")
+@router.post(
+    "/call-waiter",
+    status_code=200,
+    summary="Ofitsiant chaqirish",
+    dependencies=[
+        Depends(
+            RateLimiter(
+                times=3,
+                seconds=60,
+                detail="Ofitsiant chaqiruvi yuborilgan. Iltimos, xodim kelishini kuting.",
+            )
+        )
+    ],
+)
 async def call_waiter(payload: CallWaiterRequest, db: AsyncSession = Depends(get_db)):
-    """Mijoz stolidan ofitsiantni chaqiradi"""
+    """Mijoz stolidan ofitsiantni chaqiradi (rate-limit va spam himoyasi bilan)"""
     result = await db.execute(select(Table).where(Table.id == payload.table_id))
     table = result.scalar_one_or_none()
-    if not table:
-        raise HTTPException(status_code=404, detail="Stol topilmadi")
+    if not table or not table.is_active:
+        raise HTTPException(status_code=404, detail="Stol topilmadi yoki faol emas")
+
+    set_res = await db.execute(select(RestaurantSettings).where(RestaurantSettings.restaurant_id == table.restaurant_id))
+    settings = set_res.scalar_one_or_none()
+    if settings and not settings.allow_call_waiter:
+        raise HTTPException(status_code=400, detail="Ushbu restoranda ofitsiant chaqirish xizmati faol emas")
 
     # Ushbu stolda faol buyurtma bormi?
     order_res = await db.execute(
@@ -1437,6 +1662,14 @@ async def call_waiter(payload: CallWaiterRequest, db: AsyncSession = Depends(get
         .order_by(Order.created_at.desc())
     )
     active_order = order_res.scalars().first()
+
+    # Agar bu stol uchun chaqiruv allaqachon kutish holatida bo'lsa, spam bildirishnoma yaratmaslik
+    if active_order and active_order.call_waiter and active_order.call_status == CallStatus.PENDING:
+        return {
+            "success": True,
+            "message": f"Stol #{table.number} uchun ofitsiant allaqachon chaqirilgan. Xodim tez orada stolingizga keladi.",
+            "notification_id": None,
+        }
 
     assigned_waiter_id = None
     if active_order:
@@ -1463,7 +1696,6 @@ async def call_waiter(payload: CallWaiterRequest, db: AsyncSession = Depends(get
         user_id=assigned_waiter_id,
     )
     await db.flush()
-    await db.commit()
 
     # Real-time WebSocket xabari
     call_msg = {
@@ -1603,31 +1835,38 @@ async def resolve_waiter_call(
     """Ofitsiant yoki Admin chaqiruv bo'yicha mijozga xizmat ko'rsatganini tasdiqlaydi"""
     table_id = None
     table_num = None
-    restaurant_id = current_user.restaurant_id or 1
+    # Bug 5 fix: `or 1` o'chirildi — developer user restaurant_id=None bo'lsa
+    # `None or 1` → 1 (noto'g'ri restoran) o'rniga, to'g'ri qiymat keyin aniqlanadi.
+    restaurant_id = current_user.restaurant_id  # None bo'lishi mumkin, keyinroq aniqlanadi
 
-    if call_id < 100000:
-        notif_res = await db.execute(
-            select(Notification).where(Notification.id == call_id)
-        )
-        notif = notif_res.scalar_one_or_none()
-        if notif:
-            notif.is_read = True
-            notif.read_at = datetime.now(timezone.utc)
-            restaurant_id = notif.restaurant_id
-            data = notif.data or {}
-            table_id = data.get("table_id")
-            table_num = data.get("table_number")
-            order_id = data.get("order_id")
-            if order_id:
-                o_res = await db.execute(select(Order).where(Order.id == order_id))
-                o = o_res.scalar_one_or_none()
-                if o:
-                    o.call_waiter = False
-                    o.call_status = CallStatus.COMPLETED
+    # Bug 6 fix: 100000 magic number o'chirildi.
+    # Yangi strategiya: avval Notification jadvalidan qidiramiz (call_id = notif.id),
+    # topilmasa Order jadvalidan qidiramiz (call_id = order.id).
+    # Bu yondashuv 100,000+ buyurtmada ham to'g'ri ishlaydi.
+    notif_res = await db.execute(
+        select(Notification).where(Notification.id == call_id)
+    )
+    notif = notif_res.scalar_one_or_none()
+
+    if notif:
+        # Notification orqali topildi
+        notif.is_read = True
+        notif.read_at = datetime.now(timezone.utc)
+        restaurant_id = notif.restaurant_id
+        data = notif.data or {}
+        table_id = data.get("table_id")
+        table_num = data.get("table_number")
+        order_id = data.get("order_id")
+        if order_id:
+            o_res = await db.execute(select(Order).where(Order.id == order_id))
+            o = o_res.scalar_one_or_none()
+            if o:
+                o.call_waiter = False
+                o.call_status = CallStatus.COMPLETED
     else:
-        order_id = call_id - 100000
+        # Notification topilmadi — Order.id sifatida urinib ko'ramiz
         o_res = await db.execute(
-            select(Order).options(selectinload(Order.table)).where(Order.id == order_id)
+            select(Order).options(selectinload(Order.table)).where(Order.id == call_id)
         )
         o = o_res.scalar_one_or_none()
         if o:
@@ -1636,6 +1875,13 @@ async def resolve_waiter_call(
             restaurant_id = o.restaurant_id
             table_id = o.table_id
             table_num = o.table.number if o.table else o.table_id
+
+    # restaurant_id hali ham None bo'lsa (developer user + notif ham topilmasa) — xato
+    if restaurant_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Chaqiruv #{call_id} topilmadi yoki restaurant aniqlanmadi",
+        )
 
     if table_id:
         await db.execute(
@@ -1654,8 +1900,9 @@ async def resolve_waiter_call(
             st_o.call_waiter = False
             st_o.call_status = CallStatus.COMPLETED
 
-    await db.flush()
-    await db.commit()
+    # Bug 2 fix: flush() va commit() olib tashlandi — get_db dependency
+    # har bir request oxirida commit() ni o'zi chaqiradi.
+    # Bu yerda commit() chaqirilsa transaction ikki marta yopiladi va SQLAlchemy xatosi chiqadi.
 
     waiter_display = current_user.full_name or current_user.username
     await manager.broadcast_to_roles(
@@ -1675,12 +1922,31 @@ async def resolve_waiter_call(
 
 
 # ─── Stolning faol buyurtmalari (Mijoz & Xodimlar) ─────────────
-@router.get("/table/{table_id}/active", response_model=List[OrderResponse], summary="Stolning faol buyurtmalari")
+@router.get(
+    "/table/{table_id}/active",
+    response_model=List[OrderResponse],
+    summary="Stolning faol buyurtmalari",
+    dependencies=[
+        Depends(
+            RateLimiter(
+                times=60,
+                seconds=60,
+                detail="So'rovlar soni me'yordan oshdi. Iltimos biroz kuting.",
+            )
+        )
+    ],
+)
 async def get_table_active_orders(
     table_id: int,
     db: AsyncSession = Depends(get_db),
+    current_user: Optional[User] = Depends(get_optional_current_user),
 ):
     """Mijoz yoki xodim ushbu stoldagi barcha faol (to'lanmagan) buyurtmalarni ko'radi"""
+    tbl_res = await db.execute(select(Table).where(Table.id == table_id))
+    tbl = tbl_res.scalar_one_or_none()
+    if not tbl or not tbl.is_active:
+        raise HTTPException(status_code=404, detail="Stol topilmadi yoki faol emas")
+
     result = await db.execute(
         select(Order)
         .options(
@@ -1702,25 +1968,44 @@ async def get_table_active_orders(
         .order_by(Order.created_at.desc())
     )
     orders = result.scalars().all()
-    return [build_order_response(o) for o in orders]
+    resp_list = []
+    for o in orders:
+        ord_resp = build_order_response(o)
+        if not current_user:
+            ord_resp.waiter_share_amount = 0.0
+        resp_list.append(ord_resp)
+    return resp_list
 
 
 
 # ─── Buyurtmalar ro'yxati ─────────────────────────────────
-@router.get("/", response_model=List[OrderSummary], summary="Buyurtmalar ro'yxati")
+@router.get("/", response_model=List[OrderSummary], summary="Buyurtmalar ro'yxati (pagination bilan)")
 async def list_orders(
     restaurant_id: int,
     status: Optional[OrderStatus] = None,
     table_id: Optional[int] = None,
+    order_type: Optional[str] = None,
+    limit: int = Query(default=100, ge=1, le=500, description="Qaytariladigan buyurtmalar soni"),
+    offset: int = Query(default=0, ge=0, description="O'tkazib yuboriladigan buyurtmalar soni"),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_role("admin", "waiter", "chef", "developer")),
 ):
-    query = select(Order).where(Order.restaurant_id == restaurant_id)
+    query = (
+        select(Order)
+        .options(
+            selectinload(Order.table),
+            selectinload(Order.waiter),
+            selectinload(Order.items),
+        )
+        .where(Order.restaurant_id == restaurant_id)
+    )
 
     if status:
         query = query.where(Order.status == status)
     if table_id:
         query = query.where(Order.table_id == table_id)
+    if order_type:
+        query = query.where(Order.order_type == order_type)
 
     # Ofitsiant faqat o'ziga tayinlangan yoki tayinlanmagan buyurtmalarni ko'rishi mumkin
     if current_user.role == UserRole.WAITER:
@@ -1728,38 +2013,36 @@ async def list_orders(
             (Order.waiter_id == current_user.id) | (Order.waiter_id == None)
         )
 
-    query = query.order_by(Order.created_at.desc())
+    query = query.order_by(Order.created_at.desc()).offset(offset).limit(limit)
     result = await db.execute(query)
     orders = result.scalars().all()
 
     summaries = []
     for order in orders:
-        items_result = await db.execute(
-            select(func.count(OrderItem.id)).where(OrderItem.order_id == order.id)
-        )
-        items_count = items_result.scalar() or 0
-
-        table_result = await db.execute(select(Table).where(Table.id == order.table_id))
-        table = table_result.scalar_one_or_none()
-
+        items_count = len(order.items) if order.items else 0
+        table_num = order.table.number if order.table else None
         waiter_name = None
-        if order.waiter_id:
-            w_res = await db.execute(select(User).where(User.id == order.waiter_id))
-            w = w_res.scalar_one_or_none()
-            if w:
-                waiter_name = w.full_name or w.username
+        if order.waiter:
+            waiter_name = order.waiter.full_name or order.waiter.username
 
         summaries.append(
             OrderSummary(
                 id=order.id,
                 order_number=order.order_number,
+                order_type=order.order_type or "dine_in",
+                customer_name=order.customer_name,
+                customer_phone=getattr(order, "customer_phone", None),
+                delivery_address=getattr(order, "delivery_address", None),
                 table_id=order.table_id,
-                table_number=table.number if table else None,
+                table_number=table_num,
                 waiter_id=order.waiter_id,
                 waiter_name=waiter_name,
                 status=order.status,
                 total=order.total,
                 items_count=items_count,
+                call_waiter=bool(order.call_waiter),
+                call_status=order.call_status,
+                call_note=order.call_note,
                 created_at=order.created_at,
                 ready_at=order.ready_at,
                 served_at=order.served_at,
@@ -1768,10 +2051,24 @@ async def list_orders(
     return summaries
 
 
-@router.get("/{order_id}", response_model=OrderResponse, summary="Buyurtma tafsiloti")
+@router.get(
+    "/{order_id}",
+    response_model=OrderResponse,
+    summary="Buyurtma tafsiloti",
+    dependencies=[
+        Depends(
+            RateLimiter(
+                times=60,
+                seconds=60,
+                detail="So'rovlar soni me'yordan oshdi. Iltimos biroz kuting.",
+            )
+        )
+    ],
+)
 async def get_order(
     order_id: int,
     db: AsyncSession = Depends(get_db),
+    current_user: Optional[User] = Depends(get_optional_current_user),
 ):
     """Buyurtma holatini ko'rish (mijoz va xodimlar uchun)"""
     result = await db.execute(
@@ -1787,7 +2084,23 @@ async def get_order(
     if not order:
         raise HTTPException(status_code=404, detail="Buyurtma topilmadi")
 
-    return build_order_response(order)
+    # Autentifikatsiyasiz mijoz faqat o'zining so'nggi 24 soat ichidagi yoki faol buyurtmasini ko'ra oladi
+    if not current_user:
+        now = datetime.now(timezone.utc)
+        order_time = order.created_at if (order.created_at and order.created_at.tzinfo) else (
+            order.created_at.replace(tzinfo=timezone.utc) if order.created_at else now
+        )
+        age_seconds = (now - order_time).total_seconds()
+        if order.is_paid and age_seconds > 86400:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Tarixiy yopilgan buyurtmalarni faqat xodimlar ko'rishi mumkin",
+            )
+
+    resp = build_order_response(order)
+    if not current_user:
+        resp.waiter_share_amount = 0.0
+    return resp
 
 
 # ─── OFITSIANT: 'Yetkazib berdim' tugmasi ─────────────────
@@ -2001,6 +2314,17 @@ async def update_order_status(
             message=f"{order.order_number} buyurtma stolga yetkazildi.",
             target=NotificationTarget.ADMIN,
             data={"order_id": order.id, "table_id": order.table_id, "table_number": table_num},
+        )
+    elif payload.status == OrderStatus.CANCELLED:
+        from app.core.audit import log_audit_event
+        await log_audit_event(
+            db=db,
+            restaurant_id=order.restaurant_id,
+            action="order_cancelled",
+            user=current_user,
+            entity_type="order",
+            entity_id=order.id,
+            details={"order_number": order.order_number, "note": payload.note},
         )
     elif payload.status == OrderStatus.PAID:
         order.is_paid = True

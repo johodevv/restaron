@@ -25,7 +25,7 @@ import DunyoLanding from './pages/customer/DunyoLanding';
 import TableWaitingVerification from './pages/customer/TableWaitingVerification';
 
 export const App = () => {
-  const { user, isWaiter, isAdmin, isDev, loading: authLoading } = useAuth();
+  const { user, isWaiter, isAdmin, isCashier, isDev, loading: authLoading } = useAuth();
   const [currentView, setCurrentView] = useState('menu'); // 'menu' | 'tracker' | 'login'
   const [activeOrderId, setActiveOrderId] = useState(null);
   const [reviewOrder, setReviewOrder] = useState(null);
@@ -186,11 +186,11 @@ export const App = () => {
                 onNavigate={setCurrentView}
               />
               <main>
-                {/* Oshpaz paneli (KDS) olib tashlandi — buyurtma
-                    to'g'ridan-to'g'ri oshxona printeriga chiqadi. */}
+                {/* Ofitsiant faqat zaldagi stollarga xizmat ko'rsatish panelini oladi */}
                 {isWaiter && <WaiterDashboard />}
-                {isDev ? <DeveloperDashboard /> : (isAdmin && <AdminDashboard />)}
-                {!isWaiter && !isAdmin && !isDev && (
+                {/* Admin va Kassir boshqaruv, kassa, POS, Olib ketish va Dastavka panelini oladi */}
+                {isDev ? <DeveloperDashboard /> : ((isAdmin || isCashier) && <AdminDashboard />)}
+                {!isWaiter && !isAdmin && !isCashier && !isDev && (
                   <div className="max-w-md mx-auto mt-20 p-6 rounded-2xl bg-theme-card border border-theme-border text-center space-y-2">
                     <p className="text-lg font-bold text-theme-text">Bu hisob uchun panel yo'q</p>
                     <p className="text-sm text-theme-muted">
