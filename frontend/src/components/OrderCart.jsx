@@ -75,9 +75,9 @@ export const OrderCart = ({
   const total = order?.total || (subtotal + serviceFeeAmount);
 
   return (
-    <div className="flex-1 flex flex-col justify-between overflow-hidden bg-slate-900/95 font-sans w-full">
+    <div className="h-auto w-full flex flex-col justify-between bg-slate-900/95 font-sans">
       {/* ── Active Items Table Header & Customer Info ── */}
-      <div className="flex-1 flex flex-col overflow-hidden min-h-0">
+      <div className="h-auto w-full flex flex-col">
         {/* Takeaway / Delivery Header details if present */}
         {!isDineIn && (customerInfo.name || customerInfo.phone || customerInfo.address) && (
           <div className="px-3 sm:px-4 py-2 bg-slate-950 border-b border-slate-800 text-xs text-slate-300 flex items-center justify-between shrink-0">
@@ -108,8 +108,8 @@ export const OrderCart = ({
           <span className="col-span-3 text-right">Jami</span>
         </div>
 
-        {/* ── Items List: Mobil ekranda max-h-44 sm:max-h-56, skrollanadigan custom-scrollbar ── */}
-        <div className="max-h-44 sm:max-h-60 lg:max-h-[calc(100vh-420px)] lg:flex-1 overflow-y-auto custom-scrollbar overflow-x-hidden">
+        {/* ── Items List: Auto-expand, ichki skrollbarsiz, barcha taomlar to'liq ko'rinadi ── */}
+        <div className="h-auto w-full flex flex-col">
           {orderLoading ? (
             <div className="p-6 text-center text-xs sm:text-sm font-bold text-slate-400">Yuklanmoqda...</div>
           ) : items.length === 0 ? (
@@ -118,7 +118,7 @@ export const OrderCart = ({
               <p className="text-[11px] text-slate-400">Menyudan taomlarni tanlang</p>
             </div>
           ) : (
-            <div className="divide-y divide-slate-800/60">
+            <div className="divide-y divide-slate-800/60 h-auto w-full flex flex-col">
               {items.map((it) => {
                 const priced = isItemPriced(it);
                 const unitPrice = it.unit_price || it.price || 0;
@@ -142,15 +142,14 @@ export const OrderCart = ({
                               <button
                                 type="button"
                                 onClick={() => onOpenWeightModal && onOpenWeightModal(it)}
-                                className={`px-1.5 py-0.5 rounded text-[9px] font-black leading-none ${
-                                  priced
+                                className={`px-1.5 py-0.5 rounded text-[9px] font-black leading-none ${priced
                                     ? 'bg-cyan-500/25 text-cyan-300 border border-cyan-500/50'
                                     : 'bg-red-600 text-white border border-red-400 animate-pulse'
-                                }`}
+                                  }`}
                               >
                                 {priced
                                   ? `💰 ${Math.round(lineTotal).toLocaleString('uz-UZ')} so'm` +
-                                    (it.weight ? ` · ${it.weight} ${it.unit || 'kg'}` : '')
+                                  (it.weight ? ` · ${it.weight} ${it.unit || 'kg'}` : '')
                                   : '💰 NARXI YO\'Q — bosing!'}
                               </button>
                             )}
@@ -230,15 +229,14 @@ export const OrderCart = ({
                             type="button"
                             onClick={() => onOpenWeightModal && onOpenWeightModal(it)}
                             title="Summasini kiritish"
-                            className={`mt-1 px-1.5 py-0.5 rounded-lg text-[9px] sm:text-[10px] font-black transition-all active:scale-95 block leading-tight ${
-                              priced
+                            className={`mt-1 px-1.5 py-0.5 rounded-lg text-[9px] sm:text-[10px] font-black transition-all active:scale-95 block leading-tight ${priced
                                 ? 'bg-cyan-500/25 text-cyan-300 border border-cyan-500/50'
                                 : 'bg-red-600 text-white border border-red-400 animate-pulse'
-                            }`}
+                              }`}
                           >
                             {priced
                               ? `💰 ${Math.round(lineTotal).toLocaleString('uz-UZ')} so'm` +
-                                (it.weight ? ` · ${it.weight} ${it.unit || 'kg'}` : '')
+                              (it.weight ? ` · ${it.weight} ${it.unit || 'kg'}` : '')
                               : '💰 NARXI YO\'Q — bosing!'}
                           </button>
                         )}
@@ -310,8 +308,8 @@ export const OrderCart = ({
         </div>
       </div>
 
-      {/* ── Cart Bottom: Summary & Action Buttons (Ixcham va doim ko'rinuvchi) ── */}
-      <div className="p-2.5 sm:p-4 bg-slate-950 border-t border-slate-800 shrink-0 shadow-2xl space-y-2">
+      {/* ── Cart Bottom: Summary & Action Buttons (Auto-expand bo'lib pastga suriladi) ── */}
+      <div className="p-2.5 sm:p-4 bg-slate-950 border-t border-slate-800 shadow-2xl space-y-2 h-auto w-full shrink-0">
         {/* Kitchen send success notification */}
         {kitchenSendSuccess && (
           <div className="p-2 rounded-xl bg-emerald-500/20 border border-emerald-500/50 text-emerald-300 font-bold text-xs text-center flex items-center justify-center gap-1.5 animate-bounce-subtle">
@@ -373,9 +371,8 @@ export const OrderCart = ({
             type="button"
             onClick={onSendToKitchen}
             disabled={!order || items.length === 0 || sendingToKitchen}
-            className={`w-full min-h-[44px] py-2 px-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 disabled:opacity-40 text-slate-950 font-black text-xs sm:text-sm shadow-md transition-all active:scale-95 flex items-center justify-center gap-1.5 ${
-              !canCheckout ? 'col-span-2' : 'col-span-1'
-            }`}
+            className={`w-full min-h-[44px] py-2 px-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 disabled:opacity-40 text-slate-950 font-black text-xs sm:text-sm shadow-md transition-all active:scale-95 flex items-center justify-center gap-1.5 ${!canCheckout ? 'col-span-2' : 'col-span-1'
+              }`}
           >
             <Printer className="w-4 h-4 shrink-0" />
             <span className="truncate">{sendingToKitchen ? 'Chop etilmoqda...' : '🔥 Tasdiqlash'}</span>
