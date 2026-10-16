@@ -1995,7 +1995,7 @@ async def list_orders(
         .options(
             selectinload(Order.table),
             selectinload(Order.waiter),
-            selectinload(Order.items),
+            selectinload(Order.items).selectinload(OrderItem.menu_item),
         )
         .where(Order.restaurant_id == restaurant_id)
     )
@@ -2025,6 +2025,33 @@ async def list_orders(
         if order.waiter:
             waiter_name = order.waiter.full_name or order.waiter.username
 
+        items_resp = []
+        for it in (order.items or []):
+            m_item = getattr(it, "menu_item", None)
+            items_resp.append(
+                OrderItemResponse(
+                    id=it.id,
+                    menu_item_id=it.menu_item_id,
+                    quantity=it.quantity,
+                    unit_price=it.unit_price,
+                    total_price=it.total_price,
+                    special_note=it.special_note,
+                    portion_size=it.portion_size,
+                    item_time=it.item_time,
+                    weight=it.weight,
+                    manual_price=it.manual_price,
+                    is_weighted=bool(getattr(m_item, "is_weighted", False)) if m_item else False,
+                    unit=(getattr(m_item, "unit", "dona") or "dona") if m_item else "dona",
+                    sent_to_kitchen=bool(it.sent_to_kitchen),
+                    sent_to_kitchen_at=it.sent_to_kitchen_at,
+                    sent_quantity=int(it.sent_quantity or 0),
+                    is_prepared=bool(it.is_prepared),
+                    prepared_at=it.prepared_at,
+                    menu_item_name=m_item.name if m_item else None,
+                    menu_item_image=m_item.image_url if m_item else None,
+                )
+            )
+
         summaries.append(
             OrderSummary(
                 id=order.id,
@@ -2033,6 +2060,7 @@ async def list_orders(
                 customer_name=order.customer_name,
                 customer_phone=getattr(order, "customer_phone", None),
                 delivery_address=getattr(order, "delivery_address", None),
+                kitchen_note=getattr(order, "kitchen_note", None),
                 table_id=order.table_id,
                 table_number=table_num,
                 waiter_id=order.waiter_id,
@@ -2040,6 +2068,9 @@ async def list_orders(
                 status=order.status,
                 total=order.total,
                 items_count=items_count,
+                items=items_resp,
+                is_paid=bool(order.is_paid),
+                payment_method=order.payment_method or "cash",
                 call_waiter=bool(order.call_waiter),
                 call_status=order.call_status,
                 call_note=order.call_note,

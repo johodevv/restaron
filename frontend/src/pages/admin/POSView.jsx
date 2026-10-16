@@ -66,6 +66,8 @@ export const POSView = ({
   const [customerName, setCustomerName] = useState('');
   const [customerPhone, setCustomerPhone] = useState('');
   const [deliveryAddress, setDeliveryAddress] = useState('');
+  // Mobil ekranda Savat va Menyu orasida qulay o'tish holati
+  const [mobileTab, setMobileTab] = useState('cart'); // 'cart' | 'menu'
 
   // Ma'lumotlar holati
   const [tables, setTables] = useState([]);
@@ -430,7 +432,7 @@ export const POSView = ({
   }, [searchItemQuery, allItems, activeCategory]);
 
   return (
-    <div className="flex flex-col h-[calc(100vh-130px)] min-h-[600px] bg-slate-950 text-slate-100 rounded-3xl border border-slate-800 overflow-hidden shadow-2xl font-sans select-none">
+    <div className="flex flex-col min-h-[calc(100vh-120px)] sm:h-[calc(100vh-130px)] sm:min-h-[580px] bg-slate-950 text-slate-100 rounded-2xl sm:rounded-3xl border border-slate-800 overflow-hidden shadow-2xl font-sans select-none w-full overflow-x-hidden">
       {/* 
         ── 1. Rejim almashtirgich (Faqat Admin / Kassir uchun) ──
         🟢 "Stolda" | 🛍️ "Olib ketish" | 🛵 "Dastavka"
@@ -562,11 +564,43 @@ export const POSView = ({
       )}
 
       {/* 
-        ── 3. Asosiy Ekran: Chapda Savat, O'ngda Menyu ──
+        ── 3. Mobil Sub-Navigation: Savat va Menyu o'rtasida o'tish (Faqat mobil ekranlar uchun) ──
       */}
-      <div className="flex-1 flex flex-col lg:flex-row overflow-hidden">
+      <div className="lg:hidden flex items-center gap-2 p-2 bg-slate-950 border-b border-slate-800 shrink-0">
+        <button
+          type="button"
+          onClick={() => setMobileTab('cart')}
+          className={`flex-1 py-2 px-3 rounded-xl font-black text-xs flex items-center justify-center gap-1.5 transition-all ${
+            mobileTab === 'cart'
+              ? 'bg-emerald-600 text-white shadow-md ring-1 ring-emerald-400'
+              : 'bg-slate-900 text-slate-400 border border-slate-800'
+          }`}
+        >
+          <ShoppingCart className="w-4 h-4" />
+          <span>Savat {activeOrder?.items?.length ? `(${activeOrder.items.length})` : ''}</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => setMobileTab('menu')}
+          className={`flex-1 py-2 px-3 rounded-xl font-black text-xs flex items-center justify-center gap-1.5 transition-all ${
+            mobileTab === 'menu'
+              ? 'bg-emerald-600 text-white shadow-md ring-1 ring-emerald-400'
+              : 'bg-slate-900 text-slate-400 border border-slate-800'
+          }`}
+        >
+          <UtensilsCrossed className="w-4 h-4" />
+          <span>Taomlar ({allItems.length})</span>
+        </button>
+      </div>
+
+      {/* 
+        ── 4. Asosiy Ekran: Chapda Savat, O'ngda Menyu ──
+      */}
+      <div className="flex-1 flex flex-col lg:flex-row overflow-hidden min-h-0">
         {/* ── Chap Panel: Tanlangan Stol va Buyurtma Savati (OrderCart) ── */}
-        <div className="w-full lg:w-[460px] xl:w-[490px] bg-slate-900 border-r border-slate-800 flex flex-col justify-between shrink-0 shadow-xl overflow-hidden">
+        <div className={`w-full lg:w-[460px] xl:w-[490px] bg-slate-900 border-r border-slate-800 flex flex-col justify-between shrink-0 shadow-xl overflow-y-auto lg:overflow-hidden custom-scrollbar ${
+          mobileTab === 'cart' ? 'flex' : 'hidden lg:flex'
+        }`}>
           {/* Stol tanlash (faqat 'table' rejimida) */}
           {orderType === 'table' && (
             <div className="p-3 bg-slate-950 border-b border-slate-800 shrink-0 space-y-2">
@@ -701,7 +735,9 @@ export const POSView = ({
         </div>
 
         {/* ── O'ng Panel: Kategoriyalar va Taomlar Gridi ── */}
-        <div className="flex-1 flex flex-col bg-slate-950 overflow-hidden">
+        <div className={`flex-1 flex flex-col bg-slate-950 overflow-hidden ${
+          mobileTab === 'menu' ? 'flex' : 'hidden lg:flex'
+        }`}>
           {/* Qidiruv va Kategoriyalar */}
           <div className="p-3.5 bg-slate-900/80 border-b border-slate-800 shrink-0 space-y-3">
             <div className="relative">

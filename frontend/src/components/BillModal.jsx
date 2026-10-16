@@ -710,7 +710,7 @@ ${node.innerHTML}
             <button
               onClick={handlePrintThermal}
               disabled={printingThermal || !bill || bill.items.length === 0}
-              className="py-3 px-3 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-black text-xs flex items-center justify-center gap-1.5 transition-all shadow-md active:scale-95 disabled:opacity-40"
+              className="min-h-[44px] py-2.5 px-3 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-black text-xs sm:text-sm flex items-center justify-center gap-1.5 transition-all shadow-md active:scale-95 disabled:opacity-40"
             >
               <Printer className={`w-4 h-4 ${printingThermal ? 'animate-spin' : ''}`} />
               <span>{printingThermal ? 'Chop etilmoqda...' : '🖨️ Printer 1 (Kassa)'}</span>
@@ -719,7 +719,7 @@ ${node.innerHTML}
             <button
               onClick={handlePrint}
               disabled={!bill || bill.items.length === 0}
-              className="py-3 px-3 rounded-xl border border-theme-border hover:border-theme-primary/60 bg-white/5 hover:bg-white/10 text-white font-bold text-xs flex items-center justify-center gap-1.5 transition-all disabled:opacity-40"
+              className="min-h-[44px] py-2.5 px-3 rounded-xl border border-theme-border hover:border-theme-primary/60 bg-white/5 hover:bg-white/10 text-white font-bold text-xs sm:text-sm flex items-center justify-center gap-1.5 transition-all disabled:opacity-40"
             >
               <Printer className="w-4 h-4" />
               <span>Ekran / PDF</span>
@@ -730,7 +730,7 @@ ${node.innerHTML}
                 onClick={handleCheckoutAndClear}
                 disabled={checkoutLoading || !bill || bill.items.length === 0 || bill.is_paid}
                 title={bill?.is_paid ? "Bu hisob allaqachon to'langan" : "Hisobni yopish va stolni bo'shatish"}
-                className="py-3 px-4 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white font-bold text-xs shadow-lg shadow-emerald-500/20 flex items-center justify-center gap-2 transition-all disabled:opacity-50 active:scale-98"
+                className="min-h-[44px] py-2.5 px-3 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white font-bold text-xs sm:text-sm shadow-lg shadow-emerald-500/20 flex items-center justify-center gap-2 transition-all disabled:opacity-50 active:scale-98"
               >
                 {checkoutLoading ? (
                   <RefreshCw className="w-4 h-4 animate-spin" />
@@ -743,7 +743,7 @@ ${node.innerHTML}
               <button
                 onClick={handleCallForBill}
                 disabled={callLoading || !bill || bill.items.length === 0}
-                className="py-3 px-4 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white font-bold text-xs shadow-lg shadow-orange-500/20 flex items-center justify-center gap-2 transition-all disabled:opacity-50 active:scale-98"
+                className="min-h-[44px] py-2.5 px-3 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white font-bold text-xs sm:text-sm shadow-lg shadow-orange-500/20 flex items-center justify-center gap-2 transition-all disabled:opacity-50 active:scale-98"
               >
                 {callLoading ? (
                   <RefreshCw className="w-4 h-4 animate-spin" />

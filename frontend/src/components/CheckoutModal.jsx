@@ -209,14 +209,14 @@ export const CheckoutModal = ({ isOpen, onClose, order, tableLabel, onPaid }) =>
             <button
               type="button"
               onClick={onClose}
-              className="px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-slate-300"
+              className="min-h-[44px] px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs sm:text-sm font-semibold text-slate-300"
             >
               Bekor qilish
             </button>
             <button
               type="submit"
               disabled={loading || notEnough}
-              className="flex-1 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 font-extrabold text-xs text-white shadow-lg shadow-emerald-600/30 flex items-center justify-center gap-2 transition-all active:scale-95"
+              className="min-h-[44px] flex-1 py-2.5 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 font-extrabold text-xs sm:text-sm text-white shadow-lg shadow-emerald-600/30 flex items-center justify-center gap-2 transition-all active:scale-95"
             >
               <Printer className="w-4 h-4" />
               <span>{loading ? 'Yopilmoqda...' : "To'lov va Chek chiqarish"}</span>

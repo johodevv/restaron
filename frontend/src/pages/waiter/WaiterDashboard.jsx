@@ -999,8 +999,8 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
               </div>
             )}
 
-            {/* Active Items Table (Kattalashtirilgan qulay jadval) */}
-            <div className="flex-1 overflow-y-auto">
+            {/* Active Items Table: max-h-48 custom-scrollbar mobilda */}
+            <div className="max-h-48 sm:max-h-60 lg:flex-1 overflow-y-auto custom-scrollbar overflow-x-hidden">
               <div className="grid grid-cols-12 text-xs sm:text-sm font-black text-slate-300 bg-slate-950/70 px-4 py-2.5 border-b border-slate-800 uppercase tracking-wider">
                 <span className="col-span-5">Taom nomi</span>
                 <span className="col-span-3 text-right">Narxi</span>
@@ -1196,14 +1196,16 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
                 </button>
               </div>
 
-              {/* Asosiy POS amallari */}
-              <div className="grid grid-cols-1 gap-2.5">
+              {/* Asosiy POS amallari: Mobil ekranda grid-cols-1 sm:grid-cols-2, min-h-[44px] */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                 <button
                   onClick={() => handleSendToKitchen(false)}
                   disabled={!activeOrder || sendingToKitchen}
-                  className="py-4 px-3 rounded-2xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 disabled:opacity-40 text-slate-950 font-black text-xs sm:text-sm shadow-xl shadow-amber-500/25 transition-all active:scale-95 flex items-center justify-center gap-1.5"
+                  className={`min-h-[44px] py-2.5 px-3 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 disabled:opacity-40 text-slate-950 font-black text-xs sm:text-sm shadow-md transition-all active:scale-95 flex items-center justify-center gap-1.5 ${
+                    !canCheckout && !isAdmin ? 'col-span-1 sm:col-span-2' : ''
+                  }`}
                 >
-                  <Printer className="w-5 h-5 shrink-0" />
+                  <Printer className="w-4 h-4 shrink-0" />
                   <span>{sendingToKitchen ? 'Chop etilmoqda...' : '🔥 Buyurtmani tasdiqlash'}</span>
                 </button>
 
@@ -1216,10 +1218,10 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
                   <button
                     onClick={() => setCheckoutModalOpen(true)}
                     disabled={!activeOrder || (activeOrder?.items || []).length === 0}
-                    className="py-4 px-3 rounded-2xl bg-gradient-to-r from-emerald-600 to-emerald-700 hover:from-emerald-500 hover:to-emerald-600 disabled:opacity-40 text-white font-black text-xs sm:text-sm shadow-xl shadow-emerald-600/30 transition-all active:scale-95 flex items-center justify-center gap-2"
+                    className="min-h-[44px] py-2.5 px-3 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 disabled:opacity-40 text-white font-black text-xs sm:text-sm shadow-md shadow-emerald-600/25 transition-all active:scale-95 flex items-center justify-center gap-1.5"
                   >
-                    <CheckCircle2 className="w-5 h-5 shrink-0" />
-                    <span>To'landi va stolni bo'shatish</span>
+                    <CheckCircle2 className="w-4 h-4 shrink-0" />
+                    <span>✅ To'landi va stolni bo'shatish</span>
                   </button>
                 )}
 
@@ -1229,7 +1231,7 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
                   <button
                     onClick={handlePrintBill}
                     disabled={!activeOrder || printingBill}
-                    className="py-3 px-3 rounded-2xl bg-gradient-to-r from-sky-500 to-sky-600 hover:from-sky-400 hover:to-sky-500 disabled:opacity-40 text-white font-bold text-xs sm:text-sm shadow-xl shadow-sky-500/25 transition-all active:scale-95 flex items-center justify-center gap-1.5"
+                    className="min-h-[44px] col-span-1 sm:col-span-2 py-2 px-3 rounded-xl bg-sky-600/20 hover:bg-sky-600/30 border border-sky-500/40 disabled:opacity-40 text-sky-300 font-bold text-xs sm:text-sm shadow-sm transition-all active:scale-95 flex items-center justify-center gap-1.5"
                   >
                     <Receipt className="w-4 h-4 shrink-0" />
                     <span>{printingBill ? 'Chop etilmoqda...' : '🧾 Chek chiqarish'}</span>

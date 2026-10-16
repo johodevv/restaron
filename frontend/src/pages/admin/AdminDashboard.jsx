@@ -14,6 +14,8 @@ import WaiterDashboard from '../waiter/WaiterDashboard';
 import OrdersView from './OrdersView';
 import POSView from './POSView';
 import RestaurantSettingsTab from './RestaurantSettingsTab';
+import BookingModal from '../../components/BookingModal';
+import OrderCard from '../../components/OrderCard';
 import {
   LayoutDashboard,
   ShoppingBag,
@@ -57,7 +59,8 @@ import {
   Palette,
   ShoppingCart,
   CreditCard,
-  MapPin
+  MapPin,
+  Calendar
 } from 'lucide-react';
 
 export const AdminDashboard = () => {
@@ -76,6 +79,7 @@ export const AdminDashboard = () => {
   const [staff, setStaff] = useState([]);
   const [waiterCalls, setWaiterCalls] = useState([]);
   const [reviews, setReviews] = useState([]);
+  const [recentOrders, setRecentOrders] = useState([]);
   const [loading, setLoading] = useState(true);
 
   // Bill Modal state
@@ -88,6 +92,10 @@ export const AdminDashboard = () => {
   const [thermalTitle, setThermalTitle] = useState('Chek');
   const [selectedBillTable, setSelectedBillTable] = useState(null);
   const [staffActionLoading, setStaffActionLoading] = useState(null);
+
+  // Booking Modal state
+  const [bookingModalOpen, setBookingModalOpen] = useState(false);
+  const [selectedBookingTable, setSelectedBookingTable] = useState(null);
 
   // Network & Host Settings for QR codes
   const [lanInfo, setLanInfo] = useState(null);
@@ -160,7 +168,7 @@ export const AdminDashboard = () => {
 
   const loadAll = async () => {
     try {
-      const [statsData, menuData, tablesData, staffData, callsData, reviewsData, lanData, zonesData] = await Promise.all([
+      const [statsData, menuData, tablesData, staffData, callsData, reviewsData, lanData, zonesData, ordersData] = await Promise.all([
         api.get(`/stats/dashboard?restaurant_id=${restaurantId}`).catch(() => null),
         api.get(`/menu/full/${restaurantId}`).catch(() => []),
         api.get(`/tables/?restaurant_id=${restaurantId}`).catch(() => []),
@@ -169,6 +177,7 @@ export const AdminDashboard = () => {
         api.get(`/reviews/?restaurant_id=${restaurantId}`).catch(() => []),
         api.get('/stats/lan-info').catch(() => null),
         api.get(`/tables/zones?restaurant_id=${restaurantId}`).catch(() => []),
+        api.get(`/orders/?restaurant_id=${restaurantId}&limit=12`).catch(() => []),
       ]);
 
       setStats(statsData);
@@ -178,6 +187,7 @@ export const AdminDashboard = () => {
       setStaff(staffData || []);
       setWaiterCalls(callsData || []);
       setReviews(reviewsData || []);
+      setRecentOrders(ordersData || []);
 
       if (lanData) {
         setLanInfo(lanData);
@@ -984,13 +994,13 @@ export const AdminDashboard = () => {
         <div className="space-y-6">
           {/* Active Guest Verification Alerts (Ofitsiant/Admin tasdiqlashi kerak) */}
           {tables.filter(t => !t.is_unlocked && t.current_pin).length > 0 && (
-            <div className="p-5 rounded-3xl bg-amber-500/15 border-2 border-amber-500/50 shadow-xl shadow-amber-500/10 space-y-3 animate-fade-in">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2 text-amber-300 font-bold text-sm">
-                  <Sparkles className="w-5 h-5 text-amber-400 animate-bounce-subtle" />
+            <div className="p-3 sm:p-5 rounded-2xl sm:rounded-3xl bg-amber-500/15 border-2 border-amber-500/50 shadow-xl shadow-amber-500/10 space-y-3 animate-fade-in w-full overflow-x-hidden">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <div className="flex items-center gap-2 text-amber-300 font-bold text-xs sm:text-sm">
+                  <Sparkles className="w-5 h-5 text-amber-400 animate-bounce-subtle shrink-0" />
                   <span>Yangi mehmonlar ({tables.filter(t => !t.is_unlocked && t.current_pin).length} ta stol tasdiqlashni kutmoqda!)</span>
                 </div>
-                <span className="text-[11px] uppercase font-extrabold px-2.5 py-0.5 rounded-full bg-amber-500 text-black">
+                <span className="text-[10px] sm:text-[11px] uppercase font-extrabold px-2.5 py-1 rounded-full bg-amber-500 text-black w-fit">
                   Stolga borish lozim
                 </span>
               </div>
@@ -999,7 +1009,7 @@ export const AdminDashboard = () => {
                 {tables.filter(t => !t.is_unlocked && t.current_pin).map((t) => (
                   <div
                     key={t.id}
-                    className="p-4 rounded-2xl bg-black/40 border border-amber-500/40 flex items-center justify-between gap-3 text-xs shadow-md"
+                    className="p-3.5 sm:p-4 rounded-2xl bg-black/40 border border-amber-500/40 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs shadow-md"
                   >
                     <div>
                       <div className="font-extrabold text-white text-sm">
@@ -1011,10 +1021,10 @@ export const AdminDashboard = () => {
                     </div>
                     <button
                       onClick={() => handleUnlockTable(t.id)}
-                      className="px-3.5 py-2 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-black font-extrabold text-xs shadow-md active:scale-95 transition-all flex items-center gap-1.5"
+                      className="w-full sm:w-auto min-h-[44px] px-4 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-black font-extrabold text-xs sm:text-sm shadow-md active:scale-95 transition-all flex items-center justify-center gap-1.5 shrink-0"
                     >
-                      <CheckCircle2 className="w-4 h-4" />
-                      <span>Tasdiqlash</span>
+                      <CheckCircle2 className="w-4 h-4 shrink-0" />
+                      <span>✅ Tasdiqlash</span>
                     </button>
                   </div>
                 ))}
@@ -1090,6 +1100,95 @@ export const AdminDashboard = () => {
                 {staff.length} nafar
               </div>
             </div>
+          </div>
+
+          {/* ─── Faol Buyurtmalar (Real-time Zakazlar) ────────────────────── */}
+          <div className="space-y-3 pt-2">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-theme-primary/20 text-theme-primary flex items-center justify-center font-bold">
+                  🛍️
+                </div>
+                <div>
+                  <h3 className="text-base font-black text-white">So'nggi va Faol Buyurtmalar</h3>
+                  <p className="text-[11px] text-theme-muted">Olib ketish, Dastavka va Zaldagi buyurtmalar nazorati</p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setTab('takeaway')}
+                  className="px-3 py-1.5 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30 text-amber-300 text-xs font-bold transition-all"
+                >
+                  Olib ketish ({recentOrders.filter(o => o.order_type === 'takeaway').length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setTab('delivery')}
+                  className="px-3 py-1.5 rounded-xl bg-cyan-500/15 hover:bg-cyan-500/25 border border-cyan-500/30 text-cyan-300 text-xs font-bold transition-all"
+                >
+                  Dastavka ({recentOrders.filter(o => o.order_type === 'delivery').length})
+                </button>
+              </div>
+            </div>
+
+            {recentOrders.length === 0 ? (
+              <div className="p-8 rounded-3xl glass-card border border-dashed border-theme-border text-center text-xs text-theme-muted">
+                Hozirda yangi buyurtmalar mavjud emas
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3.5 sm:gap-4 w-full overflow-x-hidden p-1 sm:p-2">
+                {recentOrders.slice(0, 6).map((order) => (
+                  <OrderCard
+                    key={order.id}
+                    order={order}
+                    onConfirm={async (ord) => {
+                      try {
+                        await api.patch(`/orders/${ord.id}/status`, { status: 'preparing' });
+                        loadAll();
+                      } catch (e) {
+                        alert(e.message || 'Xatolik');
+                      }
+                    }}
+                    onUpdateStatus={async (ordId, st) => {
+                      try {
+                        await api.patch(`/orders/${ordId}/status`, { status: st });
+                        loadAll();
+                      } catch (e) {
+                        alert(e.message || 'Xatolik');
+                      }
+                    }}
+                    onDeliver={async (ordId) => {
+                      try {
+                        await api.patch(`/orders/${ordId}/deliver`, {});
+                        loadAll();
+                      } catch (e) {
+                        alert(e.message || 'Xatolik');
+                      }
+                    }}
+                    onPrint={async (ordId, ordNum) => {
+                      try {
+                        const res = await api.post(`/orders/${ordId}/send-to-kitchen?reprint=true`);
+                        if (res?.raw_text) {
+                          setThermalRawText(res.raw_text);
+                          setThermalTitle(`Chek — ${ordNum}`);
+                          setThermalOpen(true);
+                        } else {
+                          alert('Chek printerga yuborildi!');
+                        }
+                      } catch (e) {
+                        alert(e.message || 'Chek chiqarishda xatolik');
+                      }
+                    }}
+                    onCheckout={(ord) => {
+                      setCheckoutTableLabel(ord.table_number ? `Stol #${ord.table_number}` : ord.order_number);
+                      setCheckoutOrder(ord);
+                    }}
+                  />
+                ))}
+              </div>
+            )}
           </div>
 
           {/* Realtime instructions */}
@@ -1728,7 +1827,7 @@ export const AdminDashboard = () => {
             </div>
           )}
           {tableGroups.map((group) => (
-          <div key={group.key} className="space-y-3">
+          <div key={group.key} className="space-y-3 w-full overflow-x-hidden">
             <div className="flex items-center gap-2 pt-2">
               <MapPin className="w-4 h-4 text-theme-primary shrink-0" />
               <h3 className="text-sm font-black text-white uppercase tracking-wide">
@@ -1740,7 +1839,7 @@ export const AdminDashboard = () => {
               <div className="flex-1 h-px bg-theme-border/60" />
             </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5 sm:gap-5 w-full overflow-x-hidden">
             {group.items.map((t) => {
               const qrLink = `${qrBaseUrl}/?table=${t.qr_token}`;
               const qrImageSrc = `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(qrLink)}`;
@@ -1752,7 +1851,7 @@ export const AdminDashboard = () => {
               return (
                 <div
                   key={t.id}
-                  className={`p-5 rounded-3xl glass-card border transition-all duration-300 flex flex-col justify-between gap-4 shadow-lg ${
+                  className={`p-3.5 sm:p-5 rounded-2xl sm:rounded-3xl glass-card border transition-all duration-300 flex flex-col justify-between gap-4 shadow-lg w-full overflow-x-hidden ${
                     isOccupied
                       ? 'border-red-500/50 bg-red-950/20 shadow-red-500/10'
                       : isReserved
@@ -1801,10 +1900,10 @@ export const AdminDashboard = () => {
                       <span className="text-xl font-mono font-black text-amber-300 block">{t.current_pin}</span>
                       <button
                         onClick={() => handleUnlockTable(t.id)}
-                        className="w-full py-2 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-black font-extrabold text-xs shadow-md active:scale-95 transition-all flex items-center justify-center gap-1.5"
+                        className="w-full min-h-[44px] py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-black font-extrabold text-xs sm:text-sm shadow-md active:scale-95 transition-all flex items-center justify-center gap-1.5"
                       >
-                        <CheckCircle2 className="w-3.5 h-3.5" />
-                        <span>Ulanishni Tasdiqlash</span>
+                        <CheckCircle2 className="w-4 h-4 shrink-0" />
+                        <span>✅ Ulanishni Tasdiqlash</span>
                       </button>
                     </div>
                   )}
@@ -1841,41 +1940,54 @@ export const AdminDashboard = () => {
                     </div>
 
                     {/* View Bill & Direct Print Button */}
-                    <div className="grid grid-cols-2 gap-2">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                       <button
                         onClick={() => handleOpenBill(t)}
-                        className="w-full py-2.5 rounded-xl bg-theme-primary/15 hover:bg-theme-primary/25 border border-theme-primary/30 text-theme-primary text-xs font-bold flex items-center justify-center gap-1.5 transition-all shadow-sm"
+                        className="w-full min-h-[44px] py-2 px-2.5 rounded-xl bg-theme-primary/15 hover:bg-theme-primary/25 border border-theme-primary/30 text-theme-primary text-xs sm:text-sm font-medium flex items-center justify-center gap-1.5 transition-all shadow-sm active:scale-95"
                       >
-                        <Receipt className="w-3.5 h-3.5" />
+                        <Receipt className="w-4 h-4 shrink-0" />
                         <span>Hisobni ko'rish</span>
                       </button>
 
                       <button
                         onClick={() => handleDirectPrintBill(t.id, t.number)}
-                        className="w-full py-2.5 rounded-xl bg-blue-600/20 hover:bg-blue-600/30 border border-blue-500/40 text-blue-300 text-xs font-bold flex items-center justify-center gap-1.5 transition-all shadow-sm active:scale-95"
+                        className="w-full min-h-[44px] py-2 px-2.5 rounded-xl bg-blue-600/20 hover:bg-blue-600/30 border border-blue-500/40 text-blue-300 text-xs sm:text-sm font-medium flex items-center justify-center gap-1.5 transition-all shadow-sm active:scale-95"
                         title="Mijoz hisob chekini to'g'ridan-to'g'ri Printer 1 ga chiqarish"
                       >
-                        <Printer className="w-3.5 h-3.5" />
+                        <Printer className="w-4 h-4 shrink-0" />
                         <span>Chek (Printer 1)</span>
                       </button>
                     </div>
 
-                    {/* Kassa — to'lovni qabul qilish (ofitsiant panelidan ko'chirildi) */}
-                    <button
-                      onClick={() => handleOpenCheckout(t)}
-                      className="w-full py-3 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white text-xs font-black flex items-center justify-center gap-1.5 transition-all shadow-lg shadow-emerald-600/25 active:scale-95"
-                      title="To'lovni qabul qilish va hisobni yopish"
-                    >
-                      <CreditCard className="w-4 h-4" />
-                      <span>To'lov / Hisob (Kassa)</span>
-                    </button>
+                    {/* Bron qilish va Kassa to'lov tugmalari */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      <button
+                        onClick={() => {
+                          setSelectedBookingTable(t);
+                          setBookingModalOpen(true);
+                        }}
+                        className="w-full min-h-[44px] py-2 px-3 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30 text-amber-300 text-xs sm:text-sm font-medium flex items-center justify-center gap-1.5 transition-all active:scale-95"
+                      >
+                        <Calendar className="w-4 h-4 shrink-0" />
+                        <span>📅 Bron qilish</span>
+                      </button>
+
+                      <button
+                        onClick={() => handleOpenCheckout(t)}
+                        className="w-full min-h-[44px] py-2 px-3 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white text-xs sm:text-sm font-medium flex items-center justify-center gap-1.5 transition-all shadow-md shadow-emerald-600/25 active:scale-95"
+                        title="To'lovni qabul qilish va hisobni yopish"
+                      >
+                        <CreditCard className="w-4 h-4 shrink-0" />
+                        <span>To'lov / Kassa</span>
+                      </button>
+                    </div>
 
                     {t.is_unlocked && (
                       <button
                         onClick={() => handleLockTable(t.id)}
-                        className="w-full py-2 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30 text-amber-300 font-bold text-xs flex items-center justify-center gap-1.5 transition-all"
+                        className="w-full min-h-[44px] py-2 px-3 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30 text-amber-300 font-medium text-xs sm:text-sm flex items-center justify-center gap-1.5 transition-all active:scale-95"
                       >
-                        <Lock className="w-3.5 h-3.5" />
+                        <Lock className="w-4 h-4 shrink-0" />
                         <span>Qayta Qulflash (Yangi PIN)</span>
                       </button>
                     )}
@@ -1883,9 +1995,9 @@ export const AdminDashboard = () => {
                     {isOccupied && (
                       <button
                         onClick={() => handleClearTable(t.id, t.number)}
-                        className="w-full py-2 rounded-xl bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/40 text-emerald-300 font-bold text-xs flex items-center justify-center gap-1.5 transition-all"
+                        className="w-full min-h-[44px] py-2 px-3 rounded-xl bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/40 text-emerald-300 font-medium text-xs sm:text-sm flex items-center justify-center gap-1.5 transition-all active:scale-95"
                       >
-                        <CheckCircle className="w-3.5 h-3.5" />
+                        <CheckCircle className="w-4 h-4 shrink-0" />
                         <span>Stolni bo'shatish (Tozalash)</span>
                       </button>
                     )}
@@ -2702,6 +2814,18 @@ export const AdminDashboard = () => {
         tableNumber={selectedBillTable?.number}
         isStaff={true}
         onTableCleared={loadAll}
+      />
+
+      {/* Booking / Reservation Modal */}
+      <BookingModal
+        isOpen={bookingModalOpen}
+        onClose={() => setBookingModalOpen(false)}
+        table={selectedBookingTable}
+        tables={tables}
+        onBookingConfirmed={() => {
+          setBookingModalOpen(false);
+          loadAll();
+        }}
       />
     </div>
   );

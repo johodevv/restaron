@@ -194,6 +194,7 @@ class OrderSummary(BaseModel):
     customer_name: Optional[str] = None
     customer_phone: Optional[str] = None
     delivery_address: Optional[str] = None
+    kitchen_note: Optional[str] = None
     table_id: Optional[int] = None
     table_number: Optional[int] = None
     waiter_id: Optional[int] = None
@@ -201,6 +202,9 @@ class OrderSummary(BaseModel):
     status: OrderStatus
     total: float
     items_count: int
+    items: Optional[List[OrderItemResponse]] = None
+    is_paid: Optional[bool] = False
+    payment_method: Optional[str] = None
     call_waiter: bool = False
     call_status: Optional[CallStatus] = None
     call_note: Optional[str] = None
