@@ -2,6 +2,11 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Touch qurilmalar: tezkor bosish (300ms kechikishsiz) va erkin zoom */
+button, input, select, textarea, a {
+  touch-action: manipulation;
+}
+
 :root {
   /* Default: Elegant Dark */
   --color-primary: #D4AF37;
