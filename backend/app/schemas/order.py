@@ -283,3 +283,13 @@ class WaiterCallResponse(BaseModel):
     is_resolved: bool = False
 
 
+class StaleOrderResponse(BaseModel):
+    id: int
+    order_number: str
+    stol: Optional[str] = None
+    ofitsiant: Optional[str] = None
+    summa: float
+    yoshi: str
+
+
+

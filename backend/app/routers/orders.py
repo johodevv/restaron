@@ -7,7 +7,7 @@ import uuid
 from datetime import datetime, timezone, timedelta
 from fastapi import APIRouter, Depends, HTTPException, status, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, and_, update, text
+from sqlalchemy import select, func, and_, or_, update, text
 from sqlalchemy.orm import selectinload
 from sqlalchemy.exc import IntegrityError
 from typing import List, Optional, Any, Set
@@ -31,7 +31,8 @@ from app.schemas.order import (
     UpdateItemDeltaRequest,
     UpdateItemSizeRequest,
     UpdateItemWeightRequest,
-    OrderNoteUpdate, OrderCheckoutRequest
+    OrderNoteUpdate, OrderCheckoutRequest,
+    StaleOrderResponse
 )
 from app.core.printer_service import (
     format_kitchen_ticket, format_pre_check,
@@ -3056,6 +3057,83 @@ async def list_orders(
             )
         )
     return summaries
+
+
+@router.get(
+    "/stale",
+    response_model=List[StaleOrderResponse],
+    summary="12 soatdan beri ochiq qolgan buyurtmalar ro'yxati",
+)
+async def get_stale_orders(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role("admin", "cashier", "developer")),
+):
+    """
+    12 soatdan beri ochiq (is_paid=False, status != CANCELLED) qolgan buyurtmalar ro'yxati.
+    Faqat admin, cashier va developer rollari uchun.
+    """
+    now = datetime.now(timezone.utc)
+    cutoff = now - timedelta(hours=12)
+
+    query = (
+        select(Order)
+        .options(
+            selectinload(Order.table),
+            selectinload(Order.waiter),
+        )
+        .where(
+            or_(Order.is_paid == False, Order.is_paid.is_(None)),
+            Order.status != OrderStatus.CANCELLED,
+            Order.created_at <= cutoff,
+        )
+    )
+
+    if current_user.role != UserRole.DEVELOPER:
+        query = query.where(Order.restaurant_id == current_user.restaurant_id)
+
+    query = query.order_by(Order.created_at.asc())
+    result = await db.execute(query)
+    orders = result.scalars().all()
+
+    stale_list = []
+    for o in orders:
+        # Stol ma'lumotini aniqlash
+        stol_str = None
+        if o.table:
+            stol_str = str(o.table.number) if o.table.number is not None else (o.table.name or None)
+        elif o.table_id:
+            stol_str = str(o.table_id)
+
+        # Ofitsiant nomi
+        waiter_name = None
+        if o.waiter:
+            waiter_name = o.waiter.full_name or o.waiter.username
+
+        # Yoshini hisoblash
+        if o.created_at:
+            created = o.created_at
+            if created.tzinfo is None:
+                created = created.replace(tzinfo=timezone.utc)
+            delta = now - created
+            total_seconds = max(0, int(delta.total_seconds()))
+            hours = total_seconds // 3600
+            minutes = (total_seconds % 3600) // 60
+            yoshi = f"{hours} soat {minutes} daqiqa"
+        else:
+            yoshi = "Noma'lum"
+
+        stale_list.append(
+            StaleOrderResponse(
+                id=o.id,
+                order_number=o.order_number,
+                stol=stol_str,
+                ofitsiant=waiter_name,
+                summa=float(o.total or 0.0),
+                yoshi=yoshi,
+            )
+        )
+
+    return stale_list
 
 
 @router.get(
