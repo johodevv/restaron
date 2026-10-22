@@ -1,16 +1,17 @@
 """
-Stollar API â€” QR kod generatsiya bilan
+Stollar API — QR kod generatsiya bilan
 """
 import os
 import time
 import uuid
 import random
+import logging
 import qrcode
 import aiofiles
 from io import BytesIO
 from datetime import datetime, timezone
 from pydantic import BaseModel, Field
-from fastapi import APIRouter, Depends, HTTPException, status, Body, Query
+from fastapi import APIRouter, Depends, HTTPException, status, Body, Query, Request
 from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
@@ -20,6 +21,7 @@ from typing import List, Optional, Dict, Any
 from app.core.database import get_db
 from app.core.security import require_role
 from app.core.config import settings
+from app.core.rate_limit import RateLimiter, get_client_ip
 from app.models.table import Table, TableStatus, TableZone
 from app.models.user import User, UserRole
 from app.models.order import Order, OrderItem, OrderStatus, CallStatus
@@ -37,7 +39,19 @@ from app.websockets.manager import manager
 from app.core.disk_utils import ensure_disk_space
 from app.core.audit import log_audit_event
 
+logger = logging.getLogger("tables")
+
 router = APIRouter(prefix="/tables", tags=["🪑 Stollar"])
+
+def scan_rate_limit_key(request: Request) -> str:
+    ip = get_client_ip(request)
+    qr_token = request.path_params.get("qr_token", "")
+    return f"{ip}:{qr_token}"
+
+def unlock_rate_limit_key(request: Request) -> str:
+    ip = get_client_ip(request)
+    table_id = request.path_params.get("table_id", "")
+    return f"{ip}:{table_id}"
 
 _cached_qr_base_url: Optional[str] = None
 _qr_base_url_cached_at: float = 0.0
@@ -386,7 +400,21 @@ async def list_tables(
     return [TableResponse.model_validate(t) for t in tables]
 
 
-@router.get("/scan/{qr_token}", response_model=TablePublic, summary="QR kodni skanerlash")
+@router.get(
+    "/scan/{qr_token}",
+    response_model=TablePublic,
+    summary="QR kodni skanerlash",
+    dependencies=[
+        Depends(
+            RateLimiter(
+                times=30,
+                seconds=60,
+                key_func=scan_rate_limit_key,
+                detail="QR skanerlash bo'yicha so'rovlar limiti oshdi. Birozdan so'ng qayta urinib ko'ring.",
+            )
+        )
+    ],
+)
 async def scan_qr(qr_token: str, db: AsyncSession = Depends(get_db)):
     # 1. QR token bo'yicha qidirish
     result = await db.execute(
@@ -400,7 +428,13 @@ async def scan_qr(qr_token: str, db: AsyncSession = Depends(get_db)):
         result = await db.execute(
             select(Table).where((Table.number == num) | (Table.id == num), Table.is_active == True)
         )
-        table = result.scalar_one_or_none()
+        found_tables = result.scalars().all()
+        if len(found_tables) > 1:
+            logger.warning(
+                f"QR skan: raqam/ID {num} bo'yicha bir nechta stol topildi! "
+                f"Stollar ID: {[t.id for t in found_tables]}, birinchisi (ID: {found_tables[0].id}) ishlatildi."
+            )
+        table = found_tables[0] if found_tables else None
 
     if not table:
         raise HTTPException(status_code=404, detail="QR kod yaroqsiz yoki stol faol emas")
@@ -435,7 +469,7 @@ async def scan_qr(qr_token: str, db: AsyncSession = Depends(get_db)):
                 "table_number": table.number,
                 "room": table.room,
                 "pin": table.current_pin,
-                "message": f"ðŸ”” Stol #{table.number} ga yangi mijoz keldi! Tasdiqlash kodi: {table.current_pin}",
+                "message": f"🔔 Stol #{table.number} ga yangi mijoz keldi! Tasdiqlash kodi: {table.current_pin}",
             },
         )
         await manager.broadcast_to_roles(
@@ -458,13 +492,38 @@ async def scan_qr(qr_token: str, db: AsyncSession = Depends(get_db)):
     return res
 
 
-@router.post("/{table_id}/unlock", summary="Ofitsiant tomonidan stolni tasdiqlash / faollashtirish")
-async def unlock_table(table_id: int, db: AsyncSession = Depends(get_db)):
+@router.post(
+    "/{table_id}/unlock",
+    summary="Ofitsiant tomonidan stolni tasdiqlash / faollashtirish",
+    dependencies=[
+        Depends(
+            RateLimiter(
+                times=20,
+                seconds=60,
+                key_func=unlock_rate_limit_key,
+                detail="Stolni ochish bo'yicha so'rovlar limiti oshdi. Birozdan so'ng qayta urinib ko'ring.",
+            )
+        )
+    ],
+)
+async def unlock_table(
+    table_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role("waiter", "admin", "cashier", "developer")),
+):
     """Ofitsiant stolga borib kodni ko'rib stolni faollashtiradi"""
     result = await db.execute(select(Table).where(Table.id == table_id))
     table = result.scalar_one_or_none()
     if not table:
         raise HTTPException(status_code=404, detail="Stol topilmadi")
+
+    # Stol va foydalanuvchi restorani mos bo'lsin (developer istisno)
+    user_role = current_user.role.value if hasattr(current_user.role, "value") else str(current_user.role)
+    if user_role != "developer" and table.restaurant_id != current_user.restaurant_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Boshqa restoranning stolini ochishga ruxsat yo'q",
+        )
 
     table.is_unlocked = True
     table.status = TableStatus.OCCUPIED
