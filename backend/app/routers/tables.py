@@ -950,6 +950,7 @@ async def remove_bill_items(
         o.total = round(max(0.0, subtotal + o.service_fee_amount - (o.discount or 0.0)), 2)
 
     await db.flush()
+    await db.commit()
 
     await manager.broadcast_to_restaurant(table.restaurant_id, {
         "type": "order_updated",
@@ -1019,6 +1020,7 @@ async def set_table_service_fee(
         o.total = round(subtotal + o.service_fee_amount - (o.discount or 0.0), 2)
 
     await db.flush()
+    await db.commit()
 
     total = round(sum((o.total or 0.0) for o in orders), 2)
     await manager.broadcast_to_restaurant(table.restaurant_id, {

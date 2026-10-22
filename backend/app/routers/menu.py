@@ -383,6 +383,7 @@ async def toggle_stop_list(
     item.is_available = not new_stop_state
 
     await db.flush()
+    await db.commit()
     await db.refresh(item)
 
     # Real-time WebSocket orqali barcha ulanganlarga tarqatish

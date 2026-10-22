@@ -75,14 +75,31 @@ class ConnectionManager:
                     if not self._restaurant_connections[restaurant_id]:
                         del self._restaurant_connections[restaurant_id]
 
-    async def send_personal_message(self, message: dict, websocket: WebSocket) -> bool:
-        """Bitta mijozga xabar yuborish"""
+    async def _send_with_timeout(self, websocket: WebSocket, message: dict, timeout: float = 2.0) -> bool:
+        """Bitta mijozga timeout (2.0s) bilan xabar yuborish.
+        Timeout yoki xatolik bo'lsa ulanishni uzib, ro'yxatdan olib tashlaydi.
+        """
         try:
-            await websocket.send_json(message)
+            await asyncio.wait_for(websocket.send_json(message), timeout=timeout)
             return True
         except Exception:
+            try:
+                await websocket.close(code=1000)
+            except Exception:
+                pass
             await self.disconnect(websocket)
             return False
+
+    async def send_personal_message(self, message: dict, websocket: WebSocket) -> bool:
+        """Bitta mijozga xabar yuborish"""
+        return await self._send_with_timeout(websocket, message, timeout=2.0)
+
+    async def _broadcast_to_sockets(self, target_sockets: List[WebSocket], message: dict):
+        """Ulanishlarga ketma-ket emas, asyncio.gather bilan parallel yuborish (timeout=2.0)"""
+        if not target_sockets:
+            return
+        tasks = [self._send_with_timeout(ws, message, timeout=2.0) for ws in target_sockets]
+        await asyncio.gather(*tasks, return_exceptions=True)
 
     async def send_to_user(self, restaurant_id: int, user_id: int, message: dict):
         """Muayyan foydalanuvchiga (ofitsiant, oshpaz, admin) yuborish"""
@@ -94,8 +111,7 @@ class ConnectionManager:
                 if meta.get("user_id") == user_id:
                     target_sockets.append(ws)
 
-        for ws in target_sockets:
-            await self.send_personal_message(message, ws)
+        await self._broadcast_to_sockets(target_sockets, message)
 
     # Mijozga yuborilmaydigan xavfli kalitlar
     SENSITIVE_TABLE_KEYS = {
@@ -151,8 +167,7 @@ class ConnectionManager:
                 if ws_role and ws_role != "guest" and (ws_role == role_lower or ws_role in ["admin", "developer"]):
                     target_sockets.append(ws)
 
-        for ws in target_sockets:
-            await self.send_personal_message(message, ws)
+        await self._broadcast_to_sockets(target_sockets, message)
 
     async def broadcast_to_roles(self, restaurant_id: int, roles: List[str], message: dict):
         """Bir nechta rollarga yuborish (guest larga HECH QACHON yuborilmaydi)"""
@@ -167,8 +182,7 @@ class ConnectionManager:
                 if ws_role and ws_role != "guest" and ws_role in roles_set:
                     target_sockets.append(ws)
 
-        for ws in target_sockets:
-            await self.send_personal_message(message, ws)
+        await self._broadcast_to_sockets(target_sockets, message)
 
     async def broadcast_to_table(self, restaurant_id: int, table_id: int, message: dict):
         """Stolda o'tirgan mijoz(lar)ga yuborish (maxfiy ma'lumotlar filtrlanadi)"""
@@ -181,8 +195,7 @@ class ConnectionManager:
                 if meta.get("table_id") == table_id:
                     target_sockets.append(ws)
 
-        for ws in target_sockets:
-            await self.send_personal_message(safe_message, ws)
+        await self._broadcast_to_sockets(target_sockets, safe_message)
 
     async def broadcast_to_restaurant(self, restaurant_id: int, message: dict):
         """Restorandagi barcha xodimlarga tarqatish (guest larga HECH QACHON yuborilmaydi)"""
@@ -195,8 +208,7 @@ class ConnectionManager:
                 if ws_role and ws_role != "guest":
                     target_sockets.append(ws)
 
-        for ws in target_sockets:
-            await self.send_personal_message(message, ws)
+        await self._broadcast_to_sockets(target_sockets, message)
 
     def start_heartbeat(self, interval_seconds: int = 25, timeout_seconds: int = 60):
         """Orqa fonda WebSocket ping/heartbeat tekshiruvini boshlash"""

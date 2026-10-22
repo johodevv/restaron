@@ -198,6 +198,7 @@ async def approve_user(
         entity_type="user",
         details={"is_approved": is_approved, "target_username": user.username},
     )
+    await db.commit()
 
     from app.websockets.manager import manager
     await manager.broadcast_to_restaurant(

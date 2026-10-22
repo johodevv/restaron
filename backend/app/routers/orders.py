@@ -757,6 +757,7 @@ async def create_order(payload: OrderCreate, db: AsyncSession = Depends(get_db))
     )
 
     await db.flush()
+    await db.commit()
 
     # Real-time WebSocket xabarlari tarqatish
     ws_payload = {
@@ -2621,6 +2622,7 @@ async def call_waiter(payload: CallWaiterRequest, db: AsyncSession = Depends(get
         user_id=assigned_waiter_id,
     )
     await db.flush()
+    await db.commit()
 
     # Real-time WebSocket xabari
     call_msg = {
@@ -2826,9 +2828,8 @@ async def resolve_waiter_call(
             st_o.call_waiter = False
             st_o.call_status = CallStatus.COMPLETED
 
-    # Bug 2 fix: flush() va commit() olib tashlandi — get_db dependency
-    # har bir request oxirida commit() ni o'zi chaqiradi.
-    # Bu yerda commit() chaqirilsa transaction ikki marta yopiladi va SQLAlchemy xatosi chiqadi.
+    await db.flush()
+    await db.commit()
 
     waiter_display = current_user.full_name or current_user.username
     await manager.broadcast_to_roles(
@@ -3134,6 +3135,7 @@ async def deliver_order(
     )
 
     await db.flush()
+    await db.commit()
 
     # 2. Real-time WebSocket: Adminga va xodimlarga
     delivered_event = {
@@ -3229,21 +3231,25 @@ async def update_order_status(
     now = datetime.now(timezone.utc)
     table_num = order.table.number if order.table else order.table_id
 
+    status_broadcast_tasks = []
+
     # Vaqtlarni yangilash
     if payload.status == OrderStatus.CONFIRMED:
         order.confirmed_at = now
     elif payload.status == OrderStatus.PREPARING:
         order.preparing_at = now
-        # Mijoz stoliga xabar
-        await manager.broadcast_to_table(
-            order.restaurant_id,
-            order.table_id,
-            {
-                "type": "order_status",
-                "order_id": order.id,
-                "status": "preparing",
-                "message": "Oshpaz taomingizni tayyorlashni boshladi 👨‍🍳",
-            },
+        # Mijoz stoliga xabar (commit'dan keyin yuboriladi)
+        status_broadcast_tasks.append(
+            lambda: manager.broadcast_to_table(
+                order.restaurant_id,
+                order.table_id,
+                {
+                    "type": "order_status",
+                    "order_id": order.id,
+                    "status": "preparing",
+                    "message": "Oshpaz taomingizni tayyorlashni boshladi 👨‍🍳",
+                },
+            )
         )
     elif payload.status == OrderStatus.READY:
         order.ready_at = now
@@ -3276,22 +3282,28 @@ async def update_order_status(
             "message": f"{order.order_number} buyurtmasi tayyor. Mijozga yetkazing!",
         }
 
-        # Agar tayinlangan ofitsiant bo'lsa, unga bevosita
+        # Agar tayinlangan ofitsiant bo'lsa, unga bevosita (commit'dan keyin)
         if order.waiter_id:
-            await manager.send_to_user(order.restaurant_id, order.waiter_id, ready_msg)
-        # Barcha ofitsiantlar va adminlarga
-        await manager.broadcast_to_roles(order.restaurant_id, ["waiter", "admin"], ready_msg)
+            status_broadcast_tasks.append(
+                lambda: manager.send_to_user(order.restaurant_id, order.waiter_id, ready_msg)
+            )
+        # Barcha ofitsiantlar va adminlarga (commit'dan keyin)
+        status_broadcast_tasks.append(
+            lambda: manager.broadcast_to_roles(order.restaurant_id, ["waiter", "admin"], ready_msg)
+        )
 
-        # Mijoz stoliga
-        await manager.broadcast_to_table(
-            order.restaurant_id,
-            order.table_id,
-            {
-                "type": "order_ready",
-                "order_id": order.id,
-                "status": "ready",
-                "message": "Taomingiz tayyor bo'ldi, ofitsiant yo'lda! 🚀",
-            },
+        # Mijoz stoliga (commit'dan keyin)
+        status_broadcast_tasks.append(
+            lambda: manager.broadcast_to_table(
+                order.restaurant_id,
+                order.table_id,
+                {
+                    "type": "order_ready",
+                    "order_id": order.id,
+                    "status": "ready",
+                    "message": "Taomingiz tayyor bo'ldi, ofitsiant yo'lda! 🚀",
+                },
+            )
         )
 
     elif payload.status == OrderStatus.SERVED:
@@ -3362,6 +3374,8 @@ async def update_order_status(
     await db.commit()
     wake_printer_worker()
 
+    for task_fn in status_broadcast_tasks:
+        await task_fn()
 
     # WebSocket orqali status yangilanishini tarqatish
     await manager.broadcast_to_restaurant(
@@ -3450,22 +3464,24 @@ async def mark_item_prepared(
                 "title": f"Barcha taomlar tayyor! Stol #{table_num}",
                 "message": f"{order.order_number} to'liq tayyor bo'ldi. Olib boring!",
             }
-            if order.waiter_id:
-                await manager.send_to_user(order.restaurant_id, order.waiter_id, ready_msg)
-            await manager.broadcast_to_roles(order.restaurant_id, ["waiter", "admin"], ready_msg)
-
-            await manager.broadcast_to_table(
-                order.restaurant_id,
-                order.table_id,
-                {
-                    "type": "order_ready",
-                    "order_id": order.id,
-                    "status": "ready",
-                    "message": "Barcha taomlaringiz tayyor bo'ldi! Ofitsiant yo'lda.",
-                },
-            )
-
     await db.flush()
+    await db.commit()
+
+    if order_ready_now:
+        if order.waiter_id:
+            await manager.send_to_user(order.restaurant_id, order.waiter_id, ready_msg)
+        await manager.broadcast_to_roles(order.restaurant_id, ["waiter", "admin"], ready_msg)
+
+        await manager.broadcast_to_table(
+            order.restaurant_id,
+            order.table_id,
+            {
+                "type": "order_ready",
+                "order_id": order.id,
+                "status": "ready",
+                "message": "Barcha taomlaringiz tayyor bo'ldi! Ofitsiant yo'lda.",
+            },
+        )
     return {
         "success": True,
         "item_id": item_id,
@@ -3491,6 +3507,9 @@ async def complete_waiter_call(
 
     order.call_waiter = False
     order.call_status = CallStatus.COMPLETED
+
+    await db.flush()
+    await db.commit()
 
     table_num = order.table.number if order.table else order.table_id
 
