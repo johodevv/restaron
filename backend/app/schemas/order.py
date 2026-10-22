@@ -1,7 +1,7 @@
 """
 Buyurtma sxemalari (Pydantic)
 """
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from typing import Optional, List, Literal
 from datetime import datetime
 from app.models.order import OrderStatus, CallStatus, OrderType
@@ -82,7 +82,19 @@ class WaiterAddItemsRequest(BaseModel):
 
 class UpdateItemQtyRequest(BaseModel):
     """Taom sonini o'zgartirish [- 1 +]"""
-    quantity: int = Field(..., gt=0)
+    quantity: int = Field(..., gt=0, le=500)
+
+
+class UpdateItemDeltaRequest(BaseModel):
+    """Taom miqdorini nisbiy o'zgartirish (delta)"""
+    delta: int = Field(..., ge=-50, le=50)
+
+    @field_validator("delta")
+    @classmethod
+    def delta_must_not_be_zero(cls, v: int) -> int:
+        if v == 0:
+            raise ValueError("delta 0 bo'lishi mumkin emas")
+        return v
 
 
 class UpdateItemWeightRequest(BaseModel):

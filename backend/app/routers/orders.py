@@ -28,6 +28,7 @@ from app.schemas.order import (
     OrderStatusUpdate, CallWaiterRequest, OrderDeliverRequest,
     OrderItemResponse, WaiterCallResponse,
     WaiterOrderCreate, WaiterAddItemsRequest, UpdateItemQtyRequest,
+    UpdateItemDeltaRequest,
     UpdateItemSizeRequest,
     UpdateItemWeightRequest,
     OrderNoteUpdate, OrderCheckoutRequest
@@ -984,6 +985,9 @@ async def waiter_add_items(
     current_user: User = Depends(require_role("waiter", "admin", "developer", "cashier")),
 ):
     """Ofitsiant faol buyurtmaga qo'shimcha taomlar qo'shadi"""
+    # 1. Buyurtma qatorini qulflash (race condition oldini olish)
+    await db.execute(text("UPDATE orders SET id = id WHERE id = :id"), {"id": order_id})
+
     res = await db.execute(
         select(Order)
         .options(
@@ -1111,6 +1115,9 @@ async def update_item_quantity(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_role("waiter", "admin", "developer", "cashier")),
 ):
+    # 1. Buyurtma qatorini qulflash (race condition oldini olish)
+    await db.execute(text("UPDATE orders SET id = id WHERE id = :id"), {"id": order_id})
+
     order_res = await db.execute(
         select(Order)
         .options(
@@ -1205,6 +1212,171 @@ async def update_item_quantity(
                 "status": tbl_status,
                 "is_occupied": tbl_occ,
                 "active_order_id": ord_id,
+            }
+        )
+
+    return resp
+
+
+# ─── Taom miqdorini nisbiy o'zgartirish (Delta) ───────────────────
+@router.patch("/{order_id}/items/{item_id}/delta", response_model=OrderResponse, summary="Taom miqdorini nisbiy o'zgartirish (+1, -1, delta)")
+async def update_item_delta(
+    order_id: int,
+    item_id: int,
+    payload: UpdateItemDeltaRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role("waiter", "admin", "developer", "cashier")),
+):
+    """Taom sonini delta bo'yicha o'zgartirish (+1, -1 va h.k.). Agar natija <= 0 bo'lsa o'chiriladi."""
+    # 1. Buyurtma qatorini qulflash
+    await db.execute(text("UPDATE orders SET id = id WHERE id = :id"), {"id": order_id})
+
+    order_res = await db.execute(
+        select(Order)
+        .options(
+            selectinload(Order.items).selectinload(OrderItem.menu_item),
+            selectinload(Order.table),
+            selectinload(Order.waiter),
+        )
+        .where(Order.id == order_id)
+    )
+    order = order_res.scalar_one_or_none()
+    if not order:
+        raise HTTPException(status_code=404, detail="Buyurtma topilmadi")
+
+    if order.status in (OrderStatus.PAID, OrderStatus.CANCELLED) or order.is_paid:
+        raise HTTPException(status_code=400, detail="Yopilgan yoki bekor qilingan buyurtmani o'zgartirib bo'lmaydi")
+
+    order_item = next((it for it in order.items if it.id == item_id), None)
+    if not order_item:
+        raise HTTPException(status_code=404, detail="Taom topilmadi")
+
+    new_quantity = order_item.quantity + payload.delta
+
+    # Natija 0 yoki undan kam bo'lsa -> delete_order_item mantiqi
+    if new_quantity <= 0:
+        if order_item.sent_to_kitchen:
+            user_role = current_user.role.value if hasattr(current_user.role, "value") else str(current_user.role)
+            if user_role == "waiter":
+                raise HTTPException(status_code=403, detail="Oshxonaga yuborilgan taomni faqat Admin/Kassir bekor qila oladi!")
+
+            cancelled_qty = order_item.sent_quantity or order_item.quantity or 1
+            from app.core.audit import log_audit_event
+            await log_audit_event(
+                db=db,
+                restaurant_id=order.restaurant_id,
+                action="delete_kitchen_item",
+                user=current_user,
+                entity_type="order_item",
+                entity_id=order_item.id,
+                details={
+                    "order_id": order.id,
+                    "dish_name": order_item.menu_item.name if order_item.menu_item else "Taom",
+                    "cancelled_qty": cancelled_qty,
+                    "table": order.table.number if order.table else None,
+                },
+            )
+            set_res = await db.execute(select(RestaurantSettings).where(RestaurantSettings.restaurant_id == order.restaurant_id))
+            settings = set_res.scalar_one_or_none()
+            waiter_name = (order.waiter.full_name or order.waiter.username) if order.waiter else (current_user.full_name or current_user.username)
+            asyncio.create_task(_send_cancellation_receipt(order, order_item.menu_item, cancelled_qty, waiter_name, settings))
+
+        if order.items:
+            order.items = [i for i in order.items if i.id != item_id]
+        await db.delete(order_item)
+        await db.flush()
+
+        # Agar taom o'chirilgandan keyin buyurtmada boshqa taom qolmasa
+        if not order.items:
+            order.status = OrderStatus.CANCELLED
+            if order.table:
+                other_open_res = await db.execute(
+                    select(func.count(Order.id)).where(
+                        Order.table_id == order.table_id,
+                        Order.id != order.id,
+                        Order.is_paid == False,
+                        Order.status.notin_([OrderStatus.PAID, OrderStatus.CANCELLED]),
+                    )
+                )
+                other_cnt = other_open_res.scalar() or 0
+                if other_cnt == 0:
+                    order.table.status = TableStatus.AVAILABLE
+                    order.table.is_occupied = False
+    else:
+        # new_quantity > 0: update_item_quantity mantiqi
+        if new_quantity > 500:
+            raise HTTPException(status_code=400, detail="Taom miqdori 500 dan oshishi mumkin emas")
+
+        sent_qty = order_item.sent_quantity or 0
+        if order_item.sent_to_kitchen and new_quantity < sent_qty:
+            user_role = current_user.role.value if hasattr(current_user.role, "value") else str(current_user.role)
+            if user_role == "waiter":
+                raise HTTPException(status_code=403, detail="Oshxonaga yuborilgan taomni faqat Admin/Kassir bekor qila oladi!")
+
+            cancelled_qty = sent_qty - new_quantity
+            from app.core.audit import log_audit_event
+            await log_audit_event(
+                db=db,
+                restaurant_id=order.restaurant_id,
+                action="cancel_kitchen_item_qty",
+                user=current_user,
+                entity_type="order_item",
+                entity_id=order_item.id,
+                details={
+                    "order_id": order.id,
+                    "dish_name": order_item.menu_item.name if order_item.menu_item else "Taom",
+                    "cancelled_qty": cancelled_qty,
+                    "new_qty": new_quantity,
+                    "table": order.table.number if order.table else None,
+                },
+            )
+            set_res = await db.execute(select(RestaurantSettings).where(RestaurantSettings.restaurant_id == order.restaurant_id))
+            settings = set_res.scalar_one_or_none()
+            waiter_name = (order.waiter.full_name or order.waiter.username) if order.waiter else (current_user.full_name or current_user.username)
+            asyncio.create_task(_send_cancellation_receipt(order, order_item.menu_item, cancelled_qty, waiter_name, settings))
+            order_item.sent_quantity = new_quantity
+
+        order_item.quantity = new_quantity
+        menu_item = order_item.menu_item
+        if menu_item:
+            order_item.total_price = line_total(
+                menu_item, new_quantity, order_item.weight, order_item.manual_price
+            )
+        else:
+            order_item.total_price = round((order_item.unit_price or 0.0) * new_quantity, 2)
+
+    await recalc_order_totals(db, order)
+    await db.flush()
+    # 4. Broadcast await db.commit() dan keyin bo'lsin
+    await db.commit()
+
+    full_order = await load_order_full(db, order_id) or order
+    resp = build_order_response(full_order)
+    resp_dict = resp.model_dump() if hasattr(resp, "model_dump") else resp.dict()
+    rest_id = resp_dict.get("restaurant_id", 1)
+    ord_id = resp_dict.get("id", order_id)
+    tbl_id = resp_dict.get("table_id")
+    tbl_num = resp_dict.get("table_number")
+    has_table = tbl_id is not None
+
+    await manager.broadcast_to_restaurant(
+        rest_id,
+        {
+            "type": "order_updated",
+            "order": resp_dict,
+            "order_id": ord_id,
+        }
+    )
+    if has_table and tbl_id and order.table:
+        await manager.broadcast_to_restaurant(
+            rest_id,
+            {
+                "type": "table_status_updated",
+                "table_id": tbl_id,
+                "table_number": tbl_num,
+                "status": order.table.status.value if hasattr(order.table.status, "value") else str(order.table.status),
+                "is_occupied": order.table.status == TableStatus.OCCUPIED,
+                "active_order_id": ord_id if order.table.status == TableStatus.OCCUPIED else None,
             }
         )
 
