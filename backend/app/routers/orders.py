@@ -2956,6 +2956,7 @@ async def list_orders(
     order_type: Optional[str] = None,
     limit: int = Query(default=100, ge=1, le=300, description="Qaytariladigan buyurtmalar soni"),
     offset: int = Query(default=0, ge=0, description="O'tkazib yuboriladigan buyurtmalar soni"),
+    include_items: bool = Query(default=False, description="Tarkibidagi taomlar ro'yxatini ham yuklash"),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_role("admin", "cashier", "waiter", "chef", "developer")),
 ):
@@ -2970,12 +2971,13 @@ async def list_orders(
         .options(
             selectinload(Order.table),
             selectinload(Order.waiter),
-            selectinload(Order.items).selectinload(OrderItem.menu_item),
         )
     )
+    if include_items:
+        query = query.options(selectinload(Order.items).selectinload(OrderItem.menu_item))
+
     if effective_restaurant_id is not None:
         query = query.where(Order.restaurant_id == effective_restaurant_id)
-
 
     if status:
         query = query.where(Order.status == status)
@@ -2994,40 +2996,54 @@ async def list_orders(
     result = await db.execute(query)
     orders = result.scalars().all()
 
+    item_counts = {}
+    if not include_items and orders:
+        order_ids = [o.id for o in orders]
+        count_q = (
+            select(OrderItem.order_id, func.count(OrderItem.id))
+            .where(OrderItem.order_id.in_(order_ids))
+            .group_by(OrderItem.order_id)
+        )
+        count_res = await db.execute(count_q)
+        item_counts = dict(count_res.all())
+
     summaries = []
     for order in orders:
-        items_count = len(order.items) if order.items else 0
         table_num = order.table.number if order.table else None
         waiter_name = None
         if order.waiter:
             waiter_name = order.waiter.full_name or order.waiter.username
 
         items_resp = []
-        for it in (order.items or []):
-            m_item = getattr(it, "menu_item", None)
-            items_resp.append(
-                OrderItemResponse(
-                    id=it.id,
-                    menu_item_id=it.menu_item_id,
-                    quantity=it.quantity,
-                    unit_price=it.unit_price,
-                    total_price=it.total_price,
-                    special_note=it.special_note,
-                    portion_size=it.portion_size,
-                    item_time=it.item_time,
-                    weight=it.weight,
-                    manual_price=it.manual_price,
-                    is_weighted=bool(getattr(m_item, "is_weighted", False)) if m_item else False,
-                    unit=(getattr(m_item, "unit", "dona") or "dona") if m_item else "dona",
-                    sent_to_kitchen=bool(it.sent_to_kitchen),
-                    sent_to_kitchen_at=it.sent_to_kitchen_at,
-                    sent_quantity=int(it.sent_quantity or 0),
-                    is_prepared=bool(it.is_prepared),
-                    prepared_at=it.prepared_at,
-                    menu_item_name=m_item.name if m_item else None,
-                    menu_item_image=m_item.image_url if m_item else None,
+        if include_items:
+            items_count = len(order.items) if order.items else 0
+            for it in (order.items or []):
+                m_item = getattr(it, "menu_item", None)
+                items_resp.append(
+                    OrderItemResponse(
+                        id=it.id,
+                        menu_item_id=it.menu_item_id,
+                        quantity=it.quantity,
+                        unit_price=it.unit_price,
+                        total_price=it.total_price,
+                        special_note=it.special_note,
+                        portion_size=it.portion_size,
+                        item_time=it.item_time,
+                        weight=it.weight,
+                        manual_price=it.manual_price,
+                        is_weighted=bool(getattr(m_item, "is_weighted", False)) if m_item else False,
+                        unit=(getattr(m_item, "unit", "dona") or "dona") if m_item else "dona",
+                        sent_to_kitchen=bool(it.sent_to_kitchen),
+                        sent_to_kitchen_at=it.sent_to_kitchen_at,
+                        sent_quantity=int(it.sent_quantity or 0),
+                        is_prepared=bool(it.is_prepared),
+                        prepared_at=it.prepared_at,
+                        menu_item_name=m_item.name if m_item else None,
+                        menu_item_image=m_item.image_url if m_item else None,
+                    )
                 )
-            )
+        else:
+            items_count = item_counts.get(order.id, 0)
 
         summaries.append(
             OrderSummary(

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, Suspense, lazy } from 'react';
 import { useAuth } from './context/AuthContext';
 import { useTheme } from './context/ThemeContext';
 import { WebSocketProvider } from './context/WebSocketContext';
@@ -10,19 +10,24 @@ import Navbar from './components/Navbar';
 import ToastContainer from './components/ToastContainer';
 import BillModal from './components/BillModal';
 
-// Pages
-import CustomerMenu from './pages/customer/CustomerMenu';
-import CartDrawer from './pages/customer/CartDrawer';
-import CallWaiterModal from './pages/customer/CallWaiterModal';
-import OrderTracker from './pages/customer/OrderTracker';
-import ReviewModal from './pages/customer/ReviewModal';
-import WaiterDashboard from './pages/waiter/WaiterDashboard';
-import AdminDashboard from './pages/admin/AdminDashboard';
-import DeveloperDashboard from './pages/developer/DeveloperDashboard';
-import Login from './pages/auth/Login';
+// Lazy-loaded Pages (Admin, Waiter, Customer, Kitchen/POS)
+const CustomerMenu = lazy(() => import('./pages/customer/CustomerMenu'));
+const CartDrawer = lazy(() => import('./pages/customer/CartDrawer'));
+const CallWaiterModal = lazy(() => import('./pages/customer/CallWaiterModal'));
+const OrderTracker = lazy(() => import('./pages/customer/OrderTracker'));
+const ReviewModal = lazy(() => import('./pages/customer/ReviewModal'));
+const WaiterDashboard = lazy(() => import('./pages/waiter/WaiterDashboard'));
+const AdminDashboard = lazy(() => import('./pages/admin/AdminDashboard'));
+const DeveloperDashboard = lazy(() => import('./pages/developer/DeveloperDashboard'));
+const Login = lazy(() => import('./pages/auth/Login'));
+const DunyoLanding = lazy(() => import('./pages/customer/DunyoLanding'));
+const TableWaitingVerification = lazy(() => import('./pages/customer/TableWaitingVerification'));
 
-import DunyoLanding from './pages/customer/DunyoLanding';
-import TableWaitingVerification from './pages/customer/TableWaitingVerification';
+const PageLoader = () => (
+  <div className="min-h-[40vh] flex items-center justify-center">
+    <div className="w-9 h-9 border-3 border-amber-500 border-t-transparent rounded-full animate-spin" />
+  </div>
+);
 
 export const App = () => {
   const { user, isWaiter, isAdmin, isCashier, isDev, loading: authLoading } = useAuth();
@@ -174,10 +179,12 @@ export const App = () => {
 
           {/* If user clicked Login */}
           {currentView === 'login' && !user && (
-            <Login
-              onSuccess={() => setCurrentView('menu')}
-              onBackToMenu={() => setCurrentView('menu')}
-            />
+            <Suspense fallback={<PageLoader />}>
+              <Login
+                onSuccess={() => setCurrentView('menu')}
+                onBackToMenu={() => setCurrentView('menu')}
+              />
+            </Suspense>
           )}
 
           {/* If Logged in as Staff */}
@@ -188,19 +195,21 @@ export const App = () => {
                 onNavigate={setCurrentView}
               />
               <main>
-                {/* Ofitsiant faqat zaldagi stollarga xizmat ko'rsatish panelini oladi */}
-                {isWaiter && <WaiterDashboard />}
-                {/* Admin va Kassir boshqaruv, kassa, POS, Olib ketish va Dastavka panelini oladi */}
-                {isDev ? <DeveloperDashboard /> : ((isAdmin || isCashier) && <AdminDashboard />)}
-                {!isWaiter && !isAdmin && !isCashier && !isDev && (
-                  <div className="max-w-md mx-auto mt-20 p-6 rounded-2xl bg-theme-card border border-theme-border text-center space-y-2">
-                    <p className="text-lg font-bold text-theme-text">Bu hisob uchun panel yo'q</p>
-                    <p className="text-sm text-theme-muted">
-                      Oshpaz paneli olib tashlangan — buyurtmalar to'g'ridan-to'g'ri
-                      oshxona printeriga chiqadi. Admin bilan bog'laning.
-                    </p>
-                  </div>
-                )}
+                <Suspense fallback={<PageLoader />}>
+                  {/* Ofitsiant faqat zaldagi stollarga xizmat ko'rsatish panelini oladi */}
+                  {isWaiter && <WaiterDashboard />}
+                  {/* Admin va Kassir boshqaruv, kassa, POS, Olib ketish va Dastavka panelini oladi */}
+                  {isDev ? <DeveloperDashboard /> : ((isAdmin || isCashier) && <AdminDashboard />)}
+                  {!isWaiter && !isAdmin && !isCashier && !isDev && (
+                    <div className="max-w-md mx-auto mt-20 p-6 rounded-2xl bg-theme-card border border-theme-border text-center space-y-2">
+                      <p className="text-lg font-bold text-theme-text">Bu hisob uchun panel yo'q</p>
+                      <p className="text-sm text-theme-muted">
+                        Oshpaz paneli olib tashlangan — buyurtmalar to'g'ridan-to'g'ri
+                        oshxona printeriga chiqadi. Admin bilan bog'laning.
+                      </p>
+                    </div>
+                  )}
+                </Suspense>
               </main>
             </div>
           )}
@@ -208,90 +217,94 @@ export const App = () => {
           {/* If Not Logged In and NO Table Selected -> Landing Page */}
           {!user && currentView !== 'login' && !tableInfo && (
             <div>
-              <DunyoLanding
-                onSelectTable={handleSelectTable}
-                onOpenLogin={() => setCurrentView('login')}
-              />
+              <Suspense fallback={<PageLoader />}>
+                <DunyoLanding
+                  onSelectTable={handleSelectTable}
+                  onOpenLogin={() => setCurrentView('login')}
+                />
+              </Suspense>
             </div>
           )}
 
           {/* If Not Logged In and Table IS Selected */}
           {!user && currentView !== 'login' && tableInfo && (
             <div>
-              {!tableUnlocked && !tableInfo.is_unlocked ? (
-                <TableWaitingVerification
-                  tableInfo={tableInfo}
-                  onUnlocked={() => setTableUnlocked(true)}
-                  onReturnToLanding={handleReturnToLanding}
-                />
-              ) : (
-                <div>
-                  <Navbar
+              <Suspense fallback={<PageLoader />}>
+                {!tableUnlocked && !tableInfo.is_unlocked ? (
+                  <TableWaitingVerification
                     tableInfo={tableInfo}
-                    onOpenCart={() => setCartOpen(true)}
-                    onOpenCallWaiter={() => setCallWaiterOpen(true)}
-                    onOpenBill={() => setBillOpen(true)}
-                    currentView={currentView}
-                    onNavigate={(view) => {
-                      if (view === 'landing') handleReturnToLanding();
-                      else setCurrentView(view);
-                    }}
+                    onUnlocked={() => setTableUnlocked(true)}
                     onReturnToLanding={handleReturnToLanding}
-                    activeOrderId={activeOrderId}
                   />
+                ) : (
+                  <div>
+                    <Navbar
+                      tableInfo={tableInfo}
+                      onOpenCart={() => setCartOpen(true)}
+                      onOpenCallWaiter={() => setCallWaiterOpen(true)}
+                      onOpenBill={() => setBillOpen(true)}
+                      currentView={currentView}
+                      onNavigate={(view) => {
+                        if (view === 'landing') handleReturnToLanding();
+                        else setCurrentView(view);
+                      }}
+                      onReturnToLanding={handleReturnToLanding}
+                      activeOrderId={activeOrderId}
+                    />
 
-                  <main>
-                    {currentView === 'tracker' && activeOrderId ? (
-                      <OrderTracker
-                        orderId={activeOrderId}
-                        qrToken={tableInfo?.qr_token}
-                        onOpenReview={handleOpenReview}
-                        onOpenBill={() => setBillOpen(true)}
-                        onBackToMenu={() => setCurrentView('menu')}
-                      />
-                    ) : (
-                      <CustomerMenu
-                        restaurantId={restaurantId}
-                        tableInfo={tableInfo}
-                        onOpenCart={() => setCartOpen(true)}
-                        onOpenCallWaiter={() => setCallWaiterOpen(true)}
-                        onOpenBill={() => setBillOpen(true)}
-                        onReturnToLanding={handleReturnToLanding}
-                      />
-                    )}
-                  </main>
+                    <main>
+                      {currentView === 'tracker' && activeOrderId ? (
+                        <OrderTracker
+                          orderId={activeOrderId}
+                          qrToken={tableInfo?.qr_token}
+                          onOpenReview={handleOpenReview}
+                          onOpenBill={() => setBillOpen(true)}
+                          onBackToMenu={() => setCurrentView('menu')}
+                        />
+                      ) : (
+                        <CustomerMenu
+                          restaurantId={restaurantId}
+                          tableInfo={tableInfo}
+                          onOpenCart={() => setCartOpen(true)}
+                          onOpenCallWaiter={() => setCallWaiterOpen(true)}
+                          onOpenBill={() => setBillOpen(true)}
+                          onReturnToLanding={handleReturnToLanding}
+                        />
+                      )}
+                    </main>
 
-                  {/* Customer Modals */}
-                  <CartDrawer
-                    isOpen={cartOpen}
-                    onClose={() => setCartOpen(false)}
-                    tableId={tableInfo?.id}
-                    onOrderCreated={handleOrderCreated}
-                  />
+                    {/* Customer Modals */}
+                    <CartDrawer
+                      isOpen={cartOpen}
+                      onClose={() => setCartOpen(false)}
+                      tableId={tableInfo?.id}
+                      onOrderCreated={handleOrderCreated}
+                    />
 
-                  <CallWaiterModal
-                    isOpen={callWaiterOpen}
-                    onClose={() => setCallWaiterOpen(false)}
-                    tableId={tableInfo?.id}
-                    tableNumber={tableInfo?.number}
-                  />
+                    <CallWaiterModal
+                      isOpen={callWaiterOpen}
+                      onClose={() => setCallWaiterOpen(false)}
+                      tableId={tableInfo?.id}
+                      tableNumber={tableInfo?.number}
+                    />
 
-                  <BillModal
-                    isOpen={billOpen}
-                    onClose={() => setBillOpen(false)}
-                    tableId={tableInfo?.id}
-                    tableNumber={tableInfo?.number}
-                    qrToken={tableInfo?.qr_token}
-                    isStaff={false}
-                  />
+                    <BillModal
+                      isOpen={billOpen}
+                      onClose={() => setBillOpen(false)}
+                      tableId={tableInfo?.id}
+                      tableNumber={tableInfo?.number}
+                      qrToken={tableInfo?.qr_token}
+                      isStaff={false}
+                    />
 
-                  <ReviewModal
-                    isOpen={reviewOpen}
-                    onClose={() => setReviewOpen(false)}
-                    order={reviewOrder}
-                  />
-                </div>
-              )}
+                    <ReviewModal
+                      isOpen={reviewOpen}
+                      onClose={() => setReviewOpen(false)}
+                      order={reviewOrder}
+                    />
+                  </div>
+                )}
+              </Suspense>
             </div>
           )}
         </div>

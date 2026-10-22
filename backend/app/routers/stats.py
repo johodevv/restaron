@@ -359,89 +359,113 @@ async def get_payments_report(
     if current_role != "developer" and current_user.restaurant_id:
         restaurant_id = current_user.restaurant_id
 
-    query = (
-        select(Order)
-        .options(selectinload(Order.table), selectinload(Order.waiter))
-        .where(
-            Order.restaurant_id == restaurant_id,
-            func.coalesce(Order.closed_at, Order.created_at) >= start_utc,
-            func.coalesce(Order.closed_at, Order.created_at) < end_utc,
-            Order.status != OrderStatus.CANCELLED,
-            # Faqat yopilgan (to'langan) buyurtmalar — bu kassa tushumi hisoboti.
-            # Ochiq stollar qo'shilsa "Jami Tushum" naqd/karta/nasiya yig'indisiga
-            # teng kelmay qoladi va kassani solishtirib bo'lmaydi.
-            Order.is_paid == True,
-        )
-    )
-
+    # Filter shartlari
+    filters = [
+        Order.restaurant_id == restaurant_id,
+        func.coalesce(Order.closed_at, Order.created_at) >= start_utc,
+        func.coalesce(Order.closed_at, Order.created_at) < end_utc,
+        Order.status != OrderStatus.CANCELLED,
+        Order.is_paid == True,
+    ]
     if waiter_id:
-        query = query.where(Order.waiter_id == waiter_id)
+        filters.append(Order.waiter_id == waiter_id)
 
-    query = query.order_by(Order.created_at.desc())
-    res = await db.execute(query)
-    orders = res.scalars().all()
+    # 1. SQL Aggregation (COUNT, SUM) — buyurtmalarni Python xotirasiga yuklamasdan hisoblash
+    agg_query = (
+        select(
+            func.count(Order.id).label("orders_count"),
+            func.coalesce(func.sum(Order.total), 0.0).label("total_revenue"),
+            func.coalesce(func.sum(Order.cash_amount), 0.0).label("total_cash"),
+            func.coalesce(func.sum(Order.card_amount), 0.0).label("total_card"),
+            func.coalesce(func.sum(Order.click_amount), 0.0).label("total_click"),
+            func.coalesce(func.sum(Order.debt_amount), 0.0).label("total_debt"),
+            func.coalesce(func.sum(Order.waiter_share_amount), 0.0).label("total_waiter_earnings"),
+        )
+        .where(*filters)
+    )
+    agg_res = await db.execute(agg_query)
+    agg_row = agg_res.one()
+
+    # 2. Rows query — faqat kerakli ustunlar bilan outerjoin orqali
+    rows_query = (
+        select(
+            Order.id,
+            Order.order_number,
+            Order.hall_name,
+            Order.order_type,
+            Table.room.label("table_room"),
+            Table.number.label("table_number"),
+            Order.cash_amount,
+            Order.card_amount,
+            Order.click_amount,
+            Order.debt_amount,
+            Order.created_at,
+            Order.closed_at,
+            Order.total,
+            User.id.label("waiter_id"),
+            User.full_name.label("waiter_full_name"),
+            User.username.label("waiter_username"),
+            Order.waiter_share_amount,
+            Order.status,
+            Order.is_paid,
+        )
+        .outerjoin(Table, Order.table_id == Table.id)
+        .outerjoin(User, Order.waiter_id == User.id)
+        .where(*filters)
+        .order_by(Order.created_at.desc())
+    )
+    rows_res = await db.execute(rows_query)
 
     rows = []
-    total_sales = 0.0
-    total_cash = 0.0
-    total_card = 0.0
-    total_click = 0.0
-    total_debt = 0.0
-    total_waiter_earnings = 0.0
+    for r in rows_res.all():
+        tot = float(r.total or 0.0)
+        c_cash = float(r.cash_amount or 0.0)
+        c_card = float(r.card_amount or 0.0)
+        c_click = float(r.click_amount or 0.0)
+        c_debt = float(r.debt_amount or 0.0)
+        w_earn = float(r.waiter_share_amount or 0.0)
 
-    for o in orders:
-        tot = float(o.total or 0.0)
-        c_cash = float(o.cash_amount or 0.0)
-        c_card = float(o.card_amount or 0.0)
-        c_click = float(o.click_amount or 0.0)
-        c_debt = float(o.debt_amount or 0.0)
-        w_earn = float(o.waiter_share_amount or 0.0)
-
-        total_sales += tot
-        total_cash += c_cash
-        total_card += c_card
-        total_click += c_click
-        total_debt += c_debt
-        total_waiter_earnings += w_earn
-
-        t_name = o.hall_name or ""
-        if o.table:
-            t_room = o.table.room or ""
-            t_num = o.table.number
+        t_name = r.hall_name or ""
+        if r.table_number is not None:
+            t_room = r.table_room or ""
+            t_num = r.table_number
             t_name = f"{t_name or t_room} #{t_num}".strip()
         else:
-            t_name = o.order_type or "Olib ketish"
+            t_name = r.order_type or "Olib ketish"
 
-        w_name = (o.waiter.full_name or o.waiter.username) if o.waiter else "—"
+        if r.waiter_id:
+            w_name = r.waiter_full_name or r.waiter_username or "—"
+        else:
+            w_name = "—"
 
         rows.append({
-            "order_id": o.id,
-            "order_number": o.order_number,
+            "order_id": r.id,
+            "order_number": r.order_number,
             "table_name": t_name,
             "cash_amount": c_cash,
             "card_amount": c_card,
             "click_amount": c_click,
             "debt_amount": c_debt,
-            "created_at": format_uz(o.created_at, "%d.%m.%Y %H:%M"),
-            "closed_at": format_uz(o.closed_at, "%d.%m.%Y %H:%M") if o.closed_at else "Hali yopilmagan",
+            "created_at": format_uz(r.created_at, "%d.%m.%Y %H:%M"),
+            "closed_at": format_uz(r.closed_at, "%d.%m.%Y %H:%M") if r.closed_at else "Hali yopilmagan",
             "total": tot,
             "waiter_name": w_name,
-            "waiter_id": o.waiter_id,
+            "waiter_id": r.waiter_id,
             "waiter_earning": w_earn,
-            "status": o.status.value if hasattr(o.status, "value") else str(o.status),
-            "is_paid": bool(o.is_paid),
+            "status": r.status.value if hasattr(r.status, "value") else str(r.status),
+            "is_paid": bool(r.is_paid),
         })
 
     return {
         "start_date": (s_date or to_uz(start_utc).date()).strftime("%Y-%m-%d"),
         "end_date": (e_date or (to_uz(end_utc) - timedelta(seconds=1)).date()).strftime("%Y-%m-%d"),
-        "orders_count": len(rows),
-        "total_revenue": round(total_sales, 2),
-        "total_cash": round(total_cash, 2),
-        "total_card": round(total_card, 2),
-        "total_click": round(total_click, 2),
-        "total_debt": round(total_debt, 2),
-        "total_waiter_earnings": round(total_waiter_earnings, 2),
+        "orders_count": int(agg_row.orders_count or 0),
+        "total_revenue": round(float(agg_row.total_revenue or 0.0), 2),
+        "total_cash": round(float(agg_row.total_cash or 0.0), 2),
+        "total_card": round(float(agg_row.total_card or 0.0), 2),
+        "total_click": round(float(agg_row.total_click or 0.0), 2),
+        "total_debt": round(float(agg_row.total_debt or 0.0), 2),
+        "total_waiter_earnings": round(float(agg_row.total_waiter_earnings or 0.0), 2),
         "rows": rows,
     }
 
@@ -539,7 +563,7 @@ async def get_server_health(
 
     if psutil_available:
         try:
-            cpu_usage = psutil.cpu_percent(interval=0.1)
+            cpu_usage = psutil.cpu_percent(interval=None)
             ram = psutil.virtual_memory()
             ram_percent = round(ram.percent, 1)
             ram_total_gb = round(ram.total / (1024 ** 3), 2)

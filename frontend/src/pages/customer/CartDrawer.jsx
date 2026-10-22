@@ -82,6 +82,8 @@ export const CartDrawer = ({ isOpen, onClose, tableId, onOrderCreated }) => {
                     <img
                       src={item.image_url}
                       alt={item.name}
+                      loading="lazy"
+                      decoding="async"
                       className="w-12 h-12 rounded-xl object-cover border border-theme-border shrink-0"
                     />
                   )}

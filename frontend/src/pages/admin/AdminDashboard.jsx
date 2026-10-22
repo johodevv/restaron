@@ -11,10 +11,8 @@ import { DebtsTab } from './DebtsTab';
 import { ReceiptsArchiveTab } from './ReceiptsArchiveTab';
 import { PaymentsReportTab } from './PaymentsReportTab';
 import { WaiterKpiTab } from './WaiterKpiTab';
-import WaiterDashboard from '../waiter/WaiterDashboard';
-import OrdersView from './OrdersView';
-import POSView from './POSView';
-import RestaurantSettingsTab from './RestaurantSettingsTab';
+import { RestaurantSettingsTab } from './RestaurantSettingsTab';
+const POSView = React.lazy(() => import('./POSView'));
 import BookingModal from '../../components/BookingModal';
 import OrderCard from '../../components/OrderCard';
 import {
@@ -1260,7 +1258,9 @@ export const AdminDashboard = () => {
           ishlaydi. */}
       {tab === 'pos' && (
         <div className="w-full">
-          <POSView showModeSwitch={true} canCheckout={true} restaurantId={restaurantId} />
+          <React.Suspense fallback={<div className="p-12 text-center text-theme-muted"><div className="w-8 h-8 border-3 border-amber-500 border-t-transparent rounded-full animate-spin mx-auto mb-2" />POS yuklanmoqda...</div>}>
+            <POSView showModeSwitch={true} canCheckout={true} restaurantId={restaurantId} />
+          </React.Suspense>
         </div>
       )}
 
@@ -1407,6 +1407,8 @@ export const AdminDashboard = () => {
                                   <img
                                     src={imgSrc}
                                     alt={item.name}
+                                    loading="lazy"
+                                    decoding="async"
                                     className="w-16 h-16 rounded-xl object-cover border border-theme-border shrink-0 shadow"
                                     onError={(e) => { e.currentTarget.style.display = 'none'; }}
                                   />

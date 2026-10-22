@@ -252,6 +252,7 @@ export const CustomerMenu = ({
                           alt={getLocalizedName(item)}
                           className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
                           loading="lazy"
+                          decoding="async"
                         />
                       ) : (
                         <div className="w-full h-full flex flex-col items-center justify-center text-slate-600">
@@ -362,6 +363,8 @@ export const CustomerMenu = ({
                 <img
                   src={activeItemDetail.image_url}
                   alt={activeItemDetail.name}
+                  loading="lazy"
+                  decoding="async"
                   className="w-full h-full object-cover"
                 />
                 {activeItemDetail.is_stop_list && (

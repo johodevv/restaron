@@ -1006,6 +1006,7 @@ export const POSView = ({
                             alt={item.name}
                             className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                             loading="lazy"
+                            decoding="async"
                           />
                         ) : (
                           <div className="text-slate-600 flex flex-col items-center">

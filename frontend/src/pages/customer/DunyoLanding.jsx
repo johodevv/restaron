@@ -203,6 +203,8 @@ export const DunyoLanding = ({ onOpenLogin }) => {
                     <img
                       src={dish.image_url}
                       alt={dish.name}
+                      loading="lazy"
+                      decoding="async"
                       className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-300"
                     />
                     <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/30 to-transparent flex flex-col justify-end p-1.5">
@@ -346,6 +348,7 @@ export const DunyoLanding = ({ onOpenLogin }) => {
                           src={item.image_url}
                           alt={item.name}
                           loading="lazy"
+                          decoding="async"
                           className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
                         />
                         {/* Yumshoq qora gradient soya */}
@@ -359,6 +362,8 @@ export const DunyoLanding = ({ onOpenLogin }) => {
                         <img
                           src="/dunyo-logo.png"
                           alt="Dunyo Choyxonasi"
+                          loading="lazy"
+                          decoding="async"
                           className="w-12 h-12 rounded-full object-cover border border-amber-500/40 shadow-md shadow-amber-500/20 mb-1.5 shrink-0"
                         />
                         <span className="text-xs sm:text-sm font-black text-amber-100/90 line-clamp-1 tracking-wide font-sans">
@@ -441,6 +446,8 @@ export const DunyoLanding = ({ onOpenLogin }) => {
                 <img
                   src={selectedDish.image_url}
                   alt={selectedDish.name}
+                  loading="lazy"
+                  decoding="async"
                   className="w-full h-full object-cover"
                 />
               ) : (
@@ -448,6 +455,8 @@ export const DunyoLanding = ({ onOpenLogin }) => {
                   <img
                     src="/dunyo-logo.png"
                     alt="Dunyo Choyxonasi"
+                    loading="lazy"
+                    decoding="async"
                     className="w-20 h-20 rounded-full object-cover border-2 border-amber-400/60 shadow-xl shadow-amber-500/30 mb-3"
                   />
                   <span className="text-lg font-black text-white font-sans">
@@ -518,6 +527,8 @@ export const DunyoLanding = ({ onOpenLogin }) => {
               <img
                 src="/dunyo-logo.png"
                 alt="Dunyo Choyxonasi"
+                loading="lazy"
+                decoding="async"
                 className="w-8 h-8 rounded-full object-cover border border-amber-500/40 shadow-sm"
               />
               <span className="font-extrabold text-base text-white">Dunyo Choyxonasi</span>
