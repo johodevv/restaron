@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import api from '../../utils/api';
 import { preloadImages, collectImageUrls } from '../../utils/preloadImages';
 import { useAuth } from '../../context/AuthContext';
@@ -96,6 +96,12 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
   // Table transfer modal (Stolni ko'chirish — Aliposter 1.0.0.0 andozasi)
   const [transferModalOpen, setTransferModalOpen] = useState(false);
   const [transferLoading, setTransferLoading] = useState(false);
+
+  // Bitta buyurtma uchun ketma-ket so'rovlar navbati va oxirgi so'rov id si
+  const orderQueueRef = useRef(Promise.resolve());
+  const latestRequestIdRef = useRef(0);
+  // activeOrder yo'q holatida yangi buyurtma yaratilayotganda qulf (promise)
+  const creatingOrderRef = useRef(null);
 
   const handleTransferTable = async (targetTableId) => {
     if (!selectedTable || !targetTableId) return;
@@ -361,96 +367,148 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
     }
 
     try {
-      if (!activeOrder) {
-        // Yangi buyurtma ochish
-        const payload = {
-          restaurant_id: restaurantId,
-          order_type: orderType === 'table' ? 'dine_in' : orderType,
-          items: [{ menu_item_id: menuItem.id, quantity: 1 }],
-        };
-        if (orderType === 'table') {
-          payload.table_id = selectedTable?.id;
-          payload.hall_name = selectedTable?.room || 'Zal';
-        } else {
-          payload.customer_name = customerName.trim() || (orderType === 'takeaway' ? 'Olib ketish mijoz' : 'Dastavka mijoz');
-          payload.customer_phone = customerPhone.trim() || null;
-          if (orderType === 'delivery') {
-            payload.delivery_address = deliveryAddress.trim() || "Manzil";
-          }
-        }
-        const newOrd = await api.post('/orders/waiter-create', payload);
-        setActiveOrder(newOrd);
-        openWeightModalIfNeeded(newOrd, menuItem.id);
-        if (orderType === 'table') {
-          setTables((prev) =>
-            prev.map((t) => (t.id === selectedTable?.id ? { ...t, status: 'occupied' } : t))
-          );
-          setSelectedTable((prev) => (prev ? { ...prev, status: 'occupied' } : prev));
-        }
-      } else {
-        // Mavjud buyurtmaga qo'shish
-        // Bir xil taom bo'lsa sonini oshiramiz
-        const existingItem = (activeOrder.items || []).find(
-          (i) => Number(i.menu_item_id) === Number(menuItem.id) && !i.is_weighted
-        );
+      let currentOrd = activeOrder;
 
-        if (existingItem) {
-          // 1. Darhol optimistik oshiramiz (0ms da ekranda yangilanadi)
-          const targetQty = existingItem.quantity + 1;
-          setActiveOrder((prev) => {
-            if (!prev) return prev;
-            const updatedItems = (prev.items || []).map((it) =>
-              it.id === existingItem.id
-                ? {
-                    ...it,
-                    quantity: targetQty,
-                    total_price: (it.unit_price || menuItem.price) * targetQty,
-                  }
-                : it
-            );
-            const sub = updatedItems.reduce((acc, it) => acc + (it.total_price || 0), 0);
-            return {
-              ...prev,
-              items: updatedItems,
-              subtotal: sub,
-              total: sub + (prev.service_fee_amount || 0) - (prev.discount || 0),
-            };
-          });
+      // 3. activeOrder yo'q holatida yangi buyurtma ochilayotganda creatingOrderRef qulfi:
+      // ikkinchi bosish birinchi javob kelguncha kutsin, keyin add-items yo'liga o'tsin.
+      if (!currentOrd && creatingOrderRef.current) {
+        try {
+          currentOrd = await creatingOrderRef.current;
+        } catch (_) {
+          currentOrd = null;
+        }
+      }
 
-          // 2. Serverga sinxronlash
-          const updated = await api.patch(
-            `/orders/${activeOrder.id}/items/${existingItem.id}/quantity`,
-            { quantity: targetQty }
-          );
-          if (updated) setActiveOrder(updated);
-        } else {
-          const updated = await api.post(`/orders/${activeOrder.id}/add-items`, {
+      if (!currentOrd) {
+        const createPromise = (async () => {
+          const payload = {
+            restaurant_id: restaurantId,
+            order_type: orderType === 'table' ? 'dine_in' : orderType,
             items: [{ menu_item_id: menuItem.id, quantity: 1 }],
-            send_to_kitchen_immediately: false,
-          });
-          if (updated) {
-            setActiveOrder(updated);
-            openWeightModalIfNeeded(updated, menuItem.id);
+          };
+          if (orderType === 'table') {
+            payload.table_id = selectedTable?.id;
+            payload.hall_name = selectedTable?.room || 'Zal';
+          } else {
+            payload.customer_name = customerName.trim() || (orderType === 'takeaway' ? 'Olib ketish mijoz' : 'Dastavka mijoz');
+            payload.customer_phone = customerPhone.trim() || null;
+            if (orderType === 'delivery') {
+              payload.delivery_address = deliveryAddress.trim() || "Manzil";
+            }
+          }
+          return await api.post('/orders/waiter-create', payload);
+        })();
+
+        creatingOrderRef.current = createPromise;
+        let newOrd;
+        try {
+          newOrd = await createPromise;
+        } finally {
+          creatingOrderRef.current = null;
+        }
+
+        if (newOrd) {
+          setActiveOrder(newOrd);
+          openWeightModalIfNeeded(newOrd, menuItem.id);
+          if (orderType === 'table') {
+            setTables((prev) =>
+              prev.map((t) => (t.id === selectedTable?.id ? { ...t, status: 'occupied' } : t))
+            );
+            setSelectedTable((prev) => (prev ? { ...prev, status: 'occupied' } : prev));
           }
         }
+        return;
+      }
+
+      // Mavjud buyurtmaga taom qo'shish
+      const orderId = currentOrd.id;
+      const existingItem = (currentOrd.items || []).find(
+        (i) => Number(i.menu_item_id) === Number(menuItem.id) && !i.is_weighted
+      );
+
+      if (existingItem) {
+        // 1. Optimistik yangilanish
+        const targetQty = existingItem.quantity + 1;
+        setActiveOrder((prev) => {
+          if (!prev) return prev;
+          const updatedItems = (prev.items || []).map((it) =>
+            it.id === existingItem.id
+              ? {
+                  ...it,
+                  quantity: targetQty,
+                  total_price: (it.unit_price || menuItem.price) * targetQty,
+                }
+              : it
+          );
+          const sub = updatedItems.reduce((acc, it) => acc + (it.total_price || 0), 0);
+          return {
+            ...prev,
+            items: updatedItems,
+            subtotal: sub,
+            total: sub + (prev.service_fee_amount || 0) - (prev.discount || 0),
+          };
+        });
+
+        // 2. Yangi PATCH delta endpointini navbat bilan chaqirish
+        const reqId = ++latestRequestIdRef.current;
+        orderQueueRef.current = orderQueueRef.current
+          .catch(() => {})
+          .then(async () => {
+            const updated = await api.patch(
+              `/orders/${orderId}/items/${existingItem.id}/delta`,
+              { delta: 1 }
+            );
+            if (reqId === latestRequestIdRef.current && updated) {
+              setActiveOrder(updated);
+            }
+            return updated;
+          });
+        await orderQueueRef.current;
+      } else {
+        // Yangi taom qo'shish
+        const reqId = ++latestRequestIdRef.current;
+        orderQueueRef.current = orderQueueRef.current
+          .catch(() => {})
+          .then(async () => {
+            const updated = await api.post(`/orders/${orderId}/add-items`, {
+              items: [{ menu_item_id: menuItem.id, quantity: 1 }],
+              send_to_kitchen_immediately: false,
+            });
+            if (reqId === latestRequestIdRef.current && updated) {
+              setActiveOrder(updated);
+              openWeightModalIfNeeded(updated, menuItem.id);
+            }
+            return updated;
+          });
+        await orderQueueRef.current;
       }
     } catch (err) {
       console.warn("Taom qo'shishda xatolik:", err);
+      const errMsg = err?.response?.data?.detail || err?.message || "Taom qo'shishda xatolik yuz berdi";
+      alert(errMsg);
       if (selectedTable) fetchTableActiveOrder(selectedTable);
     }
   };
 
-  // Change quantity [- 1 +] — Optimistik va sezgir
+  // Change quantity [- 1 +] — Optimistik va sezgir (PATCH /delta orqali)
   const handleQtyChange = async (item, delta) => {
+    if (!activeOrder || !item || delta === 0) return;
     const newQty = item.quantity + delta;
-    if (newQty <= 0) {
-      handleDeleteItem(item.id);
-      return;
-    }
 
     // 1. Darhol ekranni yangilaymiz (0ms kechikish)
     setActiveOrder((prev) => {
       if (!prev) return prev;
+      if (newQty <= 0) {
+        const filtered = (prev.items || []).filter((it) => it.id !== item.id);
+        if (filtered.length === 0) return null;
+        const sub = filtered.reduce((acc, it) => acc + (it.total_price || 0), 0);
+        return {
+          ...prev,
+          items: filtered,
+          subtotal: sub,
+          total: sub + (prev.service_fee_amount || 0) - (prev.discount || 0),
+        };
+      }
       const updatedItems = (prev.items || []).map((it) =>
         it.id === item.id
           ? {
@@ -470,12 +528,29 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
     });
 
     try {
-      const updated = await api.patch(`/orders/${activeOrder.id}/items/${item.id}/quantity`, {
-        quantity: newQty,
-      });
-      if (updated) setActiveOrder(updated);
+      const orderId = activeOrder.id;
+      const reqId = ++latestRequestIdRef.current;
+      orderQueueRef.current = orderQueueRef.current
+        .catch(() => {})
+        .then(async () => {
+          const updated = await api.patch(
+            `/orders/${orderId}/items/${item.id}/delta`,
+            { delta }
+          );
+          if (reqId === latestRequestIdRef.current && updated) {
+            if (updated.status === 'cancelled' || !updated.items || updated.items.length === 0) {
+              setActiveOrder(null);
+            } else {
+              setActiveOrder(updated);
+            }
+          }
+          return updated;
+        });
+      await orderQueueRef.current;
     } catch (err) {
       console.warn('Soni yangilashda xatolik:', err);
+      const errMsg = err?.response?.data?.detail || err?.message || "Taom sonini o'zgartirishda xatolik yuz berdi";
+      alert(errMsg);
       if (selectedTable) fetchTableActiveOrder(selectedTable);
     }
   };
@@ -483,6 +558,7 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
   // Delete item from order — Darhol ekrandan olib tashlaydi
   const handleDeleteItem = async (itemId) => {
     if (!activeOrder) return;
+    const orderId = activeOrder.id;
 
     // 1. Darhol ekrandan o'chiramiz (0ms javob)
     setActiveOrder((prev) => {
@@ -501,27 +577,37 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
     });
 
     try {
-      const updated = await api.delete(`/orders/${activeOrder.id}/items/${itemId}`);
-      if (updated) {
-        if (updated.status === 'cancelled' || !updated.items || updated.items.length === 0) {
-          setActiveOrder(null);
-        } else {
-          const cleanItems = (updated.items || []).filter((i) => i.id !== itemId);
-          if (cleanItems.length === 0) {
-            setActiveOrder(null);
-          } else {
-            setActiveOrder({
-              ...updated,
-              items: cleanItems,
-            });
+      const reqId = ++latestRequestIdRef.current;
+      orderQueueRef.current = orderQueueRef.current
+        .catch(() => {})
+        .then(async () => {
+          const updated = await api.delete(`/orders/${orderId}/items/${itemId}`);
+          if (reqId === latestRequestIdRef.current && updated) {
+            if (updated.status === 'cancelled' || !updated.items || updated.items.length === 0) {
+              setActiveOrder(null);
+            } else {
+              const cleanItems = (updated.items || []).filter((i) => i.id !== itemId);
+              if (cleanItems.length === 0) {
+                setActiveOrder(null);
+              } else {
+                setActiveOrder({
+                  ...updated,
+                  items: cleanItems,
+                });
+              }
+            }
           }
-        }
-      }
+          return updated;
+        });
+      await orderQueueRef.current;
     } catch (err) {
-      if (err.message && err.message.toLowerCase().includes('topilmadi')) {
+      const errMsg = err?.response?.data?.detail || err?.message || "Taomni o'chirishda xatolik yuz berdi";
+      if (typeof errMsg === 'string' && errMsg.toLowerCase().includes('topilmadi')) {
         return;
       }
       console.warn("Taomni o'chirishda xatolik:", err);
+      alert(errMsg);
+      if (selectedTable) fetchTableActiveOrder(selectedTable);
     }
   };
 
