@@ -28,6 +28,8 @@ from app.core.printer_service import (
     format_kitchen_ticket, format_pre_check, format_shift_report,
     get_installed_printers, DEFAULT_FONT_SIZE,
     printer_options, receipt_title,
+    detect_transport, get_printer_health, receipt_columns,
+    _center_line, _pad_line,
 )
 from app.core.printer_queue import enqueue_print_job, wake_printer_worker
 
@@ -354,6 +356,145 @@ async def scan_lan_printers(
     """
     found = await asyncio.to_thread(scan_network_printers)
     return {"printers": found, "count": len(found)}
+
+
+@router.get("/printers/health", summary="Barcha sozланган printerlar holati (USB va LAN)")
+async def get_printers_health(
+    printer: Optional[str] = Query(None, description="Alohida printerni tekshirish (ixtiyoriy)"),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role("admin", "cashier", "waiter", "developer")),
+):
+    """
+    Sozlamalardagi barcha printerlar (kassa, 1-oshxona, 2-oshxona, bar) holatini
+    ESC/POS (LAN) yoki Windows Spooler (USB) orqali tekshirish.
+    """
+    if printer and printer.strip():
+        target = printer.strip()
+        health = await asyncio.to_thread(get_printer_health, target)
+        return {
+            "printer": target,
+            "transport": health.get("transport", "usb"),
+            "state": health.get("state", "unknown"),
+            "detail": health.get("detail", "Noma'lum"),
+            "jobs_in_queue": health.get("jobs_in_queue"),
+        }
+
+    rest_id = current_user.restaurant_id or 1
+    set_res = await db.execute(
+        select(RestaurantSettings).where(RestaurantSettings.restaurant_id == rest_id)
+    )
+    st = set_res.scalar_one_or_none()
+    if not st:
+        set_res = await db.execute(select(RestaurantSettings))
+        st = set_res.scalars().first()
+
+    printer_slots = [
+        {"slot": "customer", "label": "Kassa / Mijoz cheki", "printer": (getattr(st, "printer_customer_name", None) if st else None) or ""},
+        {"slot": "kitchen1", "label": "1-Oshxona (Issiq ovqat)", "printer": (getattr(st, "printer_kitchen1_name", None) if st else None) or ""},
+        {"slot": "kitchen2", "label": "2-Oshxona (Salat/Shashlik)", "printer": (getattr(st, "printer_kitchen2_name", None) if st else None) or ""},
+        {"slot": "bar", "label": "Bar", "printer": (getattr(st, "printer_bar_name", None) if st else None) or ""},
+    ]
+
+    results = []
+    for slot_info in printer_slots:
+        p_name = slot_info["printer"].strip()
+        if not p_name:
+            results.append({
+                "slot": slot_info["slot"],
+                "label": slot_info["label"],
+                "printer": None,
+                "transport": "usb",
+                "state": "unknown",
+                "detail": "Printer sozlanmagan",
+            })
+            continue
+
+        health = await asyncio.to_thread(get_printer_health, p_name)
+        results.append({
+            "slot": slot_info["slot"],
+            "label": slot_info["label"],
+            "printer": p_name,
+            "transport": health.get("transport", "usb"),
+            "state": health.get("state", "unknown"),
+            "detail": health.get("detail", "Noma'lum"),
+            "jobs_in_queue": health.get("jobs_in_queue"),
+        })
+
+    return {
+        "printers": results,
+        "count": len(results),
+    }
+
+
+class PrinterTestPrintRequest(BaseModel):
+    printer: str
+
+
+@router.post("/printers/test-print", summary="Printerni 80mm test cheki bilan sinash")
+async def test_print_printer(
+    payload: PrinterTestPrintRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role("admin", "cashier", "developer")),
+):
+    """
+    80 mm kenglikda qisqa test chek (printer nomi, turi LAN/USB, hozirgi UZ vaqti) ni
+    print_jobs orqali (ticket_type='test') yuboradi.
+    """
+    target = (payload.printer or "").strip()
+    if not target:
+        raise HTTPException(status_code=400, detail="Printer nomi yoki IP manzili kiritilmadi")
+
+    rest_id = current_user.restaurant_id or 1
+    set_res = await db.execute(
+        select(RestaurantSettings).where(RestaurantSettings.restaurant_id == rest_id)
+    )
+    st = set_res.scalar_one_or_none()
+    popts = printer_options(st)
+
+    transport = detect_transport(target)
+    now_uz = datetime.now(UZ_TZ).strftime("%d.%m.%Y %H:%M:%S")
+
+    col_width = receipt_columns(80, popts.get("font_size", DEFAULT_FONT_SIZE), popts.get("char_spacing"))
+    sep = "-" * col_width
+    double_sep = "=" * col_width
+
+    test_lines = [
+        _center_line("*** SINOV CHEKI ***", col_width),
+        double_sep,
+        _pad_line("Printer:", target[:max(10, col_width - 10)], col_width),
+        _pad_line("Ulanish turi:", transport.upper(), col_width),
+        _pad_line("Vaqt (UZ):", now_uz, col_width),
+        _pad_line("Qog'oz kengligi:", "80 mm", col_width),
+        sep,
+        _center_line("ESC/POS sinovi muvaffaqiyatli!", col_width),
+        _center_line("RestAron POS System", col_width),
+        double_sep,
+    ]
+    raw_text = "\n".join(test_lines)
+
+    job = await enqueue_print_job(
+        db,
+        restaurant_id=rest_id,
+        order_id=None,
+        ticket_type="test",
+        printer_name=target,
+        raw_text=raw_text,
+        options={
+            **popts,
+            "cut_paper": True,
+        },
+    )
+    await db.commit()
+    wake_printer_worker()
+
+    return {
+        "success": True,
+        "job_id": job.id,
+        "status": "queued",
+        "printer": target,
+        "transport": transport,
+        "message": f"Sinov cheki {target} ({transport.upper()}) printeri navbatiga qo'shildi",
+    }
 
 
 @router.post("/{receipt_id}/print-usb", summary="Arxivdagi chekni to'g'ridan-to'g'ri USB Xprinter'ga yuborish")

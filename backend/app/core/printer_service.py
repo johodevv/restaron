@@ -1035,13 +1035,307 @@ def get_installed_printers() -> List[str]:
 import socket
 import re
 
-def is_ip_address(text: str) -> bool:
-    """Tekshirish: kiritilgan matn IP manzilmi (masalan: 192.168.1.100 yoki 192.168.1.100:9100)"""
+def is_ip_address(text: Optional[str]) -> bool:
+    """Tekshirish: kiritilgan matn IPv4 manzilmi (masalan: 192.168.1.100 yoki 192.168.1.100:9100)"""
     if not text:
         return False
-    clean = text.strip().split(":")[0]
-    pattern = r"^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$"
-    return bool(re.match(pattern, clean))
+    clean = str(text).strip()
+    if ":" in clean:
+        clean = clean.split(":", 1)[0]
+    parts = clean.split(".")
+    if len(parts) != 4:
+        return False
+    for p in parts:
+        if not p.isdigit():
+            return False
+        val = int(p)
+        if val < 0 or val > 255:
+            return False
+    return True
+
+
+def detect_transport(value: Optional[str]) -> str:
+    """
+    Printer ulanish turini bitta funksiyada aniqlash:
+    - 'lan': qiymat IPv4 yoki IP:port ko'rinishida bo'lsa
+    - 'usb': aks holda (Windows printer nomi)
+    """
+    return "lan" if is_ip_address(value) else "usb"
+
+
+def check_lan_printer_status(host_or_ip: str, default_port: int = 9100, timeout: float = 1.0) -> Dict[str, Any]:
+    """
+    LAN (IP:9100) printer holatini ESC/POS real-time status (DLE EOT n, n=1, 2, 4) orqali tekshirish.
+    Har biri uchun 1 soniya timeout bilan 1 bayt o'qiladi.
+    Bitlar:
+      n=1: bit3 — offline
+      n=2: bit2 — qopqoq ochiq, bit5 — qog'oz tugab to'xtagan, bit6 — xato
+      n=4: bit2-3 — qog'oz tugayapti, bit5-6 — qog'oz tugagan
+    Javob kelmasa 'unknown'.
+    """
+    raw_target = (host_or_ip or "").strip()
+    host, port = raw_target, default_port
+    if ":" in host:
+        parts = host.split(":", 1)
+        host = parts[0]
+        try:
+            port = int(parts[1])
+        except Exception:
+            port = default_port
+
+    target_disp = f"{host}:{port}"
+
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.settimeout(timeout)
+        s.connect((host, port))
+    except (socket.timeout, TimeoutError):
+        return {
+            "transport": "lan",
+            "state": "offline",
+            "detail": f"Printerga ulanib bo'lmadi ({target_disp})",
+            "error": f"Printerga ulanib bo'lmadi ({target_disp})",
+        }
+    except Exception as e:
+        return {
+            "transport": "lan",
+            "state": "offline",
+            "detail": f"Printerga ulanib bo'lmadi ({target_disp}): {e}",
+            "error": f"Printerga ulanib bo'lmadi ({target_disp})",
+        }
+
+    responses: Dict[int, int] = {}
+    try:
+        for n in (1, 2, 4):
+            try:
+                s.settimeout(timeout)
+                s.sendall(bytes([0x10, 0x04, n]))
+                b = s.recv(1)
+                if b:
+                    responses[n] = b[0]
+            except (socket.timeout, TimeoutError):
+                pass
+            except Exception:
+                break
+        s.close()
+    except Exception:
+        try:
+            s.close()
+        except Exception:
+            pass
+
+    if not responses:
+        return {
+            "transport": "lan",
+            "state": "unknown",
+            "detail": "Holat aniqlanmadi (printer javob bermadi)",
+        }
+
+    b1 = responses.get(1)
+    b2 = responses.get(2)
+    b4 = responses.get(4)
+
+    # 1. Qog'oz tugaganmi?
+    if (b2 is not None and (b2 & (1 << 5))) or (b4 is not None and (b4 & 0x60)):
+        return {
+            "transport": "lan",
+            "state": "paper_out",
+            "detail": "Qog'oz tugagan",
+            "error": "Qog'oz tugagan",
+        }
+
+    # 2. Qopqoq ochiqmi?
+    if b2 is not None and (b2 & (1 << 2)):
+        return {
+            "transport": "lan",
+            "state": "cover_open",
+            "detail": "Qopqoq ochiq",
+            "error": "Qopqoq ochiq",
+        }
+
+    # 3. Offline holatdami?
+    if b1 is not None and (b1 & (1 << 3)):
+        return {
+            "transport": "lan",
+            "state": "offline",
+            "detail": "Printer offline",
+            "error": "Printer offline",
+        }
+
+    # 4. Printer xatolik holatidami?
+    if b2 is not None and (b2 & (1 << 6)):
+        return {
+            "transport": "lan",
+            "state": "error",
+            "detail": "Printer xatosi",
+            "error": "Printer xatosi",
+        }
+
+    # 5. Qog'oz tugayaptimi (ogohlantirish)?
+    if b4 is not None and (b4 & 0x0C):
+        return {
+            "transport": "lan",
+            "state": "ok",
+            "detail": "Tayyor (Qog'oz tugayapti)",
+        }
+
+    return {
+        "transport": "lan",
+        "state": "ok",
+        "detail": "Tayyor",
+    }
+
+
+def check_usb_printer_status(printer_name: str) -> Dict[str, Any]:
+    """
+    Windows Spooler orqali USB printer holatini (GetPrinter va EnumJobs) tekshirish.
+    win32print konstantalari NOMI bilan ishlatiladi.
+    """
+    target = (printer_name or "").strip()
+    if not target:
+        return {
+            "transport": "usb",
+            "state": "error",
+            "detail": "Printer sozlanmagan",
+            "error": "Printer sozlanmagan",
+            "jobs_in_queue": 0,
+        }
+
+    if platform.system() != "Windows":
+        return {
+            "transport": "usb",
+            "state": "unknown",
+            "detail": "Windows bo'lmagan tizim (holat noma'lum)",
+            "jobs_in_queue": 0,
+        }
+
+    try:
+        import win32print
+    except ImportError:
+        return {
+            "transport": "usb",
+            "state": "unknown",
+            "detail": "win32print moduli mavjud emas",
+            "jobs_in_queue": 0,
+        }
+
+    try:
+        hPrinter = win32print.OpenPrinter(target)
+    except Exception as e:
+        return {
+            "transport": "usb",
+            "state": "error",
+            "detail": f"Printer ochilmadi: {e}",
+            "error": f"Printer ochilmadi ({target})",
+            "jobs_in_queue": 0,
+        }
+
+    try:
+        pinfo = win32print.GetPrinter(hPrinter, 2)
+        status_val = int(pinfo.get("Status", 0) or 0)
+        attr_val = int(pinfo.get("Attributes", 0) or 0)
+
+        try:
+            jobs = win32print.EnumJobs(hPrinter, 0, -1, 1)
+            spooler_jobs = len(jobs)
+        except Exception:
+            spooler_jobs = 0
+    finally:
+        win32print.ClosePrinter(hPrinter)
+
+    if status_val & win32print.PRINTER_STATUS_PAPER_OUT:
+        return {
+            "transport": "usb",
+            "state": "paper_out",
+            "detail": "Qog'oz tugagan",
+            "error": "Qog'oz tugagan",
+            "jobs_in_queue": spooler_jobs,
+        }
+
+    if status_val & win32print.PRINTER_STATUS_PAPER_JAM:
+        return {
+            "transport": "usb",
+            "state": "error",
+            "detail": "Qog'oz tiqilib qolgan (Paper Jam)",
+            "error": "Qog'oz tiqilib qolgan",
+            "jobs_in_queue": spooler_jobs,
+        }
+
+    if status_val & win32print.PRINTER_STATUS_DOOR_OPEN:
+        return {
+            "transport": "usb",
+            "state": "cover_open",
+            "detail": "Qopqoq ochiq",
+            "error": "Qopqoq ochiq",
+            "jobs_in_queue": spooler_jobs,
+        }
+
+    if status_val & win32print.PRINTER_STATUS_OFFLINE:
+        return {
+            "transport": "usb",
+            "state": "offline",
+            "detail": "Printer offline",
+            "error": "Printer offline",
+            "jobs_in_queue": spooler_jobs,
+        }
+
+    if status_val & win32print.PRINTER_STATUS_NOT_AVAILABLE:
+        return {
+            "transport": "usb",
+            "state": "offline",
+            "detail": "Printer mavjud emas",
+            "error": "Printer offline",
+            "jobs_in_queue": spooler_jobs,
+        }
+
+    if attr_val & win32print.PRINTER_ATTRIBUTE_WORK_OFFLINE:
+        return {
+            "transport": "usb",
+            "state": "offline",
+            "detail": "Printer offline (Work Offline)",
+            "error": "Printer offline",
+            "jobs_in_queue": spooler_jobs,
+        }
+
+    if status_val & win32print.PRINTER_STATUS_ERROR:
+        return {
+            "transport": "usb",
+            "state": "error",
+            "detail": "Printer xatolik holatida",
+            "error": "Printer xatosi",
+            "jobs_in_queue": spooler_jobs,
+        }
+
+    detail = "Tayyor"
+    if spooler_jobs > 0:
+        detail = f"Tayyor (navbatda: {spooler_jobs})"
+
+    return {
+        "transport": "usb",
+        "state": "ok",
+        "detail": detail,
+        "jobs_in_queue": spooler_jobs,
+    }
+
+
+def get_printer_health(printer: Optional[str]) -> Dict[str, Any]:
+    """
+    Printer holatini aniqlash (LAN yoki USB).
+    Qaytaradi: {transport: 'lan'|'usb', state: 'ok'|'offline'|'paper_out'|'cover_open'|'error'|'unknown', detail: str}
+    """
+    target = (printer or "").strip()
+    if not target:
+        return {
+            "transport": "usb",
+            "state": "unknown",
+            "detail": "Printer sozlanmagan",
+        }
+
+    transport = detect_transport(target)
+    if transport == "lan":
+        return check_lan_printer_status(target)
+    else:
+        return check_usb_printer_status(target)
 
 
 def print_to_network_printer(
@@ -1057,7 +1351,7 @@ def print_to_network_printer(
     """
     Wi-Fi yoki Ethernet (LAN kabel) orqali ulangan Xprinterga
     to'g'ridan-to'g'ri TCP Port 9100 orqali chek chop etish.
-    (Oshxonadagi uzoq masofali printerlar uchun eng qulay usul!)
+    Chop etishdan oldin ESC/POS real-time status tekshiriladi.
     """
     host = ip_or_host.strip()
     if ":" in host:
@@ -1068,14 +1362,24 @@ def print_to_network_printer(
         except Exception:
             pass
 
+    # 1. LAN real-time status tekshiruvi
+    status = check_lan_printer_status(host, port)
+    if status["state"] in ("offline", "paper_out", "cover_open", "error"):
+        err_msg = status.get("error") or status.get("detail")
+        logger.warning(f"Tarmoq printeri ({host}:{port}) holat xatosi: {err_msg}")
+        return {
+            "success": False,
+            "error": err_msg,
+        }
+
+    # 2. Chop etish
     try:
-        # Matnni ESC/POS baytlariga aylantirish (kod sahifasi bilan)
         payload = build_escpos_payload(raw_text, cut_paper=cut_paper,
                                        codepage=codepage, font_size=font_size,
                                        char_spacing=char_spacing, line_spacing=line_spacing)
 
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        s.settimeout(1.5)
+        s.settimeout(2.5)
         s.connect((host, port))
         s.sendall(payload)
         s.close()
@@ -1083,13 +1387,13 @@ def print_to_network_printer(
         return {
             "success": True,
             "printer": f"LAN {host}:{port}",
-            "message": f"Chek oshxona printeriga ({host}:{port}) tarmoq orqali muvaffaqiyatli yuborildi"
+            "message": f"Chek oshxona printeriga ({host}:{port}) tarmoq orqali muvaffaqiyatli yuborildi",
         }
     except Exception as e:
         logger.error(f"Tarmoq printeriga ({host}:{port}) ulanishda xatolik: {e}")
         return {
             "success": False,
-            "error": f"Oshxona printeriga ({host}:{port}) ulanib bo'lmadi. Printer yoqilgani va Wi-Fi/kabelga ulangani tekshirilsin. Xato: {str(e)}"
+            "error": f"Printerga ulanib bo'lmadi ({host}:{port})",
         }
 
 
@@ -1106,9 +1410,10 @@ def print_to_windows_printer(
     USB, Windows Spooler yoki Tarmoq (LAN/Wi-Fi IP) orqali chop etish
     """
     target = (printer_name or "").strip()
+    if not target:
+        return {"success": False, "error": "Printer sozlanmagan"}
 
-    # Agar kiritilgan qiymat IP manzil bo'lsa -> Tarmoq orqali yuborish!
-    if is_ip_address(target):
+    if detect_transport(target) == "lan":
         return print_to_network_printer(target, raw_text=raw_text, cut_paper=cut_paper,
                                         codepage=codepage, font_size=font_size,
                                         char_spacing=char_spacing, line_spacing=line_spacing)
@@ -1116,31 +1421,16 @@ def print_to_windows_printer(
     if platform.system() != "Windows":
         return {"success": False, "error": "USB to'g'ridan-to'g'ri chop etish faqat Windows tizimida ishlaydi. Tarmoq printeri uchun IP manzil kiriting (masalan: 192.168.1.100)."}
 
+    # USB holatini tekshirish
+    status = check_usb_printer_status(target)
+    if status["state"] in ("offline", "paper_out", "cover_open", "error"):
+        err_msg = status.get("error") or status.get("detail")
+        logger.warning(f"USB printer '{target}' holat xatosi: {err_msg}")
+        return {"success": False, "error": f"{err_msg}"}
+
     try:
         import win32print
 
-        target = printer_name
-        installed = get_installed_printers()
-
-        if not target:
-            # Xprinter yoki thermal printerni avtomatik qidirish
-            for p in installed:
-                p_lower = p.lower()
-                if any(k in p_lower for k in ["xprinter", "xp-", "pos", "thermal", "58", "80", "receipt", "printer"]):
-                    target = p
-                    break
-
-        if not target and installed:
-            # Standart printerni olish
-            try:
-                target = win32print.GetDefaultPrinter()
-            except Exception:
-                target = installed[0]
-
-        if not target:
-            return {"success": False, "error": "Hech qanday printer topilmadi. Xprinter drayverini o'rnating."}
-
-        # Matnni ESC/POS baytlariga aylantirish (kod sahifasi bilan)
         payload = build_escpos_payload(raw_text, cut_paper=cut_paper,
                                        codepage=codepage, font_size=font_size,
                                        char_spacing=char_spacing, line_spacing=line_spacing)
@@ -1241,8 +1531,12 @@ def _send_raw_bytes(payload: bytes, target: str) -> Dict[str, Any]:
     Tayyor ESC/POS baytlarni printerga yuboradi (USB nomi yoki LAN IP).
     Kod sahifasi sinovi kabi maxsus holatlar uchun.
     """
-    if is_ip_address(target):
-        host, port = target.strip(), 9100
+    target = (target or "").strip()
+    if not target:
+        return {"success": False, "error": "Printer sozlanmagan"}
+
+    if detect_transport(target) == "lan":
+        host, port = target, 9100
         if ":" in host:
             host, _, prt = host.partition(":")
             try:

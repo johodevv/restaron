@@ -52,9 +52,9 @@ def get_printer_key(printer_name: Optional[str]) -> str:
     - LAN printer: 'ip:port' (masalan: 192.168.1.100:9100)
     - USB / Windows printer: printer nomi (masalan: XP-Q80A yoki __default__)
     """
-    from app.core.printer_service import is_ip_address
+    from app.core.printer_service import detect_transport
     raw = (printer_name or "").strip()
-    if is_ip_address(raw):
+    if detect_transport(raw) == "lan":
         if ":" in raw:
             parts = raw.split(":")
             port = parts[1] if len(parts) > 1 and parts[1] else "9100"
