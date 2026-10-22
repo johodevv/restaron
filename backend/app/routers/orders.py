@@ -2757,8 +2757,14 @@ async def update_order_status(
     order_id: int,
     payload: OrderStatusUpdate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role("admin", "waiter", "chef", "developer")),
+    current_user: User = Depends(require_role("admin", "waiter", "chef", "developer", "cashier")),
 ):
+    if payload.status == OrderStatus.PAID:
+        raise HTTPException(
+            status_code=400,
+            detail="To'lov faqat /checkout orqali qabul qilinadi",
+        )
+
     result = await db.execute(
         select(Order)
         .options(
@@ -2771,6 +2777,34 @@ async def update_order_status(
     order = result.scalar_one_or_none()
     if not order:
         raise HTTPException(status_code=404, detail="Buyurtma topilmadi")
+
+    if order.status in (OrderStatus.PAID, OrderStatus.CANCELLED) or order.is_paid:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Buyurtma allaqachon {order.status.value} holatida, uni o'zgartirib bo'lmaydi",
+        )
+
+    user_role = current_user.role.value if hasattr(current_user.role, "value") else str(current_user.role)
+    ALLOWED_STATUSES_BY_ROLE = {
+        "chef": {OrderStatus.PREPARING, OrderStatus.READY},
+        "waiter": {OrderStatus.CONFIRMED, OrderStatus.SERVED},
+        "admin": {OrderStatus.CONFIRMED, OrderStatus.PREPARING, OrderStatus.READY, OrderStatus.SERVED, OrderStatus.CANCELLED},
+        "developer": {OrderStatus.CONFIRMED, OrderStatus.PREPARING, OrderStatus.READY, OrderStatus.SERVED, OrderStatus.CANCELLED},
+        "cashier": {OrderStatus.CONFIRMED, OrderStatus.PREPARING, OrderStatus.READY, OrderStatus.SERVED, OrderStatus.CANCELLED},
+    }
+    allowed_for_user = ALLOWED_STATUSES_BY_ROLE.get(user_role, set())
+    if payload.status not in allowed_for_user:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Sizning rolingiz ({user_role}) ushbu statusga ({payload.status.value}) o'zgartirish huquqiga ega emas",
+        )
+
+    if payload.status == OrderStatus.CANCELLED:
+        if not payload.note or len(payload.note.strip()) < 3:
+            raise HTTPException(
+                status_code=400,
+                detail="Buyurtmani bekor qilish uchun sabab (note) kiritilishi shart (kamida 3 belgi)",
+            )
 
     old_status = order.status
     order.status = payload.status
@@ -2855,6 +2889,20 @@ async def update_order_status(
             data={"order_id": order.id, "table_id": order.table_id, "table_number": table_num},
         )
     elif payload.status == OrderStatus.CANCELLED:
+        sent_items = [i for i in (order.items or []) if (i.sent_quantity or 0) > 0]
+        sent_items_count = len(sent_items)
+
+        if sent_items_count > 0:
+            set_res = await db.execute(
+                select(RestaurantSettings).where(RestaurantSettings.restaurant_id == order.restaurant_id)
+            )
+            settings = set_res.scalar_one_or_none()
+            waiter_name = (order.waiter.full_name or order.waiter.username) if order.waiter else (current_user.full_name or current_user.username)
+            for item in sent_items:
+                asyncio.create_task(
+                    _send_cancellation_receipt(order, item.menu_item, item.sent_quantity, waiter_name, settings)
+                )
+
         from app.core.audit import log_audit_event
         await log_audit_event(
             db=db,
@@ -2863,22 +2911,25 @@ async def update_order_status(
             user=current_user,
             entity_type="order",
             entity_id=order.id,
-            details={"order_number": order.order_number, "note": payload.note},
+            details={
+                "order_number": order.order_number,
+                "note": payload.note.strip(),
+                "sent_items": sent_items_count,
+            },
         )
-    elif payload.status == OrderStatus.PAID:
-        order.is_paid = True
-        # Tekshirish: stolda boshqa to'lanmagan buyurtmalar bormi?
-        other_orders_res = await db.execute(
-            select(func.count(Order.id)).where(
-                Order.table_id == order.table_id,
-                Order.id != order.id,
-                Order.is_paid == False,
-                Order.status != OrderStatus.CANCELLED,
+
+        if order.table_id:
+            other_orders_res = await db.execute(
+                select(func.count(Order.id)).where(
+                    Order.table_id == order.table_id,
+                    Order.id != order.id,
+                    Order.is_paid == False,
+                    Order.status != OrderStatus.CANCELLED,
+                )
             )
-        )
-        remaining = other_orders_res.scalar() or 0
-        if remaining == 0 and order.table:
-            order.table.status = TableStatus.AVAILABLE
+            remaining = other_orders_res.scalar() or 0
+            if remaining == 0 and order.table:
+                order.table.status = TableStatus.AVAILABLE
 
     # Umumiy status o'zgarishi haqida adminga bildirishnoma
     await create_notification(
