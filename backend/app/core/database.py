@@ -118,6 +118,7 @@ def _sync_sqlite_migrations(sync_conn):
             ("receipt_note", "TEXT"),
             ("service_fee_percent", "FLOAT DEFAULT 12.0"),
             ("service_fee_amount", "FLOAT DEFAULT 0.0"),
+            ("discount", "FLOAT DEFAULT 0.0"),
             ("payment_method", "VARCHAR(50) DEFAULT 'cash'"),
             ("cash_amount", "FLOAT DEFAULT 0.0"),
             ("card_amount", "FLOAT DEFAULT 0.0"),
@@ -126,6 +127,14 @@ def _sync_sqlite_migrations(sync_conn):
             ("waiter_share_percent", "FLOAT DEFAULT 0.0"),
             ("waiter_share_amount", "FLOAT DEFAULT 0.0"),
             ("closed_at", "TIMESTAMP"),
+        ],
+        "tables": [
+            ("reserved_by_name", "VARCHAR(100)"),
+            ("reserved_by_phone", "VARCHAR(50)"),
+            ("reserved_time", "VARCHAR(50)"),
+            ("reserved_guests", "INTEGER"),
+            ("deposit_amount", "FLOAT DEFAULT 0.0"),
+            ("reservation_note", "TEXT"),
         ],
         "order_items": [
             ("item_time", "VARCHAR(20)"),
@@ -146,6 +155,7 @@ def _sync_sqlite_migrations(sync_conn):
         ],
         "users": [
             ("commission_percent", "FLOAT DEFAULT 0.0"),
+            ("is_approved", "BOOLEAN DEFAULT 0"),
         ],
     }
 
@@ -163,6 +173,12 @@ def _sync_sqlite_migrations(sync_conn):
                     added.add((table_name, col_name))
         except Exception as e:
             pass
+
+    # Mavjud xodimlar is_approved holati bo'sh bo'lsa tasdiqlangan (1) deb belgilaymiz
+    try:
+        sync_conn.execute(text("UPDATE users SET is_approved = 1 WHERE is_approved IS NULL"))
+    except Exception:
+        pass
 
     # Chek sarlavhasida dasturning eski sukut nomi ("RestAron") qolib
     # ketgan bo'lsa tozalaymiz — u restoran nomini bosib, chek tepasida
@@ -202,4 +218,9 @@ async def create_tables():
         await conn.run_sync(Base.metadata.create_all)
         if is_sqlite:
             await conn.run_sync(_sync_sqlite_migrations)
+        # Har safar server ishga tushganda bo'sh bo'lgan tasdiqlarni tiklash
+        try:
+            await conn.execute(text("UPDATE users SET is_approved = 1 WHERE is_approved IS NULL"))
+        except Exception:
+            pass
 

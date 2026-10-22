@@ -24,6 +24,7 @@ async def seed_initial_data():
                     hashed_password=get_password_hash("dev123456"),
                     role=UserRole.DEVELOPER,
                     is_active=True,
+                    is_approved=True,
                 )
                 db.add(dev)
 
@@ -38,7 +39,7 @@ async def seed_initial_data():
                 restaurant = Restaurant(
                     name="Dunyo Choyxonasi",
                     slug="dunyo-choyxonasi",
-                    description="O'zbekona mehmondo'stlik, shinam so'rilar va haqiqiy milliy taomlar maskani",
+                    description="Xorazm milliy taomlari va tezkor sifatli xizmat maskani",
                     address="Xorazm viloyati, Xiva tumani",
                     phone="+998884593400",
                     commission_percent=5.0,
@@ -56,7 +57,7 @@ async def seed_initial_data():
                 db.add(settings_obj)
             else:
                 restaurant.name = "Dunyo Choyxonasi"
-                restaurant.description = "O'zbekona mehmondo'stlik, shinam so'rilar va haqiqiy milliy taomlar maskani"
+                restaurant.description = "Xorazm milliy taomlari va tezkor sifatli xizmat maskani"
                 restaurant.address = "Xorazm viloyati, Xiva tumani"
                 restaurant.phone = "+998884593400"
 
@@ -74,6 +75,7 @@ async def seed_initial_data():
             for u in demo_users:
                 u_res = await db.execute(select(User).where(User.username == u["username"]))
                 existing_u = u_res.scalar_one_or_none()
+                is_appr = u["role"] in (UserRole.ADMIN, UserRole.DEVELOPER)
                 if not existing_u:
                     db.add(User(
                         username=u["username"],
@@ -82,11 +84,13 @@ async def seed_initial_data():
                         role=u["role"],
                         restaurant_id=restaurant.id,
                         is_active=True,
+                        is_approved=is_appr,
                     ))
                 else:
                     existing_u.hashed_password = get_password_hash(u["pass"])
                     existing_u.role = u["role"]
                     existing_u.is_active = True
+                    existing_u.is_approved = is_appr
                     if not existing_u.restaurant_id:
                         existing_u.restaurant_id = restaurant.id
 
@@ -96,7 +100,7 @@ async def seed_initial_data():
                     select(Table).where(Table.restaurant_id == restaurant.id, Table.number == i)
                 )
                 existing_t = t_res.scalar_one_or_none()
-                room_name = "Asosiy Zal (So'ri)" if i <= 4 else ("Shinam Ayvon" if i <= 8 else "VIP Xona")
+                room_name = "Asosiy Zal" if i <= 4 else ("Ayvon" if i <= 8 else "VIP Xona")
                 if not existing_t:
                     qr_token = str(uuid.uuid4())
                     db.add(Table(

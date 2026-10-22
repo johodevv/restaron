@@ -54,6 +54,27 @@ async def login(payload: LoginRequest, db: AsyncSession = Depends(get_db)):
         )
 
     role_val = user.role.value if hasattr(user.role, "value") else str(user.role)
+    if role_val in ("waiter", "chef", "cashier") and not getattr(user, "is_approved", False):
+        try:
+            from app.websockets.manager import manager
+            await manager.broadcast_to_roles(
+                user.restaurant_id or 1,
+                ["admin", "developer"],
+                {
+                    "type": "staff_login_request",
+                    "user_id": user.id,
+                    "username": user.username,
+                    "full_name": user.full_name,
+                    "role": role_val,
+                },
+            )
+        except Exception:
+            pass
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Kirish so'rovi Adminga yuborildi! Admin tasdiqlashini kuting...",
+        )
+
     access_token = create_access_token(
         data={"sub": str(user.id), "role": role_val},
         expires_delta=timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES),

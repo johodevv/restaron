@@ -31,7 +31,9 @@ import {
   Flame,
   Check,
   ShoppingBag,
-  Bike
+  Bike,
+  ArrowRightLeft,
+  ShoppingCart
 } from 'lucide-react';
 
 export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckout: propCanCheckout } = {}) => {
@@ -53,6 +55,8 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
   const [customerName, setCustomerName] = useState('');
   const [customerPhone, setCustomerPhone] = useState('');
   const [deliveryAddress, setDeliveryAddress] = useState('');
+  // Mobil ekranda Savat va Menyu orasida qulay o'tish holati ('menu' | 'cart')
+  const [mobileTab, setMobileTab] = useState('menu');
 
   // Data states
   const [tables, setTables] = useState([]);
@@ -88,6 +92,27 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
   const [kitchenNoteModalOpen, setKitchenNoteModalOpen] = useState(false);
   const [kitchenSendSuccess, setKitchenSendSuccess] = useState(false);
   const [sendingToKitchen, setSendingToKitchen] = useState(false);
+
+  // Table transfer modal (Stolni ko'chirish — Aliposter 1.0.0.0 andozasi)
+  const [transferModalOpen, setTransferModalOpen] = useState(false);
+  const [transferLoading, setTransferLoading] = useState(false);
+
+  const handleTransferTable = async (targetTableId) => {
+    if (!selectedTable || !targetTableId) return;
+    setTransferLoading(true);
+    try {
+      const res = await api.post(`/tables/${selectedTable.id}/transfer/${targetTableId}`);
+      alert(res.message || "Buyurtma muvaffaqiyatli ko'chirildi! ✅");
+      setTransferModalOpen(false);
+      const dest = tables.find((t) => t.id === targetTableId);
+      if (dest) setSelectedTable(dest);
+      loadInitialData();
+    } catch (err) {
+      alert(err.message || "Ko'chirishda xatolik yuz berdi");
+    } finally {
+      setTransferLoading(false);
+    }
+  };
 
   // Checkout modal
   const [checkoutModalOpen, setCheckoutModalOpen] = useState(false);
@@ -223,28 +248,80 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
     }
   }, [tables]);
 
-  // WebSocket real-time updates
+  // WebSocket real-time updates (Granular & Zero-overhead, avoids full-page network refetches)
   useEffect(() => {
     const unsub = addEventListener('*', (event) => {
       if (event.type === 'call_waiter') {
         if (soundEnabled && playChime) playChime('urgent');
-        loadInitialData();
+        api.get(`/orders/calls?restaurant_id=${restaurantId}`).then((data) => setCalls(data || [])).catch(() => {});
       } else if (event.type === 'order_ready') {
         if (soundEnabled && playChime) playChime('success');
-        loadInitialData();
-      } else if (
-        event.type === 'order_updated' ||
-        event.type === 'order_paid' ||
-        event.type === 'table_status_updated'
-      ) {
-        loadInitialData();
+        api.get(`/orders/?restaurant_id=${restaurantId}`)
+          .then((data) => setReadyOrders((data || []).filter((o) => o.status === 'ready')))
+          .catch(() => {});
+      } else if (event.type === 'table_status_updated') {
+        const nextStatus = event.new_status || event.status;
+        setTables((prev) =>
+          prev.map((t) =>
+            t.id === event.table_id
+              ? {
+                  ...t,
+                  status: nextStatus || t.status,
+                  is_occupied: event.is_occupied !== undefined ? event.is_occupied : (nextStatus === 'occupied'),
+                }
+              : t
+          )
+        );
         if (selectedTable && event.table_id === selectedTable.id) {
-          fetchTableActiveOrder(selectedTable);
+          setSelectedTable((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  status: nextStatus || prev.status,
+                  is_occupied: event.is_occupied !== undefined ? event.is_occupied : (nextStatus === 'occupied'),
+                }
+              : null
+          );
+          if (nextStatus === 'available') {
+            setActiveOrder(null);
+          }
+        }
+      } else if (event.type === 'order_paid') {
+        setTables((prev) =>
+          prev.map((t) =>
+            t.id === event.table_id
+              ? { ...t, status: 'available', is_occupied: false }
+              : t
+          )
+        );
+        if (selectedTable && event.table_id === selectedTable.id) {
+          setSelectedTable((prev) => (prev ? { ...prev, status: 'available', is_occupied: false } : null));
+          setActiveOrder(null);
+        }
+      } else if (event.type === 'order_updated' || event.type === 'new_order') {
+        const isCancelled = event.order?.status === 'cancelled' || !event.order?.items || event.order?.items?.length === 0;
+        if (event.table_id) {
+          setTables((prev) =>
+            prev.map((t) =>
+              t.id === event.table_id ? { ...t, status: isCancelled ? 'available' : 'occupied', is_occupied: !isCancelled } : t
+            )
+          );
+        }
+        if (selectedTable && event.table_id === selectedTable.id) {
+          if (event.order) {
+            if (isCancelled) {
+              setActiveOrder(null);
+            } else {
+              setActiveOrder(event.order);
+            }
+          } else {
+            fetchTableActiveOrder(selectedTable);
+          }
         }
       }
     });
     return () => unsub();
-  }, [addEventListener, selectedTable, soundEnabled, playChime]);
+  }, [addEventListener, selectedTable, soundEnabled, playChime, restaurantId]);
 
   // Tortiladigan taom qo'shilsa — og'irlik oynasini darhol ochamiz.
   // Ofitsiant baliqni tarozida tortib, aniq og'irligini kiritadi.
@@ -271,6 +348,7 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
     (it.manual_price !== null && it.manual_price !== undefined) || it.weight > 0;
 
   // Add Item to Table (Click on food card)
+  // Add Item to Table (Click on food card) — Tezkor va Optimistik
   const handleAddItem = async (menuItem) => {
     if (menuItem.is_stop_list || menuItem.is_available === false) {
       alert(`"${menuItem.name}" hozirda stop-listda (tugagan)`);
@@ -311,60 +389,139 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
         }
       } else {
         // Mavjud buyurtmaga qo'shish
-        // Agar taom savatda allaqachon bo'lsa -> sonini +1 qilamiz.
-        // LEKIN hajmi belgilangan qator (masalan "Kola 1.5 L") birlashtirilmaydi —
-        // aks holda 1 L kola 1.5 L qatoriga qo'shilib ketadi va oshxona
-        // qaysi hajm kerakligini bilmay qoladi. Shunday holda yangi qator ochiladi.
-        // Tortiladigan taom (har baliq o'z og'irligiga ega) ham,
-        // hajmi belgilangan qator ham birlashtirilmaydi.
+        // Bir xil taom bo'lsa sonini oshiramiz
         const existingItem = (activeOrder.items || []).find(
-          (i) => i.menu_item_id === menuItem.id && !i.portion_size && !i.is_weighted
+          (i) => Number(i.menu_item_id) === Number(menuItem.id) && !i.is_weighted
         );
+
         if (existingItem) {
+          // 1. Darhol optimistik oshiramiz (0ms da ekranda yangilanadi)
+          const targetQty = existingItem.quantity + 1;
+          setActiveOrder((prev) => {
+            if (!prev) return prev;
+            const updatedItems = (prev.items || []).map((it) =>
+              it.id === existingItem.id
+                ? {
+                    ...it,
+                    quantity: targetQty,
+                    total_price: (it.unit_price || menuItem.price) * targetQty,
+                  }
+                : it
+            );
+            const sub = updatedItems.reduce((acc, it) => acc + (it.total_price || 0), 0);
+            return {
+              ...prev,
+              items: updatedItems,
+              subtotal: sub,
+              total: sub + (prev.service_fee_amount || 0) - (prev.discount || 0),
+            };
+          });
+
+          // 2. Serverga sinxronlash
           const updated = await api.patch(
             `/orders/${activeOrder.id}/items/${existingItem.id}/quantity`,
-            { quantity: existingItem.quantity + 1 }
+            { quantity: targetQty }
           );
-          setActiveOrder(updated);
+          if (updated) setActiveOrder(updated);
         } else {
           const updated = await api.post(`/orders/${activeOrder.id}/add-items`, {
             items: [{ menu_item_id: menuItem.id, quantity: 1 }],
             send_to_kitchen_immediately: false,
           });
-          setActiveOrder(updated);
-          openWeightModalIfNeeded(updated, menuItem.id);
+          if (updated) {
+            setActiveOrder(updated);
+            openWeightModalIfNeeded(updated, menuItem.id);
+          }
         }
       }
     } catch (err) {
-      alert(err.message || "Taom qo'shishda xatolik");
+      console.warn("Taom qo'shishda xatolik:", err);
+      if (selectedTable) fetchTableActiveOrder(selectedTable);
     }
   };
 
-  // Change quantity [- 1 +]
+  // Change quantity [- 1 +] — Optimistik va sezgir
   const handleQtyChange = async (item, delta) => {
     const newQty = item.quantity + delta;
     if (newQty <= 0) {
-      // O'chirish
       handleDeleteItem(item.id);
       return;
     }
+
+    // 1. Darhol ekranni yangilaymiz (0ms kechikish)
+    setActiveOrder((prev) => {
+      if (!prev) return prev;
+      const updatedItems = (prev.items || []).map((it) =>
+        it.id === item.id
+          ? {
+              ...it,
+              quantity: newQty,
+              total_price: (it.unit_price || 0) * newQty,
+            }
+          : it
+      );
+      const sub = updatedItems.reduce((acc, it) => acc + (it.total_price || 0), 0);
+      return {
+        ...prev,
+        items: updatedItems,
+        subtotal: sub,
+        total: sub + (prev.service_fee_amount || 0) - (prev.discount || 0),
+      };
+    });
+
     try {
       const updated = await api.patch(`/orders/${activeOrder.id}/items/${item.id}/quantity`, {
         quantity: newQty,
       });
-      setActiveOrder(updated);
+      if (updated) setActiveOrder(updated);
     } catch (err) {
-      alert(err.message || 'Xatolik');
+      console.warn('Soni yangilashda xatolik:', err);
+      if (selectedTable) fetchTableActiveOrder(selectedTable);
     }
   };
 
-  // Delete item from order
+  // Delete item from order — Darhol ekrandan olib tashlaydi
   const handleDeleteItem = async (itemId) => {
+    if (!activeOrder) return;
+
+    // 1. Darhol ekrandan o'chiramiz (0ms javob)
+    setActiveOrder((prev) => {
+      if (!prev) return null;
+      const filtered = (prev.items || []).filter((i) => i.id !== itemId);
+      if (filtered.length === 0) {
+        return null; // Savatda taom qolmasa butunlay yopamiz
+      }
+      const sub = filtered.reduce((acc, it) => acc + (it.total_price || 0), 0);
+      return {
+        ...prev,
+        items: filtered,
+        subtotal: sub,
+        total: sub + (prev.service_fee_amount || 0) - (prev.discount || 0),
+      };
+    });
+
     try {
       const updated = await api.delete(`/orders/${activeOrder.id}/items/${itemId}`);
-      setActiveOrder(updated);
+      if (updated) {
+        if (updated.status === 'cancelled' || !updated.items || updated.items.length === 0) {
+          setActiveOrder(null);
+        } else {
+          const cleanItems = (updated.items || []).filter((i) => i.id !== itemId);
+          if (cleanItems.length === 0) {
+            setActiveOrder(null);
+          } else {
+            setActiveOrder({
+              ...updated,
+              items: cleanItems,
+            });
+          }
+        }
+      }
     } catch (err) {
-      alert(err.message || 'Xatolik');
+      if (err.message && err.message.toLowerCase().includes('topilmadi')) {
+        return;
+      }
+      console.warn("Taomni o'chirishda xatolik:", err);
     }
   };
 
@@ -571,9 +728,9 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
       : allItems;
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans select-none">
+    <div className="h-[calc(100vh-64px)] max-h-[calc(100vh-64px)] overflow-hidden bg-slate-950 text-slate-100 flex flex-col font-sans select-none">
       {/* ─── Yuqori panel ──────────────────────────────────────────── */}
-      <header className="h-14 bg-emerald-950/80 border-b border-emerald-800/60 px-4 flex items-center justify-between shadow-lg backdrop-blur-md">
+      <header className="h-14 bg-emerald-950/80 border-b border-emerald-800/60 px-4 flex items-center justify-between shadow-lg backdrop-blur-md shrink-0">
         <div className="flex items-center gap-3">
           {/* "Stollar" — chaqiruvlar yoki tayyor taomlardan POS ekraniga
               qaytish tugmasi. Olib tashlangan: begona nom va bu
@@ -770,9 +927,43 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
         </div>
       ) : (
         /* ── POS EKRANI (stol zakazi) ──────────────────────────────── */
-        <div className="flex-1 flex flex-col lg:flex-row overflow-hidden">
-          {/* ── Chap Panel: Tanlangan Stol va Zakaz (Katta va qulay shriftlar) ─────────── */}
-          <div className="w-full lg:w-[480px] xl:w-[500px] bg-slate-900/95 border-r border-slate-800 flex flex-col justify-between shrink-0 shadow-2xl">
+        <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
+          {/* ── Mobil Ko'rinish uchun Tablar (Faqat mobil ekranda chiqadi) ── */}
+          <div className="lg:hidden flex items-center gap-1.5 p-2 bg-slate-950 border-b border-slate-800 shrink-0">
+            <button
+              type="button"
+              onClick={() => setMobileTab('menu')}
+              className={`flex-1 py-2 px-3 rounded-xl font-black text-xs flex items-center justify-center gap-1.5 transition-all ${
+                mobileTab === 'menu'
+                  ? 'bg-emerald-600 text-white shadow-md ring-1 ring-emerald-400'
+                  : 'bg-slate-900 text-slate-400 border border-slate-800'
+              }`}
+            >
+              <UtensilsCrossed className="w-4 h-4" />
+              <span>Taomlar ({displayedItems.length})</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setMobileTab('cart')}
+              className={`flex-1 py-2 px-3 rounded-xl font-black text-xs flex items-center justify-center gap-1.5 transition-all ${
+                mobileTab === 'cart'
+                  ? 'bg-emerald-600 text-white shadow-md ring-1 ring-emerald-400'
+                  : 'bg-slate-900 text-slate-400 border border-slate-800'
+              }`}
+            >
+              <ShoppingCart className="w-4 h-4" />
+              <span>Savat {activeOrder?.items?.length ? `(${activeOrder.items.length})` : ''}</span>
+            </button>
+          </div>
+
+          <div className="flex-1 flex flex-col lg:flex-row overflow-hidden min-h-0">
+            {/* ── Chap Panel: Tanlangan Stol va Zakaz (Katta va qulay shriftlar) ─────────── */}
+            <div
+              className={`w-full lg:w-[460px] xl:w-[480px] bg-slate-900/95 border-r border-slate-800 flex flex-col shrink-0 shadow-2xl h-full overflow-hidden min-h-0 ${
+                mobileTab === 'cart' ? 'flex' : 'hidden lg:flex'
+              }`}
+            >
             {/* 
               Rejim almashtirgich (Faqat Admin / Kassir uchun):
               🟢 "Stolda" | 🛍️ "Olib ketish" | 🛵 "Dastavka"
@@ -890,13 +1081,13 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
             )}
 
             {/* Table Header Bar */}
-            <div className="p-4 bg-slate-950/80 border-b border-slate-800 flex items-center justify-between">
+            <div className="px-3.5 py-2 bg-slate-950/80 border-b border-slate-800 flex items-center justify-between shrink-0">
               <div>
-                <span className="text-[11px] text-slate-400 uppercase tracking-wider font-bold block">
+                <span className="text-[10px] text-slate-400 uppercase tracking-wider font-bold block">
                   Joriy stol:
                 </span>
                 <div className="flex items-center gap-2 mt-0.5">
-                  <h2 className="text-xl sm:text-2xl font-black text-white tracking-tight">
+                  <h2 className="text-lg sm:text-xl font-black text-white tracking-tight">
                     {selectedTable?.room ? `${selectedTable.room} - ` : ''}
                     {selectedTable?.name || `Stol #${selectedTable?.number || 1}`}
                   </h2>
@@ -911,22 +1102,36 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
                 </div>
               </div>
 
-              {/* Tanlangan zonadagi stollarni tez almashtirish */}
-              <select
-                value={selectedTable?.id || ''}
-                onChange={(e) => {
-                  const t = tables.find((x) => x.id === parseInt(e.target.value));
-                  if (t) setSelectedTable(t);
-                }}
-                className="bg-slate-800 border-2 border-slate-700 hover:border-emerald-500 text-sm font-bold text-white rounded-xl px-3 py-2 focus:outline-none focus:border-emerald-500 shadow-sm"
-              >
-                {zoneTables.map((tbl) => (
-                  <option key={tbl.id} value={tbl.id}>
-                    {tbl.room ? `${tbl.room} ` : ''}#{tbl.number} (
-                    {tbl.status === 'occupied' ? 'Band' : 'Bo\'sh'})
-                  </option>
-                ))}
-              </select>
+              {/* Stolni ko'chirish va stollarni tanlash */}
+              <div className="flex items-center gap-2">
+                {activeOrder && selectedTable && (
+                  <button
+                    type="button"
+                    onClick={() => setTransferModalOpen(true)}
+                    className="px-2.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-black text-amber-300 border border-slate-700 hover:border-amber-400 transition-all active:scale-95 flex items-center gap-1.5 shadow-sm"
+                    title="Stolni ko'chirish (Transfer)"
+                  >
+                    <ArrowRightLeft className="w-3.5 h-3.5" />
+                    <span className="hidden sm:inline">Ko'chirish</span>
+                  </button>
+                )}
+
+                <select
+                  value={selectedTable?.id || ''}
+                  onChange={(e) => {
+                    const t = tables.find((x) => x.id === parseInt(e.target.value));
+                    if (t) setSelectedTable(t);
+                  }}
+                  className="bg-slate-800 border-2 border-slate-700 hover:border-emerald-500 text-sm font-bold text-white rounded-xl px-3 py-2 focus:outline-none focus:border-emerald-500 shadow-sm"
+                >
+                  {zoneTables.map((tbl) => (
+                    <option key={tbl.id} value={tbl.id}>
+                      {tbl.room ? `${tbl.room} ` : ''}#{tbl.number} (
+                      {tbl.status === 'occupied' ? 'Band' : 'Bo\'sh'})
+                    </option>
+                  ))}
+                </select>
+              </div>
             </div>
 
             {/* ─── Zonalar va stollar ─────────────────────────────
@@ -934,11 +1139,11 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
                 Endi "Terrassa" ni bossangiz faqat terrassadagi stollar
                 chiqadi. */}
             {zoneNames.length > 0 && (
-              <div className="px-3 pt-2.5 pb-1 bg-slate-950/60 border-b border-slate-800">
-                <div className="flex items-center gap-1.5 overflow-x-auto pb-1.5">
+              <div className="px-3 py-1.5 bg-slate-950/60 border-b border-slate-800 shrink-0">
+                <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
                   <button
                     onClick={() => setSelectedZone('')}
-                    className={`shrink-0 px-3 py-1.5 rounded-xl text-xs font-black transition-all active:scale-95 ${selectedZone === ''
+                    className={`shrink-0 px-2.5 py-1 rounded-xl text-xs font-black transition-all active:scale-95 ${selectedZone === ''
                         ? 'bg-emerald-500 text-slate-950 shadow-md'
                         : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
                       }`}
@@ -949,7 +1154,7 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
                     <button
                       key={z}
                       onClick={() => setSelectedZone(z)}
-                      className={`shrink-0 px-3 py-1.5 rounded-xl text-xs font-black transition-all active:scale-95 ${selectedZone === z
+                      className={`shrink-0 px-2.5 py-1 rounded-xl text-xs font-black transition-all active:scale-95 ${selectedZone === z
                           ? 'bg-emerald-500 text-slate-950 shadow-md'
                           : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
                         }`}
@@ -959,9 +1164,9 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
                   ))}
                 </div>
 
-                <div className="flex items-center gap-1.5 overflow-x-auto pb-2 pt-0.5">
+                <div className="flex items-center gap-1.5 overflow-x-auto pb-1 pt-0.5">
                   {zoneTables.length === 0 ? (
-                    <span className="text-[11px] font-bold text-slate-500 py-1.5">
+                    <span className="text-[11px] font-bold text-slate-500 py-1">
                       Bu zonada stol yo'q
                     </span>
                   ) : (
@@ -973,7 +1178,7 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
                           key={tbl.id}
                           onClick={() => setSelectedTable(tbl)}
                           title={`${tbl.room || ''} #${tbl.number}`}
-                          className={`shrink-0 min-w-[56px] px-2.5 py-1.5 rounded-xl text-sm font-black border-2 transition-all active:scale-95 ${active
+                          className={`shrink-0 min-w-[48px] px-2 py-1 rounded-xl text-xs sm:text-sm font-black border-2 transition-all active:scale-95 ${active
                               ? 'bg-white text-slate-950 border-white shadow-lg'
                               : busy
                                 ? 'bg-red-500/20 text-red-300 border-red-500/50 hover:border-red-400'
@@ -989,13 +1194,26 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
               </div>
             )}
 
-            {/* Active Items Table: max-h-48 custom-scrollbar mobilda */}
-            <div className="max-h-48 sm:max-h-60 lg:flex-1 overflow-y-auto custom-scrollbar overflow-x-hidden">
-              <div className="grid grid-cols-12 text-xs sm:text-sm font-black text-slate-300 bg-slate-950/70 px-4 py-2.5 border-b border-slate-800 uppercase tracking-wider">
+            {/* Mobil uchun Menyuga qaytish / Taom qo'shish tugmasi */}
+            <div className="lg:hidden px-3 py-1.5 bg-slate-950/90 border-b border-slate-800 shrink-0">
+              <button
+                type="button"
+                onClick={() => setMobileTab('menu')}
+                className="w-full py-2 px-3 rounded-xl bg-emerald-600/20 hover:bg-emerald-600/30 border border-emerald-500/40 text-emerald-300 font-bold text-xs flex items-center justify-center gap-1.5 active:scale-95 transition-all"
+              >
+                <Plus className="w-4 h-4" />
+                <span>+ Yana taom qo'shish (Menyuga o'tish)</span>
+              </button>
+            </div>
+
+            {/* Active Items Table: flex-1 to'liq balandlik, hech qanday tor max-h cheklovisiz */}
+            <div className="flex-1 overflow-y-auto custom-scrollbar overflow-x-hidden min-h-0">
+              <div className="grid grid-cols-12 text-xs sm:text-sm font-black text-slate-300 bg-slate-950/70 px-3 sm:px-4 py-2.5 border-b border-slate-800 uppercase tracking-wider">
                 <span className="col-span-5">Taom nomi</span>
-                <span className="col-span-3 text-right">Narxi</span>
+                <span className="col-span-2 text-right">Narxi</span>
                 <span className="col-span-2 text-center">Soni</span>
                 <span className="col-span-2 text-right">Jami</span>
+                <span className="col-span-1 text-center"></span>
               </div>
 
               {orderLoading ? (
@@ -1010,106 +1228,104 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
                   {activeOrder.items.map((it) => (
                     <div
                       key={it.id}
-                      className="grid grid-cols-12 items-center px-4 py-3 hover:bg-slate-800/50 transition-colors"
+                      className="grid grid-cols-12 items-center px-2.5 sm:px-3 py-1.5 hover:bg-slate-800/50 transition-colors"
                     >
                       {/* Name & time */}
-                      <div className="col-span-5 pr-1">
-                        <p className="font-extrabold text-white text-sm sm:text-base leading-snug">
+                      <div className="col-span-5 pr-1 min-w-0">
+                        <p className="font-extrabold text-white text-xs sm:text-sm leading-tight truncate">
                           {it.menu_item_name || 'Taom'}
                         </p>
 
-                        {/* Tortiladigan taom (baliq, go'sht): SUMMASI.
-                            Kiritilmaguncha chek chiqmaydi. */}
-                        {it.is_weighted && (
-                          <button
-                            onClick={() => {
-                              setWeightModalItem(it);
-                              setWeightValue(it.weight ? String(it.weight) : '');
-                              setPriceValue(
-                                it.manual_price !== null && it.manual_price !== undefined
-                                  ? String(Math.round(it.manual_price))
-                                  : it.total_price
-                                    ? String(Math.round(it.total_price))
-                                    : ''
-                              );
-                            }}
-                            title="Summasini kiritish"
-                            className={`mt-1 mb-0.5 px-2 py-1 rounded-lg text-[11px] font-black transition-all active:scale-95 block ${isPriced(it)
-                                ? 'bg-cyan-500/25 text-cyan-300 border border-cyan-500/50'
-                                : 'bg-red-600 text-white border border-red-400 animate-pulse'
-                              }`}
-                          >
-                            {isPriced(it)
-                              ? `💰 ${Math.round(it.total_price || 0).toLocaleString('uz-UZ')} so'm` +
-                              (it.weight ? ` · ${it.weight} ${it.unit || 'kg'}` : '')
-                              : '💰 NARXI YO\'Q — bosing!'}
-                          </button>
-                        )}
+                        <div className="flex items-center gap-1 flex-wrap mt-0.5 text-[10px] sm:text-[11px] font-semibold text-slate-400 font-mono leading-none">
+                          {/* Tortiladigan taom (baliq, go'sht): SUMMASI */}
+                          {it.is_weighted && (
+                            <button
+                              onClick={() => {
+                                setWeightModalItem(it);
+                                setWeightValue(it.weight ? String(it.weight) : '');
+                                setPriceValue(
+                                  it.manual_price !== null && it.manual_price !== undefined
+                                    ? String(Math.round(it.manual_price))
+                                    : it.total_price
+                                      ? String(Math.round(it.total_price))
+                                      : ''
+                                );
+                              }}
+                              title="Summasini kiritish"
+                              className={`px-1.5 py-0.5 rounded text-[10px] font-black transition-all active:scale-95 inline-block ${isPriced(it)
+                                  ? 'bg-cyan-500/25 text-cyan-300 border border-cyan-500/50'
+                                  : 'bg-red-600 text-white border border-red-400 animate-pulse'
+                                }`}
+                            >
+                              {isPriced(it)
+                                ? `💰 ${Math.round(it.total_price || 0).toLocaleString('uz-UZ')}` +
+                                (it.weight ? `·${it.weight}${it.unit || 'kg'}` : '')
+                                : '💰 Narx yo\'q'}
+                            </button>
+                          )}
 
-                        {/* O'lchanadigan taom hajmi: 1.5 L kola, 1.4 kg baliq.
-                            Oshxona begunogida va mijoz chekida shu ko'rinadi. */}
-                        {!it.is_weighted && (
-                          <button
-                            onClick={() => {
-                              setSizeModalItem(it);
-                              setSizeValue(it.portion_size || '');
-                            }}
-                            title="Hajm / o'lchamni kiritish"
-                            className={`mt-1 mb-0.5 px-2 py-1 rounded-lg text-[11px] font-black transition-all active:scale-95 ${it.portion_size
-                                ? 'bg-amber-500/25 text-amber-300 border border-amber-500/50'
-                                : 'bg-slate-800 text-slate-400 border border-dashed border-slate-600 hover:text-amber-300 hover:border-amber-500/50'
-                              }`}
-                          >
-                            {it.portion_size ? `📏 ${it.portion_size}` : '📏 Hajm'}
-                          </button>
-                        )}
+                          {/* O'lchanadigan taom hajmi */}
+                          {!it.is_weighted && (
+                            <button
+                              onClick={() => {
+                                setSizeModalItem(it);
+                                setSizeValue(it.portion_size || '');
+                              }}
+                              title="Hajm / o'lchamni kiritish"
+                              className={`px-1.5 py-0.5 rounded text-[10px] font-black transition-all active:scale-95 inline-block ${it.portion_size
+                                  ? 'bg-amber-500/25 text-amber-300 border border-amber-500/50'
+                                  : 'bg-slate-800 text-slate-400 border border-dashed border-slate-600 hover:text-amber-300'
+                                }`}
+                            >
+                              {it.portion_size ? `📏 ${it.portion_size}` : '📏 Hajm'}
+                            </button>
+                          )}
 
-                        <p className="text-xs font-semibold text-slate-400 font-mono mt-0.5">
-                          {it.quantity} dona • {it.item_time || '12:00'} •{' '}
-                          {/* Oshxonaga nechtasi yuborilgan va nechtasi hali
-                              yuborilmaganini aniq ko'rsatamiz: 2 somsadan
-                              1 tasi yuborilgan bo'lsa "1 ♨️ · 1 yangi ✦". */}
+                          <span>{it.item_time || '12:00'}</span>
+                          <span>•</span>
                           {(() => {
                             const sent = Math.min(it.sent_quantity || 0, it.quantity);
                             const fresh = Math.max(it.quantity - sent, 0);
                             if (sent > 0 && fresh > 0) {
                               return (
                                 <>
-                                  <span className="text-amber-400 font-bold">{sent} Oshxonada ♨️</span>
-                                  {' · '}
-                                  <span className="text-emerald-400 font-bold">{fresh} Yangi ✦</span>
+                                  <span className="text-amber-400 font-bold">{sent}♨️</span>
+                                  <span>·</span>
+                                  <span className="text-emerald-400 font-bold">{fresh}✦</span>
                                 </>
                               );
                             }
                             return (
                               <span className={sent > 0 ? 'text-amber-400 font-bold' : 'text-emerald-400'}>
-                                {sent > 0 ? 'Oshxonada ♨️' : 'Yangi ✦'}
+                                {sent > 0 ? 'Oshxonada♨️' : 'Yangi✦'}
                               </span>
                             );
                           })()}
-                        </p>
+                        </div>
                       </div>
 
                       {/* Unit Price */}
-                      <div className="col-span-3 text-right font-bold text-slate-200 text-sm sm:text-base font-mono">
+                      <div className="col-span-2 text-right font-bold text-slate-300 text-xs sm:text-sm font-mono truncate">
                         {it.unit_price.toLocaleString('uz-UZ')}
                       </div>
 
-                      {/* Quantity Controls [- 1 +] — Katta va qulay sensor tugmalar */}
-                      <div className="col-span-2 flex items-center justify-center gap-1.5">
+                      {/* Quantity Controls [- 1 +] */}
+                      <div className="col-span-2 flex items-center justify-center gap-1">
                         <button
+                          type="button"
                           onClick={() => handleQtyChange(it, -1)}
-                          className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-emerald-700 hover:bg-emerald-600 text-white flex items-center justify-center font-black text-lg transition-transform active:scale-90 shadow-md"
+                          className="w-7 h-7 rounded-lg bg-emerald-700 hover:bg-emerald-600 text-white flex items-center justify-center font-black text-sm active:scale-90 shadow-sm"
                           title="Kamaytirish"
                         >
                           -
                         </button>
-                        <span className="text-sm sm:text-base font-black text-white w-5 text-center font-mono">
+                        <span className="text-xs sm:text-sm font-black text-white w-5 text-center font-mono">
                           {it.quantity}
                         </span>
                         <button
+                          type="button"
                           onClick={() => handleQtyChange(it, 1)}
-                          className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-emerald-700 hover:bg-emerald-600 text-white flex items-center justify-center font-black text-lg transition-transform active:scale-90 shadow-md"
+                          className="w-7 h-7 rounded-lg bg-emerald-700 hover:bg-emerald-600 text-white flex items-center justify-center font-black text-sm active:scale-90 shadow-sm"
                           title="Ko'paytirish"
                         >
                           +
@@ -1117,8 +1333,20 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
                       </div>
 
                       {/* Line Total */}
-                      <div className="col-span-2 text-right font-black text-emerald-400 text-sm sm:text-base font-mono">
+                      <div className="col-span-2 text-right font-black text-emerald-400 text-xs sm:text-sm font-mono">
                         {it.total_price.toLocaleString('uz-UZ')}
+                      </div>
+
+                      {/* Delete (Trash) button */}
+                      <div className="col-span-1 flex justify-end">
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteItem(it.id)}
+                          className="p-1.5 rounded-lg text-slate-500 hover:text-red-400 hover:bg-red-500/10 active:scale-90 transition-all"
+                          title="Taomni o'chirish"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
                       </div>
                     </div>
                   ))}
@@ -1127,19 +1355,19 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
             </div>
 
             {/* Bottom Total and Actions */}
-            <div className="p-4 bg-slate-950 border-t border-slate-800 shadow-2xl">
+            <div className="p-2 sm:p-2.5 bg-slate-950 border-t border-slate-800 shadow-2xl shrink-0 space-y-1.5">
               {/* Bildirishnoma: Oshxonaga avtomatik chop etildi */}
               {kitchenSendSuccess && (
-                <div className="p-3 mb-3 rounded-2xl bg-emerald-500/20 border-2 border-emerald-500/50 text-emerald-300 font-black text-xs sm:text-sm text-center flex items-center justify-center gap-2 animate-bounce-subtle shadow-lg">
-                  <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />
+                <div className="p-1.5 mb-1 rounded-xl bg-emerald-500/20 border border-emerald-500/50 text-emerald-300 font-black text-xs text-center flex items-center justify-center gap-1.5 animate-bounce-subtle shadow-md">
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
                   <span>✅ Buyurtma tasdiqlandi va oshxona printerlariga avtomatik chop etildi!</span>
                 </div>
               )}
 
               {/* Narxi kiritilmagan taom ogohlantirishi — chek chiqmaydi */}
               {(activeOrder?.items || []).some((i) => i.is_weighted && !isPriced(i)) && (
-                <div className="p-3 mb-3 rounded-2xl bg-red-950/70 border-2 border-red-600 text-red-200 font-black text-xs sm:text-sm flex items-start gap-2 shadow-lg">
-                  <span className="text-lg shrink-0 leading-none">💰</span>
+                <div className="p-1.5 mb-1 rounded-xl bg-red-950/70 border border-red-600 text-red-200 font-black text-xs flex items-start gap-1.5 shadow-md">
+                  <span className="text-xs shrink-0 leading-none">💰</span>
                   <span>
                     Narxi kiritilmagan taom bor:{' '}
                     {(activeOrder?.items || [])
@@ -1151,77 +1379,62 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
                 </div>
               )}
 
-              {/* Subtotal & Service fee summary */}
-              <div className="space-y-1.5 mb-3.5 bg-slate-900/60 p-3 rounded-2xl border border-slate-800">
-                <div className="flex justify-between text-xs sm:text-sm text-slate-300">
-                  <span className="font-semibold">Taomlar jami:</span>
-                  <span className="font-bold text-white font-mono">
-                    {(activeOrder?.subtotal || 0).toLocaleString('uz-UZ')} so'm
-                  </span>
+              {/* Subtotal & Service fee & Total compact summary (Ixcham 2 qator) */}
+              <div className="bg-slate-900/80 px-2.5 py-1.5 rounded-xl border border-slate-800 text-xs">
+                <div className="flex items-center justify-between text-slate-300 pb-1 border-b border-slate-800/80 text-[11px] sm:text-xs font-medium">
+                  <span>Taomlar: <strong className="text-white font-mono">{(activeOrder?.subtotal || 0).toLocaleString('uz-UZ')}</strong></span>
+                  <span>Xizmat ({activeOrder?.service_fee_percent || 12}%): <strong className="text-amber-300 font-mono">{(activeOrder?.service_fee_amount || 0).toLocaleString('uz-UZ')}</strong></span>
                 </div>
-                <div className="flex justify-between text-xs sm:text-sm text-slate-300">
-                  <span className="font-semibold">Xizmat haqi ({activeOrder?.service_fee_percent || 12}%):</span>
-                  <span className="font-bold text-amber-300 font-mono">
-                    {(activeOrder?.service_fee_amount || 0).toLocaleString('uz-UZ')} so'm
-                  </span>
-                </div>
-                <div className="flex justify-between text-base sm:text-lg font-black text-white pt-2 border-t border-slate-800">
-                  <span>Jami hisob:</span>
-                  <span className="text-emerald-400 text-xl sm:text-2xl font-mono">
+                <div className="flex items-center justify-between pt-1">
+                  <span className="font-black text-white text-xs uppercase tracking-wider">Jami hisob:</span>
+                  <span className="text-emerald-400 text-base sm:text-lg font-mono font-black">
                     {(activeOrder?.total || 0).toLocaleString('uz-UZ')} so'm
                   </span>
                 </div>
               </div>
 
-              {/* Oshxonaga izoh. "Chek izohi" olib tashlandi — chek
-                  kassada (admin panelda) chiqariladi. */}
-              <div className="mb-2.5">
-                <button
-                  onClick={() => setKitchenNoteModalOpen(true)}
-                  className="w-full py-2.5 px-3 rounded-xl bg-teal-600/20 hover:bg-teal-600/30 border border-teal-500/40 text-teal-300 font-bold text-xs sm:text-sm transition-all truncate"
-                >
-                  💬 Oshxona izohi {kitchenNote ? '✓' : ''}
-                </button>
-              </div>
-
-              {/* Asosiy POS amallari: Mobil ekranda grid-cols-1 sm:grid-cols-2, min-h-[44px] */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              {/* ── Action Buttons: 2x2 ixcham grid ── */}
+              <div className="grid grid-cols-2 gap-1.5 pt-0.5">
+                {/* Oshxonaga yuborish (Buyurtmani tasdiqlash) */}
                 <button
                   onClick={() => handleSendToKitchen(false)}
                   disabled={!activeOrder || sendingToKitchen}
-                  className={`min-h-[44px] py-2.5 px-3 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 disabled:opacity-40 text-slate-950 font-black text-xs sm:text-sm shadow-md transition-all active:scale-95 flex items-center justify-center gap-1.5 ${!canCheckout && !isAdmin ? 'col-span-1 sm:col-span-2' : ''
-                    }`}
+                  className={`min-h-[38px] py-1 px-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 disabled:opacity-40 text-slate-950 font-black text-xs sm:text-sm shadow-md transition-all active:scale-95 flex items-center justify-center gap-1.5 ${!canCheckout && !isAdmin ? 'col-span-2' : ''}`}
                 >
-                  <Printer className="w-4 h-4 shrink-0" />
-                  <span>{sendingToKitchen ? 'Chop etilmoqda...' : '🔥 Buyurtmani tasdiqlash'}</span>
+                  <Printer className="w-3.5 h-3.5 shrink-0" />
+                  <span className="truncate">{sendingToKitchen ? 'Chop...' : '🔥 Tasdiqlash'}</span>
                 </button>
 
-                {/* 
-                  CRITICAL: "To'landi va stolni bo'shatish" (Checkout) tugmasi
-                  FAKAT Admin yoki Kassir uchun ko'rinadi. 
-                  Ofitsiantda (role === 'waiter') bu tugma BUTUNLAY YASHIRILADI.
-                */}
+                {/* To'landi va stolni bo'shatish (Checkout) — FAKAT Admin yoki Kassir */}
                 {canCheckout && (
                   <button
                     onClick={() => setCheckoutModalOpen(true)}
                     disabled={!activeOrder || (activeOrder?.items || []).length === 0}
-                    className="min-h-[44px] py-2.5 px-3 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 disabled:opacity-40 text-white font-black text-xs sm:text-sm shadow-md shadow-emerald-600/25 transition-all active:scale-95 flex items-center justify-center gap-1.5"
+                    className="min-h-[38px] py-1 px-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white font-black text-xs sm:text-sm shadow-md transition-all active:scale-95 flex items-center justify-center gap-1.5"
                   >
-                    <CheckCircle2 className="w-4 h-4 shrink-0" />
-                    <span>✅ To'landi va stolni bo'shatish</span>
+                    <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+                    <span className="truncate">✅ To'landi</span>
                   </button>
                 )}
 
-                {/* Admin zakas olgandan keyin chekni darhol chiqaradi.
-                    Ofitsiantda bu tugma yo'q — chek kassada chiqadi. */}
+                {/* Oshxona izohi */}
+                <button
+                  onClick={() => setKitchenNoteModalOpen(true)}
+                  className={`min-h-[32px] py-1 px-2 rounded-xl bg-teal-600/20 hover:bg-teal-600/30 border border-teal-500/40 text-teal-300 font-bold text-[11px] sm:text-xs transition-all truncate flex items-center justify-center gap-1 ${!canCheckout && !isAdmin ? 'col-span-2' : ''}`}
+                >
+                  <span>💬 Izoh</span>
+                  {kitchenNote && <span className="text-teal-200">✓</span>}
+                </button>
+
+                {/* Admin zakas olgandan keyin chekni darhol chiqaradi */}
                 {isAdmin && (
                   <button
                     onClick={handlePrintBill}
                     disabled={!activeOrder || printingBill}
-                    className="min-h-[44px] col-span-1 sm:col-span-2 py-2 px-3 rounded-xl bg-sky-600/20 hover:bg-sky-600/30 border border-sky-500/40 disabled:opacity-40 text-sky-300 font-bold text-xs sm:text-sm shadow-sm transition-all active:scale-95 flex items-center justify-center gap-1.5"
+                    className="min-h-[32px] py-1 px-2 rounded-xl bg-sky-600/20 hover:bg-sky-600/30 border border-sky-500/40 disabled:opacity-40 text-sky-300 font-bold text-[11px] sm:text-xs transition-all active:scale-95 flex items-center justify-center gap-1"
                   >
-                    <Receipt className="w-4 h-4 shrink-0" />
-                    <span>{printingBill ? 'Chop etilmoqda...' : '🧾 Chek chiqarish'}</span>
+                    <Receipt className="w-3 h-3 shrink-0" />
+                    <span className="truncate">{printingBill ? 'Chop...' : '🧾 Chek'}</span>
                   </button>
                 )}
               </div>
@@ -1229,7 +1442,46 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
           </div>
 
           {/* ── O'ng Panel: Kategoriyalar va Taomlar Gridi (Katta va qulay kartochkalar) ───── */}
-          <div className="flex-1 flex flex-col bg-slate-950 overflow-hidden">
+          <div
+            className={`flex-1 flex flex-col bg-slate-950 overflow-hidden h-full min-h-0 ${
+              mobileTab === 'menu' ? 'flex' : 'hidden lg:flex'
+            }`}
+          >
+            {/* Mobil uchun joriy stol indikatori va tanlash */}
+            <div className="lg:hidden flex items-center justify-between px-3 py-2 bg-slate-900 border-b border-slate-800 shrink-0">
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] text-slate-400 uppercase font-black tracking-wider">Stol:</span>
+                <span className="text-xs sm:text-sm font-black text-white">
+                  {selectedTable?.room ? `${selectedTable.room} - ` : ''}
+                  {selectedTable?.name || `Stol #${selectedTable?.number || 1}`}
+                </span>
+                <span
+                  className={`text-[10px] px-2 py-0.5 rounded-full font-black uppercase ${
+                    selectedTable?.status === 'occupied'
+                      ? 'bg-red-500/20 text-red-400 border border-red-500/40'
+                      : 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40'
+                  }`}
+                >
+                  {selectedTable?.status === 'occupied' ? 'Band' : "Bo'sh"}
+                </span>
+              </div>
+
+              <select
+                value={selectedTable?.id || ''}
+                onChange={(e) => {
+                  const t = tables.find((x) => x.id === parseInt(e.target.value));
+                  if (t) setSelectedTable(t);
+                }}
+                className="bg-slate-800 text-xs font-bold text-white rounded-xl px-2.5 py-1.5 border border-slate-700 focus:outline-none focus:border-emerald-500"
+              >
+                {tables.map((tbl) => (
+                  <option key={tbl.id} value={tbl.id}>
+                    {tbl.room ? `${tbl.room} ` : ''}#{tbl.number} ({tbl.status === 'occupied' ? 'Band' : "Bo'sh"})
+                  </option>
+                ))}
+              </select>
+            </div>
+
             {/* Top Categories Strip */}
             <div className="p-3.5 bg-slate-900/70 border-b border-slate-800">
               {/* Search bar */}
@@ -1267,20 +1519,21 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
               </div>
             </div>
 
-            {/* Dishes Grid — Katta va qulay taom kartalari */}
-            <div className="flex-1 overflow-y-auto p-4 sm:p-5">
-              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 gap-3.5 sm:gap-4">
+            {/* Dishes Grid — Katta rasmli, chiroyli va tushunarli menyu kartalari */}
+            <div className="flex-1 overflow-y-auto p-3 sm:p-4">
+              <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-3 sm:gap-3.5">
                 {displayedItems.map((item) => {
                   const isStop = item.is_stop_list || item.is_available === false;
                   return (
                     <div
                       key={item.id}
                       onClick={() => handleAddItem(item)}
-                      className={`group relative rounded-3xl bg-slate-900 border-2 border-slate-800 p-3 flex flex-col justify-between hover:border-emerald-500 hover:bg-slate-850 transition-all shadow-lg cursor-pointer select-none active:scale-95 ${isStop ? 'opacity-50 grayscale pointer-events-none' : ''
-                        }`}
+                      className={`group relative rounded-3xl bg-slate-900 border-2 border-slate-800 p-3 flex flex-col justify-between hover:border-emerald-500 hover:bg-slate-850 transition-all shadow-lg cursor-pointer select-none active:scale-95 ${
+                        isStop ? 'opacity-50 grayscale pointer-events-none' : ''
+                      }`}
                     >
-                      {/* Image / Thumbnail */}
-                      <div className="h-32 sm:h-36 w-full rounded-2xl bg-slate-950 overflow-hidden relative mb-2.5 flex items-center justify-center">
+                      {/* Thumbnail: Kattaroq rasm */}
+                      <div className="h-28 sm:h-32 xl:h-36 w-full rounded-2xl bg-slate-950 overflow-hidden relative mb-2.5 flex items-center justify-center border border-slate-800/80">
                         {item.image_url ? (
                           <img
                             src={item.image_url}
@@ -1295,6 +1548,12 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
                           </div>
                         )}
 
+                        {item.is_weighted && (
+                          <span className="absolute top-2 left-2 px-2 py-0.5 rounded-lg bg-cyan-600/90 text-white font-black text-[10px] shadow">
+                            ⚖️ Tarozida
+                          </span>
+                        )}
+
                         {isStop && (
                           <span className="absolute inset-x-2 bottom-2 text-center bg-red-600 text-white font-black text-xs py-1 rounded-xl shadow-lg">
                             Tugagan (Stop-list)
@@ -1302,17 +1561,17 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
                         )}
                       </div>
 
-                      {/* Title */}
+                      {/* Title: Tushunarli va aniq sarlavha */}
                       <h4 className="text-sm sm:text-base font-extrabold text-white group-hover:text-emerald-300 transition-colors line-clamp-2 leading-tight">
                         {item.name}
                       </h4>
 
-                      {/* Price Badge and Plus button */}
-                      <div className="mt-3 flex items-center justify-between">
-                        <span className="px-3 py-1.5 rounded-xl bg-emerald-600 text-white font-black text-xs sm:text-sm shadow-md font-mono">
-                          {item.price.toLocaleString('uz-UZ')} so'm
+                      {/* Price Badge and Plus button: Kattaroq, aniq ko'rinuvchi narx */}
+                      <div className="mt-3 flex items-center justify-between gap-2">
+                        <span className="px-2.5 sm:px-3 py-1.5 rounded-xl bg-emerald-600 text-white font-black text-xs sm:text-sm shadow-md font-mono">
+                          {Math.round(item.price || 0).toLocaleString('uz-UZ')} so'm
                         </span>
-                        <span className="w-8 h-8 rounded-xl bg-emerald-500/20 text-emerald-400 flex items-center justify-center text-base font-black group-hover:bg-emerald-500 group-hover:text-slate-950 transition-colors shadow-sm">
+                        <span className="w-8 h-8 rounded-xl bg-emerald-500/20 text-emerald-400 flex items-center justify-center text-base font-black group-hover:bg-emerald-500 group-hover:text-slate-950 transition-colors shadow-sm shrink-0">
                           +
                         </span>
                       </div>
@@ -1321,8 +1580,33 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
                 })}
               </div>
             </div>
+
+            {/* Mobil pastki savat ko'rish suzuvchi paneli */}
+            <div className="lg:hidden p-2.5 bg-slate-950/95 border-t border-slate-800 shrink-0">
+              <button
+                type="button"
+                onClick={() => setMobileTab('cart')}
+                className="w-full py-2.5 px-3.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 active:scale-98 text-white font-black text-xs sm:text-sm flex items-center justify-between shadow-lg shadow-emerald-950/50"
+              >
+                <div className="flex items-center gap-2">
+                  <ShoppingCart className="w-4 h-4" />
+                  <span>Savat: {activeOrder?.items?.length || 0} ta taom</span>
+                </div>
+                <div className="flex items-center gap-1.5 font-mono text-emerald-200">
+                  <span>
+                    {Math.round(
+                      activeOrder?.total ||
+                        (activeOrder?.items || []).reduce((acc, it) => acc + (it.total_price || 0), 0)
+                    ).toLocaleString('uz-UZ')}{' '}
+                    so'm
+                  </span>
+                  <span>➔</span>
+                </div>
+              </button>
+            </div>
           </div>
         </div>
+      </div>
       )}
 
       {/* ─── Tortilgan og'irlikni kiritish (baliq 1.35 kg) ──────────── */}
@@ -1566,6 +1850,67 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
           tableLabel={selectedTable ? `${selectedTable.room ? selectedTable.room + ' - ' : ''}Stol #${selectedTable.number}` : "Stol buyurtmasi"}
           onPaid={handleCheckoutPaid}
         />
+      )}
+
+      {/* ─── Stolni ko'chirish modali (Aliposter 1.0.0.0 andozasi) ─── */}
+      {transferModalOpen && selectedTable && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in">
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl max-w-md w-full p-5 shadow-2xl">
+            <div className="flex items-center justify-between pb-2 border-b border-slate-800 mb-3">
+              <div className="flex items-center gap-2">
+                <ArrowRightLeft className="w-4 h-4 text-amber-400" />
+                <h3 className="text-white font-extrabold text-sm sm:text-base">
+                  Stol #{selectedTable.number} ni ko'chirish
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setTransferModalOpen(false)}
+                className="w-7 h-7 rounded-lg bg-slate-800 text-slate-400 hover:text-white flex items-center justify-center"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <p className="text-xs text-slate-400 mb-3">
+              Buyurtmani qaysi stolga ko'chirmoqchisiz? Kerakli stolni tanlang:
+            </p>
+
+            <div className="grid grid-cols-3 sm:grid-cols-4 gap-2 max-h-64 overflow-y-auto custom-scrollbar p-1 mb-4">
+              {tables
+                .filter((t) => t.id !== selectedTable.id)
+                .map((t) => (
+                  <button
+                    key={t.id}
+                    type="button"
+                    disabled={transferLoading}
+                    onClick={() => handleTransferTable(t.id)}
+                    className={`p-2.5 rounded-xl text-center border font-black text-xs transition-all active:scale-95 flex flex-col items-center justify-center gap-1 ${
+                      t.status === 'occupied'
+                        ? 'bg-amber-950/40 border-amber-800/60 text-amber-300 hover:bg-amber-900/60'
+                        : 'bg-emerald-950/40 border-emerald-800/60 text-emerald-300 hover:bg-emerald-900/60'
+                    }`}
+                  >
+                    <span className="font-extrabold text-sm text-white">#{t.number}</span>
+                    <span className="text-[10px] text-slate-400 truncate max-w-full">{t.room || 'Zal'}</span>
+                    <span className="text-[9px] uppercase font-bold opacity-75">
+                      {t.status === 'occupied' ? 'Bandga qo\'shish' : 'Bo\'sh stol'}
+                    </span>
+                  </button>
+                ))}
+            </div>
+
+            <div className="flex justify-end">
+              <button
+                type="button"
+                onClick={() => setTransferModalOpen(false)}
+                className="px-4 py-2 rounded-xl bg-slate-800 text-xs text-slate-300 font-bold hover:bg-slate-700"
+              >
+                Bekor qilish
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* ─── Xprinter Thermal Receipt Modal ─────────────────────────── */}

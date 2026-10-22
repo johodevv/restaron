@@ -3,7 +3,7 @@ RestAron — Asosiy FastAPI ilovasi
 """
 import os
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 import sys
 from contextlib import asynccontextmanager
 from fastapi import FastAPI

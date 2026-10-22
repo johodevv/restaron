@@ -3,7 +3,7 @@ Stollar modeli — QR kod bilan birga
 """
 import enum
 from sqlalchemy import (
-    Column, Integer, String, Boolean, DateTime,
+    Column, Integer, String, Boolean, Float, Text, DateTime,
     ForeignKey, func, Enum as SAEnum
 )
 from sqlalchemy.orm import relationship
@@ -61,6 +61,14 @@ class Table(Base):
     # Xavfsizlik va ofitsiant tasdiqlashi
     current_pin = Column(String(10), nullable=True)          # 4 xonali tasdiqlash kodi
     is_unlocked = Column(Boolean, default=False)             # Ofitsiant tasdiqlaganligi
+
+    # Bron (Rezervatsiya) va Zakalat (Avans)
+    reserved_by_name = Column(String(100), nullable=True)
+    reserved_by_phone = Column(String(50), nullable=True)
+    reserved_time = Column(String(50), nullable=True)
+    reserved_guests = Column(Integer, nullable=True)
+    deposit_amount = Column(Float, default=0.0)
+    reservation_note = Column(Text, nullable=True)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())

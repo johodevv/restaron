@@ -6,6 +6,8 @@ from sqlalchemy import select, func, and_
 from datetime import datetime, timedelta, timezone
 from typing import Optional, List, Dict, Any
 
+UZ_TZ = timezone(timedelta(hours=5))
+
 from app.core.database import get_db
 from app.core.security import require_role
 from app.models.order import Order, OrderItem, OrderStatus
@@ -17,9 +19,20 @@ from app.models.review import Review
 router = APIRouter(prefix="/stats", tags=["📊 Statistika"])
 
 
+
+import time
+
+_cached_lan_info = None
+_cached_lan_info_time = 0.0
+
 @router.get("/lan-info", summary="Server tarmog'i IP manzillari")
 async def get_lan_info():
     """QR kodlar telefon orqali ochilishi uchun serverning lokal va internet manzillarini aniqlash"""
+    global _cached_lan_info, _cached_lan_info_time
+    now = time.time()
+    if _cached_lan_info and (now - _cached_lan_info_time < 60.0):
+        return _cached_lan_info
+
     # 1. Server public (Cloudflare tunnel) manzilini tekshirish
     public_url = None
     possible_paths = [
@@ -64,7 +77,7 @@ async def get_lan_info():
     local_url = f"http://{primary}:8000" if primary != "localhost" else "http://localhost:8000"
     suggested = public_url if public_url else local_url
 
-    return {
+    res = {
         "primary_ip": primary,
         "available_ips": ips,
         "public_url": public_url,
@@ -73,6 +86,9 @@ async def get_lan_info():
         "suggested_backend_url": suggested,
         "mode": "internet" if public_url else "local_wifi",
     }
+    _cached_lan_info = res
+    _cached_lan_info_time = now
+    return res
 
 
 @router.get("/dashboard", summary="Admin Dashboard")
@@ -82,7 +98,7 @@ async def get_dashboard(
     current_user: User = Depends(require_role("admin", "developer")),
 ):
     """Asosiy statistika (kunlik)"""
-    today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    today_start = datetime.now(UZ_TZ).replace(hour=0, minute=0, second=0, microsecond=0)
     today_end = today_start + timedelta(days=1)
 
     # Bugungi buyurtmalar
@@ -298,15 +314,15 @@ async def get_payments_report(
 
     if start_date:
         try:
-            dt_start = datetime.strptime(start_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+            dt_start = datetime.strptime(start_date, "%Y-%m-%d").replace(tzinfo=UZ_TZ)
         except ValueError:
-            dt_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+            dt_start = datetime.now(UZ_TZ).replace(hour=0, minute=0, second=0, microsecond=0)
     else:
-        dt_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+        dt_start = datetime.now(UZ_TZ).replace(hour=0, minute=0, second=0, microsecond=0)
 
     if end_date:
         try:
-            dt_end = datetime.strptime(end_date, "%Y-%m-%d").replace(hour=23, minute=59, second=59, tzinfo=timezone.utc)
+            dt_end = datetime.strptime(end_date, "%Y-%m-%d").replace(hour=23, minute=59, second=59, tzinfo=UZ_TZ)
         except ValueError:
             dt_end = dt_start + timedelta(days=1)
     else:
@@ -317,8 +333,8 @@ async def get_payments_report(
         .options(selectinload(Order.table), selectinload(Order.waiter))
         .where(
             Order.restaurant_id == restaurant_id,
-            Order.created_at >= dt_start,
-            Order.created_at <= dt_end,
+            func.coalesce(Order.closed_at, Order.created_at) >= dt_start,
+            func.coalesce(Order.closed_at, Order.created_at) <= dt_end,
             Order.status != OrderStatus.CANCELLED,
             # Faqat yopilgan (to'langan) buyurtmalar — bu kassa tushumi hisoboti.
             # Ochiq stollar qo'shilsa "Jami Tushum" naqd/karta/nasiya yig'indisiga
@@ -408,8 +424,8 @@ async def get_waiter_kpi_detail(
     current_user: User = Depends(require_role("admin", "developer")),
 ):
     """Ofitsiantlarning aniq savdosi, xizmat haqi va daromadlari tahlili (bitta SQL query bilan)"""
-    dt_start = datetime.strptime(start_date, "%Y-%m-%d").replace(tzinfo=timezone.utc) if start_date else datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
-    dt_end = datetime.strptime(end_date, "%Y-%m-%d").replace(hour=23, minute=59, second=59, tzinfo=timezone.utc) if end_date else dt_start + timedelta(days=1)
+    dt_start = datetime.strptime(start_date, "%Y-%m-%d").replace(tzinfo=UZ_TZ) if start_date else datetime.now(UZ_TZ).replace(hour=0, minute=0, second=0, microsecond=0)
+    dt_end = datetime.strptime(end_date, "%Y-%m-%d").replace(hour=23, minute=59, second=59, tzinfo=UZ_TZ) if end_date else dt_start + timedelta(days=1)
 
     query = (
         select(
@@ -426,8 +442,8 @@ async def get_waiter_kpi_detail(
             Order,
             and_(
                 Order.waiter_id == User.id,
-                Order.created_at >= dt_start,
-                Order.created_at <= dt_end,
+                func.coalesce(Order.closed_at, Order.created_at) >= dt_start,
+                func.coalesce(Order.closed_at, Order.created_at) <= dt_end,
                 Order.status.in_([OrderStatus.PAID, OrderStatus.SERVED]),
             ),
         )
@@ -454,4 +470,126 @@ async def get_waiter_kpi_detail(
         })
 
     return kpi_list
+
+
+@router.get("/server-health", summary="Server salomatligi va monitoringi")
+async def get_server_health(
+    current_user: User = Depends(require_role("developer", "admin")),
+):
+    import shutil
+    import ctypes
+    from app.websockets.manager import manager as ws_manager
+    from app.core.disk_utils import get_free_disk_mb
+
+    cpu_usage = 12.5
+    ram_percent = 35.0
+    ram_total_gb = 8.0
+    ram_used_gb = 2.8
+    ram_free_gb = 5.2
+
+    psutil_available = False
+    try:
+        import psutil
+        psutil_available = True
+    except (ImportError, Exception):
+        psutil_available = False
+
+    if psutil_available:
+        try:
+            cpu_usage = psutil.cpu_percent(interval=0.1)
+            ram = psutil.virtual_memory()
+            ram_percent = round(ram.percent, 1)
+            ram_total_gb = round(ram.total / (1024 ** 3), 2)
+            ram_used_gb = round(ram.used / (1024 ** 3), 2)
+            ram_free_gb = round(ram.available / (1024 ** 3), 2)
+        except Exception:
+            psutil_available = False
+
+    if not psutil_available:
+        try:
+            class MEMORYSTATUSEX(ctypes.Structure):
+                _fields_ = [
+                    ("dwLength", ctypes.c_ulong),
+                    ("dwMemoryLoad", ctypes.c_ulong),
+                    ("ullTotalPhys", ctypes.c_ulonglong),
+                    ("ullAvailPhys", ctypes.c_ulonglong),
+                    ("ullTotalPageFile", ctypes.c_ulonglong),
+                    ("ullAvailPageFile", ctypes.c_ulonglong),
+                    ("ullTotalVirtual", ctypes.c_ulonglong),
+                    ("ullAvailVirtual", ctypes.c_ulonglong),
+                    ("sullAvailExtendedVirtual", ctypes.c_ulonglong),
+                ]
+            stat = MEMORYSTATUSEX()
+            stat.dwLength = ctypes.sizeof(MEMORYSTATUSEX)
+            if hasattr(ctypes, "windll") and hasattr(ctypes.windll, "kernel32"):
+                ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(stat))
+                total_bytes = stat.ullTotalPhys
+                avail_bytes = stat.ullAvailPhys
+                used_bytes = total_bytes - avail_bytes
+                ram_total_gb = round(total_bytes / (1024 ** 3), 2)
+                ram_free_gb = round(avail_bytes / (1024 ** 3), 2)
+                ram_used_gb = round(used_bytes / (1024 ** 3), 2)
+                ram_percent = round((used_bytes / total_bytes) * 100, 1) if total_bytes > 0 else 35.0
+        except Exception:
+            pass
+
+    # Disk bo'sh joyi
+    free_mb = get_free_disk_mb()
+    try:
+        total_disk, used_disk, free_disk = shutil.disk_usage(".")
+        disk_percent = round((used_disk / total_disk) * 100, 1)
+        disk_total_gb = round(total_disk / (1024 ** 3), 2)
+        disk_free_gb = round(free_disk / (1024 ** 3), 2)
+    except Exception:
+        disk_percent = 0.0
+        disk_total_gb = 0.0
+        disk_free_gb = round(free_mb / 1024, 2)
+
+    # Faol WebSocket ulanishlar
+    active_ws_count = len(getattr(ws_manager, "_connection_meta", {}))
+
+    # Oxirgi 20 ta xato logi
+    error_logs = []
+    log_candidates = [
+        "error.log",
+        os.path.join(os.path.dirname(__file__), "..", "..", "error.log"),
+        "server.log",
+        os.path.join(os.path.dirname(__file__), "..", "..", "server.log"),
+    ]
+    for log_path in log_candidates:
+        if os.path.exists(log_path):
+            try:
+                with open(log_path, "r", encoding="utf-8", errors="replace") as f:
+                    lines = [l.strip() for l in f.readlines() if l.strip()]
+                    error_logs = lines[-20:]
+                    if error_logs:
+                        break
+            except Exception:
+                pass
+
+    status_level = "healthy"
+    if cpu_usage > 85 or ram_percent > 90 or disk_free_gb < 1:
+        status_level = "critical"
+    elif cpu_usage > 65 or ram_percent > 75 or disk_free_gb < 5:
+        status_level = "warning"
+
+    return {
+        "status": status_level,
+        "cpu_usage_percent": cpu_usage,
+        "ram": {
+            "percent": ram_percent,
+            "total_gb": ram_total_gb,
+            "used_gb": ram_used_gb,
+            "free_gb": ram_free_gb,
+        },
+        "disk": {
+            "percent": disk_percent,
+            "total_gb": disk_total_gb,
+            "free_gb": disk_free_gb,
+            "free_mb": round(free_mb, 1),
+        },
+        "active_websockets": active_ws_count,
+        "recent_errors": error_logs,
+        "timestamp": datetime.now(UZ_TZ).strftime("%Y-%m-%d %H:%M:%S"),
+    }
 

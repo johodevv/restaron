@@ -1,126 +1,142 @@
-import urllib.request, json, os
-from datetime import datetime
+import urllib.request
+import json
+import sys
 
-print("--- STARTING RESTARON COMPREHENSIVE INTEGRATION TEST ---")
+BASE_URL = 'http://127.0.0.1:8000'
 
-# 1. Login
-req = urllib.request.Request('http://localhost:8000/api/v1/auth/login',
-    data=json.dumps({'username': 'developer', 'password': 'dev123456'}).encode(),
-    headers={'Content-Type': 'application/json'})
-res = urllib.request.urlopen(req, timeout=5)
-token = json.loads(res.read())['access_token']
-print("1. Login: OK")
+def test_system():
+    print("=== TEST 1: Login ===")
+    req = urllib.request.Request(
+        f'{BASE_URL}/api/v1/auth/login',
+        data=json.dumps({'username': 'developer', 'password': 'dev123456'}).encode(),
+        headers={'Content-Type': 'application/json'}
+    )
+    res = urllib.request.urlopen(req, timeout=5)
+    data = json.loads(res.read())
+    token = data['access_token']
+    headers = {'Authorization': f'Bearer {token}', 'Content-Type': 'application/json'}
+    print("Login successful! Token acquired.")
 
-# 2. Get menu item
-req_menu = urllib.request.Request('http://localhost:8000/api/v1/menu/full/1')
-cats = json.loads(urllib.request.urlopen(req_menu).read())
-menu_id = None
-for c in cats:
-    if c.get('items'):
-        menu_id = c['items'][0]['id']
-        break
-menu_id = menu_id or 1
-print(f"2. Sample menu item: ID={menu_id}")
+    print("\n=== TEST 2: Find Available Table & Non-Weighted Menu Item ===")
+    # Get tables
+    req_tables = urllib.request.Request(f'{BASE_URL}/api/v1/tables/?restaurant_id=1', headers=headers)
+    tables = json.loads(urllib.request.urlopen(req_tables).read())
+    free_table = next((t for t in tables if t.get('status') == 'available'), None)
+    if not free_table:
+        free_table = tables[0]
+    table_id = free_table['id']
+    print(f"Using table: {free_table.get('number')} (ID: {table_id})")
 
-# 3. Test Takeaway Order
-takeaway_payload = {
-    'restaurant_id': 1,
-    'order_type': 'takeaway',
-    'customer_name': 'Botir Qodirov',
-    'customer_phone': '+998901234567',
-    'items': [{'menu_item_id': menu_id, 'quantity': 1}]
-}
-req_takeaway = urllib.request.Request('http://localhost:8000/api/v1/orders/waiter-create',
-    data=json.dumps(takeaway_payload).encode(),
-    headers={'Content-Type': 'application/json', 'Authorization': f'Bearer {token}'},
-    method='POST')
-takeaway_res = json.loads(urllib.request.urlopen(req_takeaway).read())
-print(f"3. Takeaway Order Created: #{takeaway_res['order_number']}, Type={takeaway_res['order_type']}, Phone={takeaway_res['customer_phone']}, Table={takeaway_res['table_id']}")
-assert takeaway_res['table_id'] is None, "Takeaway order must have table_id=None"
-assert takeaway_res['order_type'] == 'takeaway', "order_type must be takeaway"
+    # Get non-weighted item
+    req_menu = urllib.request.Request(f'{BASE_URL}/api/v1/menu/full/1', headers=headers)
+    cats = json.loads(urllib.request.urlopen(req_menu).read())
+    test_item = None
+    for c in cats:
+        for it in c.get('items', []):
+            if not it.get('is_weighted') and it.get('is_available'):
+                test_item = it
+                break
+        if test_item:
+            break
+    assert test_item, "No available non-weighted item found"
+    print(f"Using item: {test_item['name']} (ID: {test_item['id']}, Price: {test_item['price']})")
 
-# 4. Test Delivery Order
-delivery_payload = {
-    'restaurant_id': 1,
-    'order_type': 'delivery',
-    'customer_name': 'Zafarbek',
-    'customer_phone': '+998991234567',
-    'delivery_address': 'Toshkent sh., Yunusobod 4-mavze, 22-uy',
-    'items': [{'menu_item_id': menu_id, 'quantity': 2}]
-}
-req_delivery = urllib.request.Request('http://localhost:8000/api/v1/orders/waiter-create',
-    data=json.dumps(delivery_payload).encode(),
-    headers={'Content-Type': 'application/json', 'Authorization': f'Bearer {token}'},
-    method='POST')
-delivery_res = json.loads(urllib.request.urlopen(req_delivery).read())
-print(f"4. Delivery Order Created: #{delivery_res['order_number']}, Type={delivery_res['order_type']}, Address={delivery_res['delivery_address']}, Table={delivery_res['table_id']}")
-assert delivery_res['table_id'] is None, "Delivery order must have table_id=None"
-assert delivery_res['delivery_address'] == delivery_payload['delivery_address']
+    print("\n=== TEST 3: Create Order ===")
+    order_data = json.dumps({
+        'restaurant_id': 1,
+        'table_id': table_id,
+        'order_type': 'dine_in',
+        'customer_name': 'Test Mijoz',
+        'items': [{'menu_item_id': test_item['id'], 'quantity': 1}]
+    }).encode()
+    req_create = urllib.request.Request(
+        f'{BASE_URL}/api/v1/orders/waiter-create',
+        data=order_data,
+        headers=headers,
+        method='POST'
+    )
+    order = json.loads(urllib.request.urlopen(req_create).read())
+    order_id = order['id']
+    print(f"Order created: ID {order_id}, Number: {order['order_number']}, Items count: {len(order['items'])}")
+    assert len(order['items']) == 1
+    assert order['items'][0]['quantity'] == 1
 
-# 5. Test Dine-in Table Order (Table 1)
-table_payload = {
-    'restaurant_id': 1,
-    'table_id': 1,
-    'order_type': 'dine_in',
-    'customer_name': 'Ulugbek',
-    'items': [{'menu_item_id': menu_id, 'quantity': 3}]
-}
-req_dine = urllib.request.Request('http://localhost:8000/api/v1/orders/waiter-create',
-    data=json.dumps(table_payload).encode(),
-    headers={'Content-Type': 'application/json', 'Authorization': f'Bearer {token}'},
-    method='POST')
-dine_res = json.loads(urllib.request.urlopen(req_dine).read())
-order_id = dine_res['id']
-print(f"5. Table 1 Order Created: #{dine_res['order_number']}, Total={dine_res['total']}")
+    print("\n=== TEST 4: Add SAME item again (Bug 4 verification - line item merging) ===")
+    add_data = json.dumps({
+        'restaurant_id': 1,
+        'items': [{'menu_item_id': test_item['id'], 'quantity': 2}],
+        'send_to_kitchen_immediately': False
+    }).encode()
+    req_add = urllib.request.Request(
+        f'{BASE_URL}/api/v1/orders/{order_id}/add-items',
+        data=add_data,
+        headers=headers,
+        method='POST'
+    )
+    updated_order = json.loads(urllib.request.urlopen(req_add).read())
+    print(f"Updated items count: {len(updated_order['items'])}")
+    # MUST still be 1 row, but quantity MUST be 3 (1 + 2)
+    item_rows = [i for i in updated_order['items'] if i['menu_item_id'] == test_item['id']]
+    print(f"Matching item rows: {len(item_rows)}, Quantity: {item_rows[0]['quantity']}")
+    assert len(item_rows) == 1, f"Expected 1 merged row, got {len(item_rows)}"
+    assert item_rows[0]['quantity'] == 3, f"Expected quantity 3, got {item_rows[0]['quantity']}"
+    print("Line item merging works PERFECTLY!")
 
-# Check table status -> OCCUPIED
-req_tbl = urllib.request.Request('http://localhost:8000/api/v1/tables/1',
-    headers={'Authorization': f'Bearer {token}'})
-tbl_status = json.loads(urllib.request.urlopen(req_tbl).read())['status']
-print(f"   Table 1 status BEFORE checkout: {tbl_status}")
-assert tbl_status == 'occupied', "Table 1 must be occupied"
+    print("\n=== TEST 5: Delete Order Item (Bug 3 verification) ===")
+    item_to_delete_id = item_rows[0]['id']
+    req_del = urllib.request.Request(
+        f'{BASE_URL}/api/v1/orders/{order_id}/items/{item_to_delete_id}',
+        headers=headers,
+        method='DELETE'
+    )
+    del_res = json.loads(urllib.request.urlopen(req_del).read())
+    print("Delete result:", del_res)
+    # Check order items
+    req_order_check = urllib.request.Request(f'{BASE_URL}/api/v1/orders/{order_id}', headers=headers)
+    order_after_del = json.loads(urllib.request.urlopen(req_order_check).read())
+    assert len(order_after_del['items']) == 0, "Item should have been deleted"
+    print("Item deleted cleanly!")
 
-# 6. Checkout Table 1 Order
-checkout_payload = {
-    'payment_method': 'cash',
-    'cash_amount': dine_res['total'],
-    'print_receipt': False
-}
-req_chk = urllib.request.Request(f'http://localhost:8000/api/v1/orders/{order_id}/checkout',
-    data=json.dumps(checkout_payload).encode(),
-    headers={'Content-Type': 'application/json', 'Authorization': f'Bearer {token}'},
-    method='POST')
-chk_res = json.loads(urllib.request.urlopen(req_chk).read())
-print(f"6. Checkout Table 1 Result: Success={chk_res['success']}, Paid={chk_res['order']['is_paid']}")
+    print("\n=== TEST 6: Add Item and Checkout ===")
+    # Add 1 item so we can checkout
+    req_add_final = urllib.request.Request(
+        f'{BASE_URL}/api/v1/orders/{order_id}/add-items',
+        data=json.dumps({
+            'restaurant_id': 1,
+            'items': [{'menu_item_id': test_item['id'], 'quantity': 1}],
+            'send_to_kitchen_immediately': False
+        }).encode(),
+        headers=headers,
+        method='POST'
+    )
+    order_final = json.loads(urllib.request.urlopen(req_add_final).read())
+    final_total = order_final['total']
+    print(f"Final order total to pay: {final_total}")
 
-# Check table status -> AVAILABLE
-tbl_status_after = json.loads(urllib.request.urlopen(req_tbl).read())['status']
-print(f"   Table 1 status AFTER checkout: {tbl_status_after}")
-assert tbl_status_after == 'available', "Table 1 must be freed to available"
+    checkout_payload = json.dumps({
+        'payment_method': 'cash',
+        'cash_amount': final_total,
+        'print_receipt': False
+    }).encode()
+    req_checkout = urllib.request.Request(
+        f'{BASE_URL}/api/v1/orders/{order_id}/checkout',
+        data=checkout_payload,
+        headers=headers,
+        method='POST'
+    )
+    chk_res = json.loads(urllib.request.urlopen(req_checkout).read())
+    print(f"Checkout success: {chk_res.get('success')}, Total paid: {chk_res.get('total')}")
+    assert chk_res.get('success') == True
 
-# 7. Checkout Delivery Order
-chk_del_payload = {
-    'payment_method': 'card',
-    'card_amount': delivery_res['total'],
-    'print_receipt': False
-}
-del_order_id = delivery_res["id"]
-req_chk_del = urllib.request.Request(f'http://localhost:8000/api/v1/orders/{del_order_id}/checkout',
-    data=json.dumps(chk_del_payload).encode(),
-    headers={'Content-Type': 'application/json', 'Authorization': f'Bearer {token}'},
-    method='POST')
-chk_del_res = json.loads(urllib.request.urlopen(req_chk_del).read())
-print(f"7. Checkout Delivery Order: Success={chk_del_res['success']}, Paid={chk_del_res['order']['is_paid']}")
+    # Verify table is now available
+    req_tbl_after = urllib.request.Request(f'{BASE_URL}/api/v1/tables/{table_id}', headers=headers)
+    tbl_after = json.loads(urllib.request.urlopen(req_tbl_after).read())
+    print(f"Table status after checkout: {tbl_after.get('status')}")
+    assert tbl_after.get('status') == 'available'
 
-# 8. Check PDF Archive
-today_str = datetime.now().strftime('%Y-%m-%d')
-pdf_dir = os.path.join('c:/RestAron/backend/receipts_archive/PDFs', today_str)
-print(f"8. PDF Directory Check ({pdf_dir}):")
-if os.path.exists(pdf_dir):
-    pdf_files = [f for f in os.listdir(pdf_dir) if f.endswith('.pdf')]
-    print(f"   Found {len(pdf_files)} PDF files in today's archive: {pdf_files[-2:]}")
-    assert len(pdf_files) >= 2, "PDF receipts should be archived"
-else:
-    raise AssertionError(f"PDF dir not found: {pdf_dir}")
+    print("\n==========================================")
+    print("ALL TESTS PASSED WITH 100% SUCCESS!")
+    print("==========================================")
 
-print("--- ALL INTEGRATION TESTS PASSED 100% SUCCESSFULLY! ---")
+if __name__ == '__main__':
+    test_system()

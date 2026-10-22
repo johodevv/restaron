@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import api from '../../utils/api';
 import { useAuth } from '../../context/AuthContext';
 import { useTheme } from '../../context/ThemeContext';
@@ -68,7 +68,7 @@ export const AdminDashboard = () => {
   const { activeThemes, setActiveThemes, allThemes } = useTheme();
   const { addEventListener, playChime } = useWebSocket();
   const [activePrintAlert, setActivePrintAlert] = useState(null);
-  const [tab, setTab] = useState('overview'); // 'overview' | 'menu' | 'tables' | 'staff' | 'settings' | 'reviews'
+  const [tab, setTab] = useState('pos'); // 'pos' | 'tables' | 'receipts' | 'staff' | 'debts' | 'overview' | ...
 
   const restaurantId = user?.restaurant_id || 1;
 
@@ -210,29 +210,66 @@ export const AdminDashboard = () => {
     }
   };
 
+  const refreshTimerRef = useRef(null);
+
+  // Faqat o'zgargan qismlarni (stollar, buyurtmalar, statistika) yengil va debounced yangilash
+  const refreshOrdersAndTables = useCallback(() => {
+    if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current);
+    refreshTimerRef.current = setTimeout(async () => {
+      try {
+        const [tablesData, ordersData, statsData] = await Promise.all([
+          api.get(`/tables/?restaurant_id=${restaurantId}`).catch(() => null),
+          api.get(`/orders/?restaurant_id=${restaurantId}&limit=12`).catch(() => null),
+          api.get(`/stats/dashboard?restaurant_id=${restaurantId}`).catch(() => null),
+        ]);
+        if (tablesData) setTables(tablesData);
+        if (ordersData) setRecentOrders(ordersData);
+        if (statsData) setStats(statsData);
+      } catch (err) {
+        console.error('Lightweight refresh error:', err);
+      }
+    }, 350);
+  }, [restaurantId]);
+
   useEffect(() => {
     loadAll();
 
     const unsubscribe = addEventListener('*', (event) => {
-      if (
+      if (event.type === 'call_waiter' || event.type === 'call_completed') {
+        api.get(`/orders/calls?restaurant_id=${restaurantId}`).then((d) => setWaiterCalls(d || [])).catch(() => {});
+      } else if (event.type === 'table_status_updated') {
+        const nextStatus = event.new_status || event.status;
+        setTables((prev) =>
+          prev.map((t) =>
+            t.id === event.table_id
+              ? {
+                  ...t,
+                  status: nextStatus || t.status,
+                  is_occupied: event.is_occupied !== undefined ? event.is_occupied : (nextStatus === 'occupied'),
+                }
+              : t
+          )
+        );
+        refreshOrdersAndTables();
+      } else if (
         event.type === 'new_order' ||
         event.type === 'table_cleared' ||
-        event.type === 'table_status_updated' ||
         event.type === 'table_guest_arrived' ||
         event.type === 'table_unlocked' ||
         event.type === 'order_delivered' ||
         event.type === 'order_ready' ||
         event.type === 'order_status_updated' ||
-        event.type === 'call_waiter' ||
-        event.type === 'call_completed' ||
         event.type === 'bill_paid'
       ) {
-        loadAll();
+        refreshOrdersAndTables();
       }
     });
 
-    return () => unsubscribe();
-  }, [restaurantId]);
+    return () => {
+      if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current);
+      unsubscribe();
+    };
+  }, [restaurantId, addEventListener, refreshOrdersAndTables]);
 
   // Handle Table Unlock (Tasdiqlash)
   const handleUnlockTable = async (tableId) => {
@@ -828,33 +865,35 @@ export const AdminDashboard = () => {
   })();
 
   return (
-    <div className="max-w-7xl mx-auto px-4 py-6 space-y-6 animate-fade-in pb-24">
-      {/* Top Header */}
-      <div className="p-6 rounded-3xl glass-card border border-theme-border bg-gradient-to-r from-theme-surface via-theme-bg to-theme-surface flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-xl">
-        <div>
-          <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-theme-primary/15 border border-theme-primary/30 text-theme-primary text-xs font-bold mb-2">
-            <Sparkles className="w-3.5 h-3.5" />
-            <span>RestAron Boshqaruv Markazi</span>
+    <div className={`mx-auto px-2 sm:px-4 animate-fade-in ${tab === 'pos' ? 'w-full py-1 pb-1 space-y-2' : 'max-w-7xl py-6 pb-24 space-y-4'}`}>
+      {/* Top Header — Faqat POS bo'lmagan sahifalarda chiqadi */}
+      {tab !== 'pos' && (
+        <div className="p-6 rounded-3xl glass-card border border-theme-border bg-gradient-to-r from-theme-surface via-theme-bg to-theme-surface flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-xl">
+          <div>
+            <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-theme-primary/15 border border-theme-primary/30 text-theme-primary text-xs font-bold mb-2">
+              <Sparkles className="w-3.5 h-3.5" />
+              <span>RestAron Boshqaruv Markazi</span>
+            </div>
+            <h1 className="text-2xl sm:text-3xl font-extrabold text-white tracking-tight">
+              Dunyo Choyxonasi — Restoran Admin Paneli
+            </h1>
+            <p className="text-xs text-theme-muted mt-1">
+              Menyular, rasmlar, stollar holati, QR kodlar va buyurtmalar nazorati.
+            </p>
           </div>
-          <h1 className="text-2xl sm:text-3xl font-extrabold text-white tracking-tight">
-            Dunyo Choyxonasi — Restoran Admin Paneli
-          </h1>
-          <p className="text-xs text-theme-muted mt-1">
-            Menyular, rasmlar, stollar holati, QR kodlar va buyurtmalar nazorati.
-          </p>
+
+          <button
+            onClick={loadAll}
+            className="self-start sm:self-auto p-2.5 rounded-xl border border-theme-border hover:border-theme-primary bg-white/5 hover:bg-white/10 text-theme-muted hover:text-white transition-all flex items-center gap-2 text-xs font-semibold"
+          >
+            <RefreshCw className="w-4 h-4" />
+            <span>Yangilash</span>
+          </button>
         </div>
+      )}
 
-        <button
-          onClick={loadAll}
-          className="self-start sm:self-auto p-2.5 rounded-xl border border-theme-border hover:border-theme-primary bg-white/5 hover:bg-white/10 text-theme-muted hover:text-white transition-all flex items-center gap-2 text-xs font-semibold"
-        >
-          <RefreshCw className="w-4 h-4" />
-          <span>Yangilash</span>
-        </button>
-      </div>
-
-      {/* Internet URL Status Banner */}
-      {lanInfo && (
+      {/* Internet URL Status Banner — Faqat POS bo'lmagan sahifalarda chiqadi */}
+      {tab !== 'pos' && lanInfo && (
         <div className={`p-3.5 rounded-2xl border flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs font-semibold shadow-lg ${
           lanInfo.mode === 'internet'
             ? 'bg-emerald-500/10 border-emerald-500/40 text-emerald-300'
@@ -951,17 +990,13 @@ export const AdminDashboard = () => {
       {/* Tabs — Full Navigation Bar */}
       <div className="flex items-center gap-2 overflow-x-auto pb-2 scrollbar-none no-scrollbar">
         {[
-          { key: 'overview', label: 'Xulosa', icon: LayoutDashboard },
-          // Admin ham xuddi ofitsiantdek zakas olishi mumkin — kassada
-          // o'tirgan xodim stolga taom qo'shib, oshxonaga yuboradi.
           { key: 'pos', label: 'Zakas olish (POS)', icon: ShoppingCart },
-          { key: 'takeaway', label: 'Olib ketish', icon: ShoppingBag },
-          { key: 'delivery', label: 'Dastavka', icon: Bike },
-          { key: 'menu', label: 'Menyu & Taomlar', icon: UtensilsCrossed },
           { key: 'tables', label: 'Stollar & QR', icon: TableIcon },
+          { key: 'receipts', label: 'Cheklar Arxivi', icon: Archive },
           { key: 'staff', label: 'Xodimlar', icon: Users },
           { key: 'debts', label: 'Qarzlar (Nasiya)', icon: Wallet },
-          { key: 'receipts', label: 'Cheklar Arxivi', icon: Archive },
+          { key: 'overview', label: 'Xulosa', icon: LayoutDashboard },
+          { key: 'menu', label: 'Menyu & Taomlar', icon: UtensilsCrossed },
           { key: 'payments', label: 'Kassa Hisoboti', icon: FileSpreadsheet },
           { key: 'waiter_kpi', label: 'Ofitsiantlar KPI', icon: Trophy },
           { key: 'themes', label: 'Dizayn & Temalar', icon: Palette },
@@ -1118,14 +1153,14 @@ export const AdminDashboard = () => {
               <div className="flex items-center gap-2">
                 <button
                   type="button"
-                  onClick={() => setTab('takeaway')}
+                  onClick={() => setTab('pos')}
                   className="px-3 py-1.5 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30 text-amber-300 text-xs font-bold transition-all"
                 >
                   Olib ketish ({recentOrders.filter(o => o.order_type === 'takeaway').length})
                 </button>
                 <button
                   type="button"
-                  onClick={() => setTab('delivery')}
+                  onClick={() => setTab('pos')}
                   className="px-3 py-1.5 rounded-xl bg-cyan-500/15 hover:bg-cyan-500/25 border border-cyan-500/30 text-cyan-300 text-xs font-bold transition-all"
                 >
                   Dastavka ({recentOrders.filter(o => o.order_type === 'delivery').length})
@@ -1220,30 +1255,9 @@ export const AdminDashboard = () => {
           barcha imkoniyatlar (zonalar, baliq narxi, begunok) bir xil
           ishlaydi. */}
       {tab === 'pos' && (
-        <div className="-mx-4">
-          <div className="mx-4 mb-3 p-3 rounded-2xl bg-theme-primary/10 border border-theme-primary/30 text-xs text-theme-text">
-            <b className="text-white">Zakas olish.</b> Stolni tanlang, o'ng tomondan
-            taomlarni bosing va <b>"Buyurtmani tasdiqlash"</b> tugmasi bilan
-            oshxonaga yuboring. Buyurtma sizning nomingizga yoziladi.
-          </div>
+        <div className="w-full">
           <POSView showModeSwitch={true} canCheckout={true} restaurantId={restaurantId} />
         </div>
-      )}
-
-      {/* TAB: OLIB KETISH (TAKEAWAY) */}
-      {tab === 'takeaway' && (
-        <OrdersView
-          restaurantId={user?.restaurant_id || 1}
-          initialType="takeaway"
-        />
-      )}
-
-      {/* TAB: DASTAVKA (DELIVERY) */}
-      {tab === 'delivery' && (
-        <OrdersView
-          restaurantId={user?.restaurant_id || 1}
-          initialType="delivery"
-        />
       )}
 
       {tab === 'menu' && (
@@ -1908,22 +1922,6 @@ export const AdminDashboard = () => {
                     </div>
                   )}
 
-                  {/* QR Image Preview */}
-                  <div
-                    onClick={() => setSelectedTableQR({ ...t, qrLink })}
-                    className="cursor-pointer bg-white p-3 rounded-2xl flex flex-col items-center justify-center gap-1 shadow-md hover:scale-102 transition-transform"
-                  >
-                    <img
-                      src={qrImageSrc}
-                      alt={`Stol #${t.number} QR`}
-                      className="w-36 h-36 object-contain"
-                    />
-                    <div className="text-[11px] font-bold text-black flex items-center gap-1">
-                      <Sparkles className="w-3 h-3 text-amber-500" />
-                      <span>Kattalashtirish & Chop etish</span>
-                    </div>
-                  </div>
-
                   {/* Admin Table Control: Clear / Bill / Status Change */}
                   <div className="space-y-2 pt-2 border-t border-theme-border/60">
                     <div className="flex items-center justify-between gap-2">
@@ -2004,11 +2002,13 @@ export const AdminDashboard = () => {
 
                     <div className="grid grid-cols-2 gap-2 pt-1">
                       <button
+                        type="button"
                         onClick={() => setSelectedTableQR({ ...t, qrLink })}
-                        className="px-3 py-2 rounded-xl bg-white/5 hover:bg-white/10 border border-theme-border text-white text-xs font-bold flex items-center justify-center gap-1.5 transition-all"
+                        className="px-3 py-2 rounded-xl bg-theme-primary/15 hover:bg-theme-primary/25 border border-theme-primary/40 text-theme-primary text-xs font-bold flex items-center justify-center gap-1.5 transition-all active:scale-95 shadow-sm"
+                        title="QR kodni kattalashtirib ko'rish va chop etish"
                       >
                         <QrCode className="w-3.5 h-3.5" />
-                        <span>QR Kod</span>
+                        <span>QR kodni ko'rish</span>
                       </button>
 
                       <button

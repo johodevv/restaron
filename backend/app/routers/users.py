@@ -39,16 +39,21 @@ async def create_user(
     if current_user.role == UserRole.ADMIN:
         restaurant_id = current_user.restaurant_id
 
+    # Admin yoki Developer yaratgan xodim darhol tasdiqlangan (is_approved=True) bo'ladi
+    is_appr = True
+
     new_user = User(
         username=payload.username,
         full_name=payload.full_name,
         phone=payload.phone,
         hashed_password=get_password_hash(payload.password),
         role=payload.role,
+        is_approved=is_appr,
         restaurant_id=restaurant_id,
     )
     db.add(new_user)
     await db.flush()
+    await db.commit()
     await db.refresh(new_user)
     return UserResponse.model_validate(new_user)
 
@@ -116,6 +121,7 @@ async def update_user(
         revoke_user_tokens(user.id)
 
     await db.flush()
+    await db.commit()
     await db.refresh(user)
 
     from app.core.audit import log_audit_event
@@ -159,3 +165,49 @@ async def delete_user(
     )
 
     await db.delete(user)
+
+
+@router.patch("/{user_id}/approve", response_model=UserResponse, summary="Xodimni tasdiqlash yoki rad etish")
+async def approve_user(
+    user_id: int,
+    is_approved: bool = True,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role("admin", "developer")),
+):
+    """Admin yoki Developer yangi ro'yxatdan o'tgan xodim akkauntini tasdiqlaydi yoki rad etadi"""
+    result = await db.execute(select(User).where(User.id == user_id))
+    user = result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=404, detail="Foydalanuvchi topilmadi")
+
+    user.is_approved = is_approved
+    if not is_approved:
+        from app.core.security import revoke_user_tokens
+        revoke_user_tokens(user.id)
+
+    await db.flush()
+    await db.commit()
+    await db.refresh(user)
+
+    from app.core.audit import log_audit_event
+    await log_audit_event(
+        db=db,
+        restaurant_id=user.restaurant_id or 1,
+        action="user_approval_changed",
+        user=current_user,
+        entity_type="user",
+        details={"is_approved": is_approved, "target_username": user.username},
+    )
+
+    from app.websockets.manager import manager
+    await manager.broadcast_to_restaurant(
+        user.restaurant_id or 1,
+        {
+            "type": "staff_approval_status",
+            "user_id": user.id,
+            "username": user.username,
+            "is_approved": is_approved,
+        }
+    )
+
+    return UserResponse.model_validate(user)

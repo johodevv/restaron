@@ -7,7 +7,7 @@ from sqlalchemy import select, update, delete
 from typing import List, Optional
 from datetime import datetime, timezone, timedelta
 
-from app.core.database import get_db
+from app.core.database import get_db, AsyncSessionLocal
 from app.core.security import get_current_user
 from app.models.notification import Notification, NotificationTarget
 from app.models.user import User, UserRole
@@ -19,23 +19,23 @@ router = APIRouter(prefix="/notifications", tags=["🔔 Bildirishnomalar"])
 # -------------------------------------------------------------------
 async def _cleanup_old_notifications(
     restaurant_id: int,
-    db: AsyncSession,
     days: int = 7,
 ) -> int:
     """
     O'qilgan va `days` kundan oshgan bildirishnomalarni bazadan o'chiradi.
-    Bu funksiya BackgroundTasks orqali chaqiriladi — request ni bloklmaydi.
+    Bu funksiya BackgroundTasks orqali chaqiriladi — alohida AsyncSessionLocal ochadi.
     """
     cutoff = datetime.now(timezone.utc) - timedelta(days=days)
-    result = await db.execute(
-        delete(Notification).where(
-            Notification.restaurant_id == restaurant_id,
-            Notification.is_read == True,
-            Notification.created_at < cutoff,
+    async with AsyncSessionLocal() as bg_db:
+        result = await bg_db.execute(
+            delete(Notification).where(
+                Notification.restaurant_id == restaurant_id,
+                Notification.is_read == True,
+                Notification.created_at < cutoff,
+            )
         )
-    )
-    await db.commit()
-    return result.rowcount
+        await bg_db.commit()
+        return result.rowcount
 
 
 # Har 50-so'rovdan birida eski bildirishnomalarni tozalash uchun counter
@@ -80,7 +80,7 @@ async def list_notifications(
     # 🧹 Avtomatik tozalash: har ~50-so'rovdan birida (2% ehtimollik)
     # Response ni bloklamaydi — fon jarayonida ishlaydi
     if random.random() < 0.02:
-        background_tasks.add_task(_cleanup_old_notifications, restaurant_id, db)
+        background_tasks.add_task(_cleanup_old_notifications, restaurant_id)
 
     return [
         {

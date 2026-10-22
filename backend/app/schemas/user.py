@@ -23,6 +23,7 @@ class UserUpdate(BaseModel):
     full_name: Optional[str] = None
     phone: Optional[str] = None
     is_active: Optional[bool] = None
+    is_approved: Optional[bool] = None
     avatar_url: Optional[str] = None
 
 
@@ -34,6 +35,7 @@ class UserPasswordChange(BaseModel):
 class UserResponse(UserBase):
     id: int
     is_active: bool
+    is_approved: bool = True
     avatar_url: Optional[str] = None
     restaurant_id: Optional[int] = None
     created_at: datetime

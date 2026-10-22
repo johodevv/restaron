@@ -15,6 +15,9 @@ from app.core.database import get_db
 security = HTTPBearer()
 security_optional = HTTPBearer(auto_error=False)
 
+# Server har safar o'chib yonganda barcha ofitsiant/xodimlarni qayta login qildirish va tasdiq so'rash uchun
+SERVER_BOOT_NONCE = str(uuid.uuid4())
+
 # Qora ro'yxat (Blacklist): jti -> expires_at_timestamp
 _blacklisted_jtis: Dict[str, float] = {}
 # Foydalanuvchi bo'yicha bekor qilish vaqti: user_id -> revoked_after_timestamp
@@ -100,6 +103,7 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
         "exp": expire,
         "iat": int(now_dt.timestamp()),
         "jti": str(uuid.uuid4()),
+        "boot_nonce": SERVER_BOOT_NONCE,
     })
     return jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
 
@@ -168,6 +172,13 @@ async def get_current_user(
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Foydalanuvchi roli o'zgargan. Iltimos, qaytadan tizimga kiring.",
+        )
+
+    # Ofitsiant, oshpaz va kassirlar admin tomonidan tasdiqlangan bo'lishi shart
+    if user_role_str in ("waiter", "chef", "cashier") and not getattr(user, "is_approved", False):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Akkauntingiz Admin tomonidan tasdiqlanmagan!",
         )
 
     return user

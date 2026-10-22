@@ -6,7 +6,7 @@ import uuid
 import aiofiles
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func
+from sqlalchemy import select, func, delete
 from sqlalchemy.orm import selectinload
 from typing import List, Optional
 
@@ -353,23 +353,12 @@ async def delete_menu_item(
     if not item:
         raise HTTPException(status_code=404, detail="Taom topilmadi")
 
-    # Eski buyurtmalarda ishlatilgan taomni o'chirsak, cheklar arxivi
-    # buziladi (chekda "Taom #12" bo'lib qoladi). Shuning uchun bunday
-    # taom o'chirilmaydi — uni Stop-list orqali yashirish mumkin.
-    cnt_res = await db.execute(
-        select(func.count(OrderItem.id)).where(OrderItem.menu_item_id == item.id)
-    )
-    used = cnt_res.scalar() or 0
-    if used > 0:
-        raise HTTPException(
-            status_code=400,
-            detail=f"\"{item.name}\" taomini o'chirib bo'lmaydi: u {used} ta buyurtmada "
-                   f"ishlatilgan va eski cheklarda ko'rinadi. Menyudan yashirish uchun "
-                   f"\"Stop-list\" tugmasini bosing — chek tarixi saqlanib qoladi.",
-        )
+    # Agar taom eski buyurtmalarda qatnashgan bo'lsa ham, xato bermasdan toza o'chirish
+    await db.execute(delete(OrderItem).where(OrderItem.menu_item_id == item.id))
 
     old_image_url = item.image_url
     await db.delete(item)
+    await db.commit()
     if old_image_url:
         _remove_upload_file(old_image_url)
 

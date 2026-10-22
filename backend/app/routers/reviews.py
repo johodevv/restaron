@@ -22,6 +22,7 @@ class ReviewCreate(BaseModel):
     menu_item_id: Optional[int] = None
     food_rating: Optional[int] = Field(None, ge=1, le=5)
     food_comment: Optional[str] = None
+    comment: Optional[str] = None
     waiter_id: Optional[int] = None
     service_rating: Optional[int] = Field(None, ge=1, le=5)
     service_comment: Optional[str] = None
@@ -41,10 +42,10 @@ async def create_review(payload: ReviewCreate, db: AsyncSession = Depends(get_db
         order_id=payload.order_id,
         menu_item_id=payload.menu_item_id,
         food_rating=payload.food_rating,
-        food_comment=payload.food_comment,
+        food_comment=payload.food_comment or payload.comment,
         waiter_id=payload.waiter_id,
         service_rating=payload.service_rating,
-        service_comment=payload.service_comment,
+        service_comment=payload.service_comment or payload.comment,
         overall_rating=overall,
         customer_name=payload.customer_name,
     )
@@ -88,6 +89,7 @@ async def list_reviews(
             "food_comment": r.food_comment,
             "service_rating": r.service_rating,
             "service_comment": r.service_comment,
+            "comment": r.food_comment or r.service_comment,
             "overall_rating": r.overall_rating,
             "customer_name": r.customer_name,
             "created_at": r.created_at,

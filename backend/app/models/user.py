@@ -15,6 +15,7 @@ from app.core.database import Base
 class UserRole(str, enum.Enum):
     DEVELOPER = "developer"   # Superadmin / Dasturchi
     ADMIN = "admin"           # Restoran egasi/admin
+    CASHIER = "cashier"       # Kassir (AliPoster kassa boshqaruvi)
     WAITER = "waiter"         # Ofitsiant
     CHEF = "chef"             # Oshpaz
 
@@ -29,6 +30,7 @@ class User(Base):
     hashed_password = Column(String(255), nullable=False)
     role = Column(SAEnum(UserRole), nullable=False, default=UserRole.WAITER)
     is_active = Column(Boolean, default=True)
+    is_approved = Column(Boolean, default=False, nullable=False)
     avatar_url = Column(String(500), nullable=True)
     # Ofitsiant xizmat haqi ulushi / komissiya foizi (masalan: 3.0%)
     commission_percent = Column(Float, default=0.0)

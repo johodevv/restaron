@@ -127,7 +127,6 @@ async def list_restaurants(
 async def get_restaurant(
     restaurant_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role("admin", "developer")),
 ):
     result = await db.execute(
         select(Restaurant)

@@ -27,7 +27,8 @@ import {
   MapPin,
   Phone,
   CreditCard,
-  Sparkles
+  Sparkles,
+  ArrowRightLeft
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 
@@ -51,8 +52,29 @@ export const POSView = ({
   restaurantId: propRestaurantId,
 }) => {
   const { user, isAdmin, isCashier, canCheckout: authCanCheckout } = useAuth();
-  const { connected } = useWebSocket();
+  const { connected, addEventListener } = useWebSocket();
   const restaurantId = propRestaurantId || user?.restaurant_id || 1;
+
+  // Table transfer (Stolni ko'chirish)
+  const [transferModalOpen, setTransferModalOpen] = useState(false);
+  const [transferLoading, setTransferLoading] = useState(false);
+
+  const handleTransferTable = async (targetTableId) => {
+    if (!selectedTable || !targetTableId) return;
+    setTransferLoading(true);
+    try {
+      const res = await api.post(`/tables/${selectedTable.id}/transfer/${targetTableId}`);
+      alert(res.message || "Buyurtma muvaffaqiyatli ko'chirildi! ✅");
+      setTransferModalOpen(false);
+      const dest = tables.find((t) => t.id === targetTableId);
+      if (dest) setSelectedTable(dest);
+      loadInitialData();
+    } catch (err) {
+      alert(err.message || "Ko'chirishda xatolik yuz berdi");
+    } finally {
+      setTransferLoading(false);
+    }
+  };
 
   // Foydalanuvchi roli bo'yicha ruxsatlarni aniqlash:
   // Ofitsiant (waiter) hech qachon rejim almashtira olmaydi va checkout qila olmaydi!
@@ -66,8 +88,8 @@ export const POSView = ({
   const [customerName, setCustomerName] = useState('');
   const [customerPhone, setCustomerPhone] = useState('');
   const [deliveryAddress, setDeliveryAddress] = useState('');
-  // Mobil ekranda Savat va Menyu orasida qulay o'tish holati
-  const [mobileTab, setMobileTab] = useState('cart'); // 'cart' | 'menu'
+  // Mobil ekranda Savat va Menyu orasida qulay o'tish holati ('menu' | 'cart')
+  const [mobileTab, setMobileTab] = useState('menu');
 
   // Ma'lumotlar holati
   const [tables, setTables] = useState([]);
@@ -181,6 +203,64 @@ export const POSView = ({
     }
   }, [selectedTable?.id, orderType]);
 
+  // Real-time WebSocket listener (zero-overhead, updates tables and order in memory)
+  useEffect(() => {
+    if (!addEventListener) return;
+    const unsub = addEventListener('*', (event) => {
+      if (event.type === 'table_status_updated') {
+        const nextStatus = event.new_status || event.status;
+        setTables((prev) =>
+          prev.map((t) =>
+            t.id === event.table_id
+              ? {
+                  ...t,
+                  status: nextStatus || t.status,
+                  is_occupied: event.is_occupied !== undefined ? event.is_occupied : (nextStatus === 'occupied'),
+                }
+              : t
+          )
+        );
+        if (selectedTable && event.table_id === selectedTable.id) {
+          setSelectedTable((prev) =>
+            prev ? { ...prev, status: nextStatus || prev.status, is_occupied: event.is_occupied !== undefined ? event.is_occupied : (nextStatus === 'occupied') } : null
+          );
+          if (nextStatus === 'available') setActiveOrder(null);
+        }
+      } else if (event.type === 'order_paid') {
+        setTables((prev) =>
+          prev.map((t) =>
+            t.id === event.table_id ? { ...t, status: 'available', is_occupied: false } : t
+          )
+        );
+        if (selectedTable && event.table_id === selectedTable.id) {
+          setSelectedTable((prev) => (prev ? { ...prev, status: 'available', is_occupied: false } : null));
+          setActiveOrder(null);
+        }
+      } else if (event.type === 'order_updated' || event.type === 'new_order') {
+        const isCancelled = event.order?.status === 'cancelled' || !event.order?.items || event.order?.items?.length === 0;
+        if (event.table_id) {
+          setTables((prev) =>
+            prev.map((t) =>
+              t.id === event.table_id ? { ...t, status: isCancelled ? 'available' : 'occupied', is_occupied: !isCancelled } : t
+            )
+          );
+        }
+        if (selectedTable && event.table_id === selectedTable.id) {
+          if (event.order) {
+            if (isCancelled) {
+              setActiveOrder(null);
+            } else {
+              setActiveOrder(event.order);
+            }
+          } else {
+            fetchTableActiveOrder(selectedTable);
+          }
+        }
+      }
+    });
+    return () => unsub();
+  }, [addEventListener, selectedTable]);
+
   // Tarozidagi taom qo'shilganda modalni avtomatik ochish
   const openWeightModalIfNeeded = (ord, menuItemId) => {
     if (!ord || !ord.items) return;
@@ -242,30 +322,56 @@ export const POSView = ({
       } else {
         // Mavjud buyurtmaga qo'shish
         const existingItem = (activeOrder.items || []).find(
-          (i) => i.menu_item_id === menuItem.id && !i.portion_size && !i.is_weighted
+          (i) => Number(i.menu_item_id) === Number(menuItem.id) && !i.is_weighted
         );
 
         if (existingItem) {
+          // 1. Darhol optimistik oshirish (0ms kechikish)
+          const targetQty = (existingItem.quantity || 1) + 1;
+          setActiveOrder((prev) => {
+            if (!prev) return prev;
+            const updatedItems = (prev.items || []).map((it) =>
+              it.id === existingItem.id
+                ? {
+                    ...it,
+                    quantity: targetQty,
+                    total_price: (it.unit_price || menuItem.price) * targetQty,
+                  }
+                : it
+            );
+            const sub = updatedItems.reduce((acc, it) => acc + (it.total_price || 0), 0);
+            return {
+              ...prev,
+              items: updatedItems,
+              subtotal: sub,
+              total: sub + (prev.service_fee_amount || 0) - (prev.discount || 0),
+            };
+          });
+
+          // 2. Serverga sinxronlash
           const updated = await api.patch(
             `/orders/${activeOrder.id}/items/${existingItem.id}/quantity`,
-            { quantity: existingItem.quantity + 1 }
+            { quantity: targetQty }
           );
-          setActiveOrder(updated);
+          if (updated) setActiveOrder(updated);
         } else {
           const updated = await api.post(`/orders/${activeOrder.id}/add-items`, {
             items: [{ menu_item_id: menuItem.id, quantity: 1 }],
             send_to_kitchen_immediately: false,
           });
-          setActiveOrder(updated);
-          openWeightModalIfNeeded(updated, menuItem.id);
+          if (updated) {
+            setActiveOrder(updated);
+            openWeightModalIfNeeded(updated, menuItem.id);
+          }
         }
       }
     } catch (err) {
-      alert(err.message || "Taom qo'shishda xatolik");
+      console.warn("Taom qo'shishda xatolik:", err);
+      if (selectedTable) fetchTableActiveOrder(selectedTable);
     }
   };
 
-  // Soni o'zgartirish (+ / -)
+  // Soni o'zgartirish (+ / -) — Optimistik
   const handleQtyChange = async (item, delta) => {
     if (!activeOrder) return;
     const newQty = (item.quantity || 1) + delta;
@@ -273,24 +379,81 @@ export const POSView = ({
       handleDeleteItem(item.id);
       return;
     }
+
+    // 1. Darhol ekranni yangilaymiz (0ms kechikish)
+    setActiveOrder((prev) => {
+      if (!prev) return prev;
+      const updatedItems = (prev.items || []).map((it) =>
+        it.id === item.id
+          ? {
+              ...it,
+              quantity: newQty,
+              total_price: (it.unit_price || 0) * newQty,
+            }
+          : it
+      );
+      const sub = updatedItems.reduce((acc, it) => acc + (it.total_price || 0), 0);
+      return {
+        ...prev,
+        items: updatedItems,
+        subtotal: sub,
+        total: sub + (prev.service_fee_amount || 0) - (prev.discount || 0),
+      };
+    });
+
     try {
       const updated = await api.patch(`/orders/${activeOrder.id}/items/${item.id}/quantity`, {
         quantity: newQty,
       });
-      setActiveOrder(updated);
+      if (updated) setActiveOrder(updated);
     } catch (err) {
-      alert(err.message || 'Xatolik');
+      console.warn('Soni yangilashda xatolik:', err);
+      if (selectedTable) fetchTableActiveOrder(selectedTable);
     }
   };
 
-  // Taomni o'chirish
+  // Taomni o'chirish — Darhol ekrandan olib tashlaydi
   const handleDeleteItem = async (itemId) => {
     if (!activeOrder) return;
+
+    // 1. Darhol ekrandan o'chiramiz (0ms javob)
+    setActiveOrder((prev) => {
+      if (!prev) return null;
+      const filtered = (prev.items || []).filter((i) => i.id !== itemId);
+      if (filtered.length === 0) {
+        return null; // Savatda taom qolmasa butunlay yopamiz
+      }
+      const sub = filtered.reduce((acc, it) => acc + (it.total_price || 0), 0);
+      return {
+        ...prev,
+        items: filtered,
+        subtotal: sub,
+        total: sub + (prev.service_fee_amount || 0) - (prev.discount || 0),
+      };
+    });
+
     try {
       const updated = await api.delete(`/orders/${activeOrder.id}/items/${itemId}`);
-      setActiveOrder(updated);
+      if (updated) {
+        if (updated.status === 'cancelled' || !updated.items || updated.items.length === 0) {
+          setActiveOrder(null);
+        } else {
+          const cleanItems = (updated.items || []).filter((i) => i.id !== itemId);
+          if (cleanItems.length === 0) {
+            setActiveOrder(null);
+          } else {
+            setActiveOrder({
+              ...updated,
+              items: cleanItems,
+            });
+          }
+        }
+      }
     } catch (err) {
-      alert(err.message || 'Xatolik');
+      if (err.message && err.message.toLowerCase().includes('topilmadi')) {
+        return;
+      }
+      console.warn("Taomni o'chirishda xatolik:", err);
     }
   };
 
@@ -432,15 +595,15 @@ export const POSView = ({
   }, [searchItemQuery, allItems, activeCategory]);
 
   return (
-    <div className="flex flex-col min-h-[calc(100vh-120px)] sm:h-[calc(100vh-130px)] sm:min-h-[580px] bg-slate-950 text-slate-100 rounded-2xl sm:rounded-3xl border border-slate-800 overflow-hidden shadow-2xl font-sans select-none w-full overflow-x-hidden">
+    <div className="flex flex-col h-[calc(100vh-135px)] max-h-[calc(100vh-135px)] min-h-0 bg-slate-950 text-slate-100 rounded-2xl border border-slate-800 shadow-2xl font-sans select-none w-full overflow-hidden">
       {/* 
         ── 1. Rejim almashtirgich (Faqat Admin / Kassir uchun) ──
         🟢 "Stolda" | 🛍️ "Olib ketish" | 🛵 "Dastavka"
         Ofitsiant (waiter) rolida bu qism BUTUNLAY YASHIRILADI!
       */}
       {showModeSwitch && canCheckout && (
-        <div className="p-2.5 bg-slate-950 border-b border-slate-800 flex items-center justify-between gap-2 shrink-0">
-          <div className="flex items-center gap-2 flex-1">
+        <div className="p-1.5 sm:p-2 bg-slate-950 border-b border-slate-800 flex items-center justify-between gap-1.5 shrink-0">
+          <div className="flex items-center gap-1.5 flex-1">
             <button
               type="button"
               id="mode-btn-table"
@@ -448,12 +611,12 @@ export const POSView = ({
                 setOrderType('table');
                 if (selectedTable) fetchTableActiveOrder(selectedTable);
               }}
-              className={`flex-1 py-2 px-3 rounded-2xl text-xs sm:text-sm font-black transition-all flex items-center justify-center gap-2 ${orderType === 'table'
-                  ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-600/30 ring-2 ring-emerald-400'
+              className={`flex-1 py-1.5 px-2.5 rounded-xl text-xs sm:text-sm font-black transition-all flex items-center justify-center gap-1.5 ${orderType === 'table'
+                  ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-600/30 ring-1 ring-emerald-400'
                   : 'bg-slate-900 border border-slate-800 text-slate-400 hover:text-white'
                 }`}
             >
-              <UtensilsCrossed className="w-4 h-4 text-emerald-300" />
+              <UtensilsCrossed className="w-3.5 h-3.5 text-emerald-300" />
               <span>🟢 Stolda</span>
             </button>
 
@@ -464,12 +627,12 @@ export const POSView = ({
                 setOrderType('takeaway');
                 setActiveOrder(null);
               }}
-              className={`flex-1 py-2 px-3 rounded-2xl text-xs sm:text-sm font-black transition-all flex items-center justify-center gap-2 ${orderType === 'takeaway'
-                  ? 'bg-amber-600 text-white shadow-lg shadow-amber-600/30 ring-2 ring-amber-400'
+              className={`flex-1 py-1.5 px-2.5 rounded-xl text-xs sm:text-sm font-black transition-all flex items-center justify-center gap-1.5 ${orderType === 'takeaway'
+                  ? 'bg-amber-600 text-white shadow-lg shadow-amber-600/30 ring-1 ring-amber-400'
                   : 'bg-slate-900 border border-slate-800 text-slate-400 hover:text-white'
                 }`}
             >
-              <ShoppingBag className="w-4 h-4 text-amber-300" />
+              <ShoppingBag className="w-3.5 h-3.5 text-amber-300" />
               <span>🛍️ Olib ketish (Sobo)</span>
             </button>
 
@@ -480,12 +643,12 @@ export const POSView = ({
                 setOrderType('delivery');
                 setActiveOrder(null);
               }}
-              className={`flex-1 py-2 px-3 rounded-2xl text-xs sm:text-sm font-black transition-all flex items-center justify-center gap-2 ${orderType === 'delivery'
-                  ? 'bg-cyan-600 text-white shadow-lg shadow-cyan-600/30 ring-2 ring-cyan-400'
+              className={`flex-1 py-1.5 px-2.5 rounded-xl text-xs sm:text-sm font-black transition-all flex items-center justify-center gap-1.5 ${orderType === 'delivery'
+                  ? 'bg-cyan-600 text-white shadow-lg shadow-cyan-600/30 ring-1 ring-cyan-400'
                   : 'bg-slate-900 border border-slate-800 text-slate-400 hover:text-white'
                 }`}
             >
-              <Bike className="w-4 h-4 text-cyan-300" />
+              <Bike className="w-3.5 h-3.5 text-cyan-300" />
               <span>🛵 Dastavka</span>
             </button>
           </div>
@@ -591,19 +754,19 @@ export const POSView = ({
       {/* 
         ── 4. Asosiy Ekran: Chapda Savat, O'ngda Menyu ──
       */}
-      <div className="flex-1 flex flex-col lg:flex-row overflow-hidden min-h-0">
+      <div className="flex-1 flex flex-col lg:flex-row min-h-0 overflow-hidden">
         {/* ── Chap Panel: Tanlangan Stol va Buyurtma Savati (OrderCart) ── */}
-        <div className={`w-full lg:w-[460px] xl:w-[490px] bg-slate-900 border-r border-slate-800 flex flex-col justify-between shrink-0 shadow-xl overflow-y-auto custom-scrollbar ${mobileTab === 'cart' ? 'flex' : 'hidden lg:flex'
+        <div className={`w-full lg:w-[500px] xl:w-[540px] bg-slate-900/95 border-r border-slate-800 flex flex-col shrink-0 shadow-2xl overflow-hidden h-full ${mobileTab === 'cart' ? 'flex' : 'hidden lg:flex'
           }`}>
           {/* Stol tanlash (faqat 'table' rejimida) */}
           {orderType === 'table' && (
-            <div className="p-3 bg-slate-950 border-b border-slate-800 shrink-0 space-y-2">
+            <div className="p-1.5 bg-slate-950 border-b border-slate-800 shrink-0 space-y-1">
               {/* Zonalarni tanlash */}
-              <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-1">
+              <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-0.5">
                 <button
                   type="button"
                   onClick={() => setSelectedZone('')}
-                  className={`px-3 py-1 rounded-xl text-xs font-black shrink-0 transition-all ${selectedZone === ''
+                  className={`px-2 py-0.5 rounded-lg text-[11px] font-black shrink-0 transition-all ${selectedZone === ''
                       ? 'bg-emerald-600 text-white'
                       : 'bg-slate-850 text-slate-400 hover:text-white border border-slate-800'
                     }`}
@@ -615,7 +778,7 @@ export const POSView = ({
                     key={z}
                     type="button"
                     onClick={() => setSelectedZone(z)}
-                    className={`px-3 py-1 rounded-xl text-xs font-black shrink-0 transition-all ${selectedZone === z
+                    className={`px-2 py-0.5 rounded-lg text-[11px] font-black shrink-0 transition-all ${selectedZone === z
                         ? 'bg-emerald-600 text-white'
                         : 'bg-slate-850 text-slate-400 hover:text-white border border-slate-800'
                       }`}
@@ -626,7 +789,7 @@ export const POSView = ({
               </div>
 
               {/* Stollar qatori */}
-              <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-1">
+              <div className="flex items-center gap-1 overflow-x-auto no-scrollbar py-0.5">
                 {zoneTables.map((tbl) => {
                   const isSel = selectedTable?.id === tbl.id;
                   const isOcc = tbl.is_occupied || tbl.status === 'occupied';
@@ -639,7 +802,7 @@ export const POSView = ({
                         setSelectedTable(tbl);
                         fetchTableActiveOrder(tbl);
                       }}
-                      className={`min-w-[46px] h-9 px-2 rounded-xl text-xs font-black transition-all shrink-0 flex items-center justify-center gap-1 ${isSel
+                      className={`min-w-[36px] h-7 px-1.5 rounded-lg text-xs font-black transition-all shrink-0 flex items-center justify-center gap-0.5 ${isSel
                           ? 'bg-emerald-500 text-slate-950 ring-2 ring-emerald-300 scale-105 shadow-md'
                           : isOcc
                             ? 'bg-red-500/25 text-red-300 border border-red-500/50'
@@ -654,34 +817,49 @@ export const POSView = ({
             </div>
           )}
 
-          {/* Sarlavha: Joriy stol yoki Rejim nomi */}
-          <div className="px-4 py-3 bg-slate-950/70 border-b border-slate-800 flex items-center justify-between shrink-0">
-            <div>
-              <span className="text-[10px] text-slate-400 uppercase tracking-wider font-extrabold block">
-                {orderType === 'table' ? 'Joriy stol:' : 'Buyurtma turi:'}
+          {/* Sarlavha: Joriy stol yoki Rejim nomi (Ixcham bir qator) */}
+          <div className="px-3 py-1 bg-slate-950/70 border-b border-slate-800 flex items-center justify-between shrink-0">
+            <div className="flex items-center gap-2 truncate">
+              <span className="text-[10px] text-slate-400 uppercase tracking-wider font-extrabold shrink-0">
+                {orderType === 'table' ? 'Stol:' : 'Turi:'}
               </span>
-              <h3 className="text-lg font-black text-white tracking-tight flex items-center gap-2">
+              <span className="text-xs sm:text-sm font-black text-white flex items-center gap-1.5 truncate">
                 {orderType === 'table' ? (
                   <>
-                    <span>{selectedTable?.room ? `${selectedTable.room} - ` : ''}Stol #{selectedTable?.number || 1}</span>
-                    <span className={`text-[10px] px-2 py-0.5 rounded-full font-black uppercase ${selectedTable?.status === 'occupied' ? 'bg-red-500/20 text-red-400' : 'bg-emerald-500/20 text-emerald-400'
+                    <span className="truncate">{selectedTable?.room ? `${selectedTable.room} - ` : ''}Stol #{selectedTable?.number || 1}</span>
+                    <span className={`text-[9px] px-1.5 py-0.2 rounded-full font-black uppercase shrink-0 ${selectedTable?.status === 'occupied' ? 'bg-red-500/20 text-red-400' : 'bg-emerald-500/20 text-emerald-400'
                       }`}>
                       {selectedTable?.status === 'occupied' ? 'Band' : "Bo'sh"}
                     </span>
                   </>
                 ) : orderType === 'takeaway' ? (
-                  <span className="text-amber-400">🛍️ Olib ketish (Sobo)</span>
+                  <span className="text-amber-400 truncate">🛍️ Olib ketish (Sobo)</span>
                 ) : (
-                  <span className="text-cyan-400">🛵 Dastavka (Yetkazib berish)</span>
+                  <span className="text-cyan-400 truncate">🛵 Dastavka</span>
                 )}
-              </h3>
+              </span>
             </div>
 
-            {activeOrder && (
-              <span className="px-2.5 py-1 rounded-xl bg-slate-800 border border-slate-700 text-xs font-mono font-bold text-amber-300">
-                #{activeOrder.order_number || activeOrder.id}
-              </span>
-            )}
+            {/* Table transfer & header right actions */}
+            <div className="flex items-center gap-1.5 shrink-0">
+              {orderType === 'table' && activeOrder && selectedTable && (
+                <button
+                  type="button"
+                  onClick={() => setTransferModalOpen(true)}
+                  className="px-2 py-0.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-[11px] font-black text-amber-300 border border-slate-700 hover:border-amber-400 transition-all active:scale-95 flex items-center gap-1"
+                  title="Stolni ko'chirish (Transfer)"
+                >
+                  <ArrowRightLeft className="w-3 h-3" />
+                  <span className="hidden sm:inline">Ko'chirish</span>
+                </button>
+              )}
+
+              {activeOrder && (
+                <span className="px-2 py-0.5 rounded-lg bg-slate-800 border border-slate-700 text-[11px] font-mono font-bold text-amber-300">
+                  #{activeOrder.order_number || activeOrder.id}
+                </span>
+              )}
+            </div>
           </div>
 
           {/* 
@@ -689,44 +867,81 @@ export const POSView = ({
             Savat to'liq OrderCart komponenti orqali render qilinadi.
             pastida "To'landi va stolni bo'shatish" tugmasi faqat canCheckout bo'lganda chiqadi.
           */}
-          <OrderCart
-            order={activeOrder}
-            table={selectedTable}
-            orderType={orderType === 'table' ? 'dine_in' : orderType}
-            customerInfo={{ name: customerName, phone: customerPhone, address: deliveryAddress }}
-            orderLoading={orderLoading}
-            sendingToKitchen={sendingToKitchen}
-            printingBill={printingBill}
-            canCheckout={canCheckout}
-            kitchenNote={kitchenNote}
-            kitchenSendSuccess={kitchenSendSuccess}
-            onSendToKitchen={handleSendToKitchen}
-            onPrintBill={handlePrintBill}
-            onCheckout={() => setCheckoutModalOpen(true)}
-            onUpdateQuantity={handleQtyChange}
-            onRemoveItem={handleDeleteItem}
-            onOpenWeightModal={(it) => {
-              setWeightModalItem(it);
-              setWeightValue(it.weight ? String(it.weight) : '');
-              setPriceValue(
-                it.manual_price !== null && it.manual_price !== undefined
-                  ? String(Math.round(it.manual_price))
-                  : it.total_price
-                    ? String(Math.round(it.total_price))
-                    : ''
-              );
-            }}
-            onOpenSizeModal={(it) => {
-              setSizeModalItem(it);
-              setSizeValue(it.portion_size || '');
-            }}
-            onOpenKitchenNote={() => setKitchenNoteModalOpen(true)}
-          />
+          <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
+            <OrderCart
+              order={activeOrder}
+              table={selectedTable}
+              orderType={orderType === 'table' ? 'dine_in' : orderType}
+              customerInfo={{ name: customerName, phone: customerPhone, address: deliveryAddress }}
+              orderLoading={orderLoading}
+              sendingToKitchen={sendingToKitchen}
+              printingBill={printingBill}
+              canCheckout={canCheckout}
+              kitchenNote={kitchenNote}
+              kitchenSendSuccess={kitchenSendSuccess}
+              onSendToKitchen={handleSendToKitchen}
+              onPrintBill={handlePrintBill}
+              onCheckout={() => setCheckoutModalOpen(true)}
+              onUpdateQuantity={handleQtyChange}
+              onRemoveItem={handleDeleteItem}
+              onOpenWeightModal={(it) => {
+                setWeightModalItem(it);
+                setWeightValue(it.weight ? String(it.weight) : '');
+                setPriceValue(
+                  it.manual_price !== null && it.manual_price !== undefined
+                    ? String(Math.round(it.manual_price))
+                    : it.total_price
+                      ? String(Math.round(it.total_price))
+                      : ''
+                );
+              }}
+              onOpenSizeModal={(it) => {
+                setSizeModalItem(it);
+                setSizeValue(it.portion_size || '');
+              }}
+              onOpenKitchenNote={() => setKitchenNoteModalOpen(true)}
+            />
+          </div>
         </div>
 
         {/* ── O'ng Panel: Kategoriyalar va Taomlar Gridi ── */}
-        <div className={`flex-1 flex flex-col bg-slate-950 overflow-hidden ${mobileTab === 'menu' ? 'flex' : 'hidden lg:flex'
+        <div className={`flex-1 flex flex-col bg-slate-950 overflow-hidden h-full min-h-0 ${mobileTab === 'menu' ? 'flex' : 'hidden lg:flex'
           }`}>
+          {/* Mobil uchun joriy stol indikatori va tanlash */}
+          <div className="lg:hidden flex items-center justify-between px-3 py-2 bg-slate-900 border-b border-slate-800 shrink-0">
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] text-slate-400 uppercase font-black tracking-wider">Stol:</span>
+              <span className="text-xs sm:text-sm font-black text-white">
+                {selectedTable?.room ? `${selectedTable.room} - ` : ''}
+                {selectedTable?.name || `Stol #${selectedTable?.number || 1}`}
+              </span>
+              <span
+                className={`text-[10px] px-2 py-0.5 rounded-full font-black uppercase ${
+                  selectedTable?.status === 'occupied'
+                    ? 'bg-red-500/20 text-red-400 border border-red-500/40'
+                    : 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40'
+                }`}
+              >
+                {selectedTable?.status === 'occupied' ? 'Band' : "Bo'sh"}
+              </span>
+            </div>
+
+            <select
+              value={selectedTable?.id || ''}
+              onChange={(e) => {
+                const t = tables.find((x) => x.id === parseInt(e.target.value));
+                if (t) setSelectedTable(t);
+              }}
+              className="bg-slate-800 text-xs font-bold text-white rounded-xl px-2.5 py-1.5 border border-slate-700 focus:outline-none focus:border-emerald-500"
+            >
+              {tables.map((tbl) => (
+                <option key={tbl.id} value={tbl.id}>
+                  {tbl.room ? `${tbl.room} ` : ''}#{tbl.number} ({tbl.status === 'occupied' ? 'Band' : "Bo'sh"})
+                </option>
+              ))}
+            </select>
+          </div>
+
           {/* Qidiruv va Kategoriyalar */}
           <div className="p-3.5 bg-slate-900/80 border-b border-slate-800 shrink-0 space-y-3">
             <div className="relative">
@@ -772,18 +987,19 @@ export const POSView = ({
                 <p className="text-xs">Boshqa so'z bilan qidiring yoki kategoriyani almashtiring</p>
               </div>
             ) : (
-              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 gap-3.5 sm:gap-4">
+              <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-3 sm:gap-3.5">
                 {displayedItems.map((item) => {
                   const isStop = item.is_stop_list || item.is_available === false;
                   return (
                     <div
                       key={item.id}
                       onClick={() => handleAddItem(item)}
-                      className={`group relative rounded-3xl bg-slate-900 border-2 border-slate-800 p-3 flex flex-col justify-between hover:border-emerald-500 hover:bg-slate-850 transition-all shadow-lg cursor-pointer select-none active:scale-95 ${isStop ? 'opacity-50 grayscale pointer-events-none' : ''
-                        }`}
+                      className={`group relative rounded-3xl bg-slate-900 border-2 border-slate-800 p-3 flex flex-col justify-between hover:border-emerald-500 hover:bg-slate-850 transition-all shadow-lg cursor-pointer select-none active:scale-95 ${
+                        isStop ? 'opacity-50 grayscale pointer-events-none' : ''
+                      }`}
                     >
-                      {/* Thumbnail */}
-                      <div className="h-32 sm:h-36 w-full rounded-2xl bg-slate-950 overflow-hidden relative mb-2.5 flex items-center justify-center">
+                      {/* Thumbnail: Kattaroq rasm */}
+                      <div className="h-28 sm:h-32 xl:h-36 w-full rounded-2xl bg-slate-950 overflow-hidden relative mb-2.5 flex items-center justify-center border border-slate-800/80">
                         {item.image_url ? (
                           <img
                             src={item.image_url}
@@ -811,17 +1027,17 @@ export const POSView = ({
                         )}
                       </div>
 
-                      {/* Title */}
+                      {/* Title: Tushunarli va aniq sarlavha */}
                       <h4 className="text-sm sm:text-base font-extrabold text-white group-hover:text-emerald-300 transition-colors line-clamp-2 leading-tight">
                         {item.name}
                       </h4>
 
-                      {/* Price Badge and Plus button */}
-                      <div className="mt-3 flex items-center justify-between">
-                        <span className="px-3 py-1.5 rounded-xl bg-emerald-600 text-white font-black text-xs sm:text-sm shadow-md font-mono">
+                      {/* Price Badge and Plus button: Kattaroq, aniq ko'rinuvchi narx */}
+                      <div className="mt-3 flex items-center justify-between gap-2">
+                        <span className="px-2.5 sm:px-3 py-1.5 rounded-xl bg-emerald-600 text-white font-black text-xs sm:text-sm shadow-md font-mono">
                           {Math.round(item.price || 0).toLocaleString('uz-UZ')} so'm
                         </span>
-                        <span className="w-8 h-8 rounded-xl bg-emerald-500/20 text-emerald-400 flex items-center justify-center text-base font-black group-hover:bg-emerald-500 group-hover:text-slate-950 transition-colors shadow-sm">
+                        <span className="w-8 h-8 rounded-xl bg-emerald-500/20 text-emerald-400 flex items-center justify-center text-base font-black group-hover:bg-emerald-500 group-hover:text-slate-950 transition-colors shadow-sm shrink-0">
                           +
                         </span>
                       </div>
@@ -830,6 +1046,29 @@ export const POSView = ({
                 })}
               </div>
             )}
+            {/* Mobil pastki savat ko'rish suzuvchi paneli */}
+            <div className="lg:hidden p-2.5 bg-slate-950/95 border-t border-slate-800 shrink-0">
+              <button
+                type="button"
+                onClick={() => setMobileTab('cart')}
+                className="w-full py-2.5 px-3.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 active:scale-98 text-white font-black text-xs sm:text-sm flex items-center justify-between shadow-lg shadow-emerald-950/50"
+              >
+                <div className="flex items-center gap-2">
+                  <ShoppingCart className="w-4 h-4" />
+                  <span>Savat: {activeOrder?.items?.length || 0} ta taom</span>
+                </div>
+                <div className="flex items-center gap-1.5 font-mono text-emerald-200">
+                  <span>
+                    {Math.round(
+                      activeOrder?.total ||
+                        (activeOrder?.items || []).reduce((acc, it) => acc + (it.total_price || 0), 0)
+                    ).toLocaleString('uz-UZ')}{' '}
+                    so'm
+                  </span>
+                  <span>➔</span>
+                </div>
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -1009,6 +1248,67 @@ export const POSView = ({
           }
           onPaid={handleCheckoutPaid}
         />
+      )}
+
+      {/* ─── Stolni ko'chirish modali (Aliposter 1.0.0.0 andozasi) ─── */}
+      {transferModalOpen && selectedTable && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in">
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl max-w-md w-full p-5 shadow-2xl">
+            <div className="flex items-center justify-between pb-2 border-b border-slate-800 mb-3">
+              <div className="flex items-center gap-2">
+                <ArrowRightLeft className="w-4 h-4 text-amber-400" />
+                <h3 className="text-white font-extrabold text-sm sm:text-base">
+                  Stol #{selectedTable.number} ni ko'chirish
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setTransferModalOpen(false)}
+                className="w-7 h-7 rounded-lg bg-slate-800 text-slate-400 hover:text-white flex items-center justify-center"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <p className="text-xs text-slate-400 mb-3">
+              Buyurtmani qaysi stolga ko'chirmoqchisiz? Kerakli stolni tanlang:
+            </p>
+
+            <div className="grid grid-cols-3 sm:grid-cols-4 gap-2 max-h-64 overflow-y-auto custom-scrollbar p-1 mb-4">
+              {tables
+                .filter((t) => t.id !== selectedTable.id)
+                .map((t) => (
+                  <button
+                    key={t.id}
+                    type="button"
+                    disabled={transferLoading}
+                    onClick={() => handleTransferTable(t.id)}
+                    className={`p-2.5 rounded-xl text-center border font-black text-xs transition-all active:scale-95 flex flex-col items-center justify-center gap-1 ${
+                      t.status === 'occupied'
+                        ? 'bg-amber-950/40 border-amber-800/60 text-amber-300 hover:bg-amber-900/60'
+                        : 'bg-emerald-950/40 border-emerald-800/60 text-emerald-300 hover:bg-emerald-900/60'
+                    }`}
+                  >
+                    <span className="font-extrabold text-sm text-white">#{t.number}</span>
+                    <span className="text-[10px] text-slate-400 truncate max-w-full">{t.room || 'Zal'}</span>
+                    <span className="text-[9px] uppercase font-bold opacity-75">
+                      {t.status === 'occupied' ? 'Bandga qo\'shish' : 'Bo\'sh stol'}
+                    </span>
+                  </button>
+                ))}
+            </div>
+
+            <div className="flex justify-end">
+              <button
+                type="button"
+                onClick={() => setTransferModalOpen(false)}
+                className="px-4 py-2 rounded-xl bg-slate-800 text-xs text-slate-300 font-bold hover:bg-slate-700"
+              >
+                Bekor qilish
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Thermal Chek ko'rish / chiqarish oynasi */}

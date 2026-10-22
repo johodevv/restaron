@@ -1075,7 +1075,7 @@ def print_to_network_printer(
                                        char_spacing=char_spacing, line_spacing=line_spacing)
 
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        s.settimeout(3.5)
+        s.settimeout(1.5)
         s.connect((host, port))
         s.sendall(payload)
         s.close()

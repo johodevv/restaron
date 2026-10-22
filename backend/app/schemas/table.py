@@ -25,6 +25,26 @@ class TableUpdate(BaseModel):
     capacity: Optional[int] = None
     status: Optional[TableStatus] = None
     is_active: Optional[bool] = None
+    reserved_by_name: Optional[str] = None
+    reserved_by_phone: Optional[str] = None
+    reserved_time: Optional[str] = None
+    reserved_guests: Optional[int] = None
+    deposit_amount: Optional[float] = None
+    reservation_note: Optional[str] = None
+
+
+class TableReserveRequest(BaseModel):
+    name: Optional[str] = None
+    phone: Optional[str] = None
+    time: Optional[str] = None
+    guests: Optional[int] = None
+    reserved_by_name: Optional[str] = None
+    reserved_by_phone: Optional[str] = None
+    reserved_time: Optional[str] = None
+    reserved_guests: Optional[int] = None
+    deposit_amount: Optional[float] = 0.0
+    note: Optional[str] = None
+    reservation_note: Optional[str] = None
 
 
 class TableResponse(TableBase):
@@ -36,6 +56,12 @@ class TableResponse(TableBase):
     is_active: bool
     is_unlocked: bool = False
     current_pin: Optional[str] = None
+    reserved_by_name: Optional[str] = None
+    reserved_by_phone: Optional[str] = None
+    reserved_time: Optional[str] = None
+    reserved_guests: Optional[int] = None
+    deposit_amount: Optional[float] = 0.0
+    reservation_note: Optional[str] = None
     created_at: datetime
 
     model_config = {"from_attributes": True}

@@ -2,10 +2,13 @@
 Cheklar Arxivi (3 yilgacha saqlash) va Smena Hisobotlari (X/Z Report) API
 Xprinter uchun chek formatlash va qayta chop etish
 """
+import asyncio
 from datetime import datetime, timezone, timedelta
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, and_, or_
+
+UZ_TZ = timezone(timedelta(hours=5))
 from sqlalchemy.orm import selectinload
 from pydantic import BaseModel
 from typing import List, Optional
@@ -208,7 +211,7 @@ async def scan_lan_printers(
     LAN kabeli bilan ulangan termal printerning IP manzilini topish uchun.
     Taxminan 5-15 soniya vaqt oladi.
     """
-    found = scan_network_printers()
+    found = await asyncio.to_thread(scan_network_printers)
     return {"printers": found, "count": len(found)}
 
 
@@ -398,7 +401,7 @@ async def create_shift_report(
         .order_by(ShiftReport.created_at.desc())
     )
     prev_shift = last_z.scalars().first()
-    opened_at = prev_shift.closed_at if prev_shift else datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    opened_at = prev_shift.closed_at if prev_shift else datetime.now(UZ_TZ).replace(hour=0, minute=0, second=0, microsecond=0)
     now_dt = datetime.now(timezone.utc)
 
     # Smena soni
@@ -476,7 +479,7 @@ async def create_shift_report(
             # mos kelmay qoladi.
             Order.status == OrderStatus.PAID,
             Order.is_paid == True,
-            Order.created_at >= opened_at,
+            func.coalesce(Order.closed_at, Order.created_at) >= opened_at,
         )
     )
     orders = orders_res.scalars().all()
@@ -663,7 +666,7 @@ async def get_current_shift_preview(
         .order_by(ShiftReport.created_at.desc())
     )
     prev_shift = last_z.scalars().first()
-    opened_at = prev_shift.closed_at if prev_shift else datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    opened_at = prev_shift.closed_at if prev_shift else datetime.now(UZ_TZ).replace(hour=0, minute=0, second=0, microsecond=0)
     now_dt = datetime.now(timezone.utc)
 
     # Joriy smena raqami
@@ -683,7 +686,7 @@ async def get_current_shift_preview(
             Order.restaurant_id == restaurant_id,
             Order.status == OrderStatus.PAID,
             Order.is_paid == True,
-            Order.created_at >= opened_at,
+            func.coalesce(Order.closed_at, Order.created_at) >= opened_at,
         )
     )
     orders = orders_res.scalars().all()

@@ -149,7 +149,9 @@ async function request(endpoint, options = {}) {
       else if (response.status === 404) errorDetail = "Ma'lumot topilmadi.";
       else if (response.status >= 500) errorDetail = `Server xatosi (${response.status}). Qaytadan urinib ko'ring.`;
     }
-    throw new Error(errorDetail);
+    const err = new Error(errorDetail);
+    err.status = response.status;
+    throw err;
   }
 
   if (response.status === 204) {

@@ -10,12 +10,12 @@ import aiofiles
 from io import BytesIO
 from datetime import datetime, timezone
 from pydantic import BaseModel, Field
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Body, Query
 from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 from sqlalchemy.orm import selectinload
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 
 from app.core.database import get_db
 from app.core.security import require_role
@@ -30,7 +30,7 @@ from app.core.printer_service import (
     printer_options, receipt_title,
 )
 from app.core.printer_queue import print_with_retry
-from app.schemas.table import TableCreate, TableUpdate, TableResponse, TablePublic
+from app.schemas.table import TableCreate, TableUpdate, TableResponse, TablePublic, TableReserveRequest
 from app.schemas.order import TableBillResponse, BillItemSummary
 from app.websockets.manager import manager
 from app.core.disk_utils import ensure_disk_space
@@ -373,7 +373,7 @@ async def delete_zone(
 async def list_tables(
     restaurant_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role("admin", "waiter", "developer")),
+    current_user: User = Depends(require_role("admin", "waiter", "developer", "cashier")),
 ):
     result = await db.execute(
         select(Table)
@@ -768,6 +768,12 @@ async def checkout_table(
     table.status = TableStatus.AVAILABLE
     table.is_unlocked = False
     table.current_pin = None
+    table.reserved_by_name = None
+    table.reserved_by_phone = None
+    table.reserved_time = None
+    table.reserved_guests = None
+    table.deposit_amount = 0.0
+    table.reservation_note = None
     await db.flush()
     await db.commit()
 
@@ -931,7 +937,7 @@ async def set_table_service_fee(
     table_id: int,
     payload: TableServiceFeeRequest,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role("admin", "waiter", "developer")),
+    current_user: User = Depends(require_role("admin", "waiter", "developer", "cashier")),
 ):
     """Shu stolning OCHIQ hisobiga boshqa xizmat haqi foizini qo'yish.
 
@@ -996,7 +1002,7 @@ async def set_table_service_fee(
 async def print_table_bill(
     table_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role("waiter", "admin", "developer")),
+    current_user: User = Depends(require_role("waiter", "admin", "developer", "cashier")),
 ):
     """Admin yoki ofitsiant stol hisob chekini (1-Printer: Mijoz cheki) to'g'ridan-to'g'ri chop etadi"""
     result = await db.execute(
@@ -1219,12 +1225,58 @@ async def update_table(
     return TableResponse.model_validate(table)
 
 
+@router.post("/{table_id}/reserve", response_model=TableResponse, summary="Stolni bron qilish (Zakalat/Avans bilan)")
+async def reserve_table(
+    table_id: int,
+    payload: TableReserveRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role("waiter", "admin", "developer", "cashier")),
+):
+    """Stolni bron qilish va mijoz ma'lumotlari hamda zakalat summasini saqlash"""
+    result = await db.execute(select(Table).where(Table.id == table_id))
+    table = result.scalar_one_or_none()
+    if not table:
+        raise HTTPException(status_code=404, detail="Stol topilmadi")
+
+    table.status = TableStatus.RESERVED
+    c_name = payload.reserved_by_name or payload.name
+    table.reserved_by_name = c_name.strip() if c_name else None
+    c_phone = payload.reserved_by_phone or payload.phone
+    table.reserved_by_phone = c_phone.strip() if c_phone else None
+    c_time = payload.reserved_time or payload.time
+    table.reserved_time = c_time.strip() if c_time else None
+    table.reserved_guests = payload.reserved_guests if payload.reserved_guests is not None else payload.guests
+    table.deposit_amount = float(payload.deposit_amount or 0.0)
+    c_note = payload.reservation_note or payload.note
+    table.reservation_note = c_note.strip() if c_note else None
+
+    await db.flush()
+    await db.commit()
+
+    await manager.broadcast_to_restaurant(
+        table.restaurant_id,
+        {
+            "type": "table_status_updated",
+            "table_id": table.id,
+            "table_number": table.number,
+            "status": TableStatus.RESERVED.value,
+            "new_status": TableStatus.RESERVED.value,
+            "reserved_time": table.reserved_time,
+            "deposit_amount": table.deposit_amount,
+            "reserved_by_name": table.reserved_by_name,
+            "reserved_by_phone": table.reserved_by_phone,
+        },
+    )
+    return TableResponse.model_validate(table)
+
+
 @router.patch("/{table_id}/status", response_model=TableResponse, summary="Stol holatini o'zgartirish")
 async def update_table_status(
     table_id: int,
-    table_status: str,
+    table_status: Optional[str] = Query(None),
+    payload: Optional[Dict[str, Any]] = Body(None),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role("waiter", "admin", "developer")),
+    current_user: User = Depends(require_role("waiter", "admin", "developer", "cashier")),
 ):
     """Ofitsiant yoki Admin stol holatini (available, occupied, reserved) o'zgartiradi"""
     result = await db.execute(select(Table).where(Table.id == table_id))
@@ -1232,7 +1284,16 @@ async def update_table_status(
     if not table:
         raise HTTPException(status_code=404, detail="Stol topilmadi")
 
-    status_str = table_status.lower()
+    raw_status = None
+    if payload and isinstance(payload, dict):
+        raw_status = payload.get("status") or payload.get("table_status")
+    if not raw_status and table_status:
+        raw_status = table_status
+
+    if not raw_status:
+        raw_status = "available"
+
+    status_str = str(raw_status).lower().strip()
     try:
         new_enum_status = TableStatus(status_str)
     except ValueError:
@@ -1240,6 +1301,17 @@ async def update_table_status(
 
     old_status = table.status.value if hasattr(table.status, "value") else str(table.status)
     table.status = new_enum_status
+
+    if new_enum_status == TableStatus.AVAILABLE:
+        table.reserved_by_name = None
+        table.reserved_by_phone = None
+        table.reserved_time = None
+        table.reserved_guests = None
+        table.deposit_amount = 0.0
+        table.reservation_note = None
+        table.current_pin = None
+        table.is_unlocked = False
+
     await db.flush()
     await db.commit()
 
@@ -1257,6 +1329,108 @@ async def update_table_status(
     )
 
     return TableResponse.model_validate(table)
+
+
+@router.post("/{from_table_id}/transfer/{to_table_id}", summary="Stolni boshqa stolga ko'chirish (Transfer)")
+async def transfer_table(
+    from_table_id: int,
+    to_table_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role("waiter", "admin", "developer", "cashier")),
+):
+    """Buyurtmalarni boshqa stolga ko'chirish va stollar holatini sinxronlash"""
+    from_res = await db.execute(select(Table).where(Table.id == from_table_id))
+    from_table = from_res.scalar_one_or_none()
+    to_res = await db.execute(select(Table).where(Table.id == to_table_id))
+    to_table = to_res.scalar_one_or_none()
+
+    if not from_table or not to_table:
+        raise HTTPException(status_code=404, detail="Stol topilmadi")
+
+    # from_table dagi faol to'lanmagan buyurtmalarni topish
+    orders_res = await db.execute(
+        select(Order).where(
+            Order.table_id == from_table_id,
+            Order.is_paid == False,
+            Order.status.in_([
+                OrderStatus.PENDING,
+                OrderStatus.CONFIRMED,
+                OrderStatus.PREPARING,
+                OrderStatus.READY,
+                OrderStatus.SERVED,
+            ]),
+        )
+    )
+    active_orders = orders_res.scalars().all()
+
+    for ord in active_orders:
+        ord.table_id = to_table.id
+        ord.hall_name = to_table.room or f"Zal #{to_table.number}"
+
+    # Eski stolni bo'shatamiz, yangi stolni band qilamiz
+    from_table.status = TableStatus.AVAILABLE
+    from_table.is_unlocked = False
+    from_table.current_pin = None
+
+    to_table.status = TableStatus.OCCUPIED
+
+    # Zakalat bo'lsa yangi stolga o'tkazish
+    if (from_table.deposit_amount or 0.0) > 0:
+        to_table.deposit_amount = (to_table.deposit_amount or 0.0) + (from_table.deposit_amount or 0.0)
+        to_table.reserved_by_name = to_table.reserved_by_name or from_table.reserved_by_name
+        to_table.reserved_by_phone = to_table.reserved_by_phone or from_table.reserved_by_phone
+        to_table.reserved_time = to_table.reserved_time or from_table.reserved_time
+        to_table.reservation_note = to_table.reservation_note or from_table.reservation_note
+
+    from_table.reserved_by_name = None
+    from_table.reserved_by_phone = None
+    from_table.reserved_time = None
+    from_table.reserved_guests = None
+    from_table.deposit_amount = 0.0
+    from_table.reservation_note = None
+
+    await db.flush()
+    await db.commit()
+
+    # WebSocket orqali stollar va buyurtmalar yangilanganini e'lon qilish
+    await manager.broadcast_to_restaurant(
+        from_table.restaurant_id,
+        {
+            "type": "table_status_updated",
+            "table_id": from_table.id,
+            "table_number": from_table.number,
+            "status": TableStatus.AVAILABLE.value,
+            "new_status": TableStatus.AVAILABLE.value,
+        },
+    )
+    await manager.broadcast_to_restaurant(
+        to_table.restaurant_id,
+        {
+            "type": "table_status_updated",
+            "table_id": to_table.id,
+            "table_number": to_table.number,
+            "status": TableStatus.OCCUPIED.value,
+            "new_status": TableStatus.OCCUPIED.value,
+            "deposit_amount": to_table.deposit_amount,
+        },
+    )
+    for ord in active_orders:
+        await manager.broadcast_to_restaurant(
+            to_table.restaurant_id,
+            {
+                "type": "order_updated",
+                "order_id": ord.id,
+                "order_number": ord.order_number,
+                "table_id": to_table.id,
+                "table_number": to_table.number,
+            },
+        )
+
+    return {
+        "success": True,
+        "message": f"Buyurtmalar Stol #{from_table.number} dan Stol #{to_table.number} ga muvaffaqiyatli ko'chirildi",
+        "transferred_orders_count": len(active_orders),
+    }
 
 
 @router.post("/{table_id}/clear", response_model=TableResponse, summary="Stolni tozalash / bo'shatish")

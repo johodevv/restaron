@@ -202,7 +202,7 @@ def start_server():
 
     cf_flags = 0
     if sys.platform == "win32":
-        cf_flags = 0x08000000  # CREATE_NO_WINDOW
+        cf_flags = 0x08000000 | 0x00000008  # CREATE_NO_WINDOW | DETACHED_PROCESS
 
     uvicorn_proc = subprocess.Popen(
         uvicorn_cmd,

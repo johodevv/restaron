@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   Printer,
   Receipt,
@@ -13,7 +13,9 @@ import {
   UtensilsCrossed,
   User,
   Phone,
-  MapPin
+  MapPin,
+  X,
+  Hash
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 
@@ -58,6 +60,8 @@ export const OrderCart = ({
   kitchenSendSuccess = false,
 }) => {
   const { user, isAdmin, isCashier, canCheckout: authCanCheckout } = useAuth();
+  const [qtyModalItem, setQtyModalItem] = useState(null);
+  const [qtyInput, setQtyInput] = useState('');
 
   // Rolga qarab Checkout ruxsati
   const isPrivileged = user?.role === 'admin' || user?.role === 'cashier' || user?.role === 'developer';
@@ -75,307 +79,221 @@ export const OrderCart = ({
   const total = order?.total || (subtotal + serviceFeeAmount);
 
   return (
-    <div className="h-auto w-full flex flex-col justify-between bg-slate-900/95 font-sans">
+    <div className="h-full w-full flex flex-col bg-slate-900/95 font-sans overflow-hidden select-none">
       {/* ── Active Items Table Header & Customer Info ── */}
-      <div className="h-auto w-full flex flex-col">
+      <div className="flex-1 overflow-y-auto custom-scrollbar overflow-x-hidden min-h-0 flex flex-col">
         {/* Takeaway / Delivery Header details if present */}
         {!isDineIn && (customerInfo.name || customerInfo.phone || customerInfo.address) && (
-          <div className="px-3 sm:px-4 py-2 bg-slate-950 border-b border-slate-800 text-xs text-slate-300 flex items-center justify-between shrink-0">
+          <div className="px-3 sm:px-4 py-2 bg-slate-950 border-b border-slate-800 text-xs sm:text-sm text-slate-300 flex items-center justify-between shrink-0">
             <div className="flex items-center gap-2 truncate">
               {orderType === 'takeaway' ? (
-                <ShoppingBag className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                <ShoppingBag className="w-4 h-4 text-amber-400 shrink-0" />
               ) : (
-                <Bike className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
+                <Bike className="w-4 h-4 text-cyan-400 shrink-0" />
               )}
-              <span className="font-extrabold text-white truncate">{customerInfo.name || 'Mijoz'}</span>
+              <span className="font-extrabold text-white truncate text-xs sm:text-sm">{customerInfo.name || 'Mijoz'}</span>
               {customerInfo.phone && (
-                <span className="font-mono text-slate-400 text-[11px] shrink-0">({customerInfo.phone})</span>
+                <span className="font-mono text-slate-400 text-xs shrink-0">({customerInfo.phone})</span>
               )}
             </div>
             {customerInfo.address && (
-              <span className="text-[11px] text-cyan-300 truncate max-w-[140px] sm:max-w-[180px] ml-2">
+              <span className="text-xs text-cyan-300 truncate max-w-[150px] sm:max-w-[200px] ml-2">
                 📍 {customerInfo.address}
               </span>
             )}
           </div>
         )}
 
-        {/* Table column headers (Desktop / Tablet) */}
-        <div className="hidden sm:grid grid-cols-12 text-xs font-black text-slate-300 bg-slate-950/90 px-4 py-2 border-b border-slate-800 uppercase tracking-wider shrink-0 select-none">
-          <span className="col-span-4">Taom nomi</span>
+        {/* Table column headers (Ofitsiant paneli andozasida) */}
+        <div className="grid grid-cols-12 text-xs sm:text-sm font-black text-slate-300 bg-slate-950/70 px-3 sm:px-4 py-2 border-b border-slate-800 uppercase tracking-wider shrink-0 select-none">
+          <span className="col-span-5">Taom nomi</span>
           <span className="col-span-2 text-right">Narxi</span>
-          <span className="col-span-3 text-center">Soni</span>
-          <span className="col-span-3 text-right">Jami</span>
+          <span className="col-span-2 text-center">Soni</span>
+          <span className="col-span-2 text-right">Jami</span>
+          <span className="col-span-1 text-center"></span>
         </div>
 
-        {/* ── Items List: Auto-expand, ichki skrollbarsiz, barcha taomlar to'liq ko'rinadi ── */}
-        <div className="h-auto w-full flex flex-col">
-          {orderLoading ? (
-            <div className="p-6 text-center text-xs sm:text-sm font-bold text-slate-400">Yuklanmoqda...</div>
-          ) : items.length === 0 ? (
-            <div className="p-5 text-center text-slate-400 space-y-1">
-              <p className="font-extrabold text-white text-xs sm:text-sm">Ushbu buyurtmada hali taom yo'q</p>
-              <p className="text-[11px] text-slate-400">Menyudan taomlarni tanlang</p>
-            </div>
-          ) : (
-            <div className="divide-y divide-slate-800/60 h-auto w-full flex flex-col">
-              {items.map((it) => {
-                const priced = isItemPriced(it);
-                const unitPrice = it.unit_price || it.price || 0;
-                const lineTotal = it.total_price || (unitPrice * (it.quantity || 1));
+        {/* ── Items List: Ofitsiant paneli kabi qulay va aniq ── */}
+        {orderLoading ? (
+          <div className="p-8 text-center text-xs sm:text-sm font-bold text-slate-400">Yuklanmoqda...</div>
+        ) : items.length === 0 ? (
+          <div className="p-8 text-center text-slate-400 space-y-1">
+            <p className="font-extrabold text-white text-sm sm:text-base">Ushbu buyurtmada hali taom yo'q</p>
+            <p className="text-xs text-slate-400">O'ng tomondagi menyudan taomlarni tanlang</p>
+          </div>
+        ) : (
+          <div className="divide-y divide-slate-800/60">
+            {items.map((it) => {
+              const priced = isItemPriced(it);
+              const unitPrice = it.unit_price || it.price || 0;
+              const lineTotal = it.total_price || (unitPrice * (it.quantity || 1));
+              const sent = Math.min(it.sent_quantity || 0, it.quantity || 1);
+              const fresh = Math.max((it.quantity || 1) - sent, 0);
 
-                return (
-                  <div
-                    key={it.id}
-                    className="p-2 sm:px-4 sm:py-2 hover:bg-slate-800/50 transition-colors"
-                  >
-                    {/* Mobil ko'rinish (sm dan kichik ekranlar): 2 qatorli qulay tartib */}
-                    <div className="sm:hidden space-y-1.5">
-                      <div className="flex items-start justify-between gap-2">
-                        <div className="flex-1 min-w-0">
-                          <p className="font-bold text-white text-xs leading-snug break-words">
-                            {it.menu_item_name || it.name || 'Taom'}
-                          </p>
-                          <div className="flex items-center gap-1.5 flex-wrap mt-0.5">
-                            {/* Weighted trigger */}
-                            {it.is_weighted && (
-                              <button
-                                type="button"
-                                onClick={() => onOpenWeightModal && onOpenWeightModal(it)}
-                                className={`px-1.5 py-0.5 rounded text-[9px] font-black leading-none ${priced
-                                    ? 'bg-cyan-500/25 text-cyan-300 border border-cyan-500/50'
-                                    : 'bg-red-600 text-white border border-red-400 animate-pulse'
-                                  }`}
-                              >
-                                {priced
-                                  ? `💰 ${Math.round(lineTotal).toLocaleString('uz-UZ')} so'm` +
-                                  (it.weight ? ` · ${it.weight} ${it.unit || 'kg'}` : '')
-                                  : '💰 NARXI YO\'Q — bosing!'}
-                              </button>
-                            )}
+              return (
+                <div
+                  key={it.id}
+                  className="grid grid-cols-12 items-center px-2.5 sm:px-3 py-1.5 hover:bg-slate-800/50 transition-colors"
+                >
+                  {/* Name & time & status */}
+                  <div className="col-span-5 pr-1 min-w-0">
+                    <p className="font-extrabold text-white text-xs sm:text-sm leading-tight truncate">
+                      {it.menu_item_name || it.name || 'Taom'}
+                    </p>
 
-                            {/* Size trigger */}
-                            {!it.is_weighted && (
-                              <button
-                                type="button"
-                                onClick={() => onOpenSizeModal && onOpenSizeModal(it)}
-                                className="text-[9px] text-teal-400 hover:text-teal-300 font-bold"
-                              >
-                                {it.portion_size || it.size_or_volume ? `📏 ${it.portion_size || it.size_or_volume}` : "+ o'lcham"}
-                              </button>
-                            )}
-
-                            {/* Status */}
-                            <span className="text-[9px] font-semibold text-slate-400 font-mono">
-                              {(it.sent_quantity || 0) > 0 ? '♨️ Oshxonada' : '✦ Yangi'}
-                            </span>
-                          </div>
-                        </div>
-
-                        {/* Delete button */}
+                    <div className="flex items-center gap-1 flex-wrap mt-0.5 text-[10px] sm:text-[11px] font-semibold text-slate-400 font-mono leading-none">
+                      {/* Tortiladigan taom (baliq, go'sht): SUMMASI */}
+                      {it.is_weighted && (
                         <button
                           type="button"
-                          onClick={() => onRemoveItem && onRemoveItem(it.id)}
-                          className="p-1 rounded text-slate-500 hover:text-red-400 shrink-0"
-                          title="O'chirish"
+                          onClick={() => onOpenWeightModal && onOpenWeightModal(it)}
+                          title="Summasini kiritish"
+                          className={`px-1.5 py-0.5 rounded text-[10px] font-black transition-all active:scale-95 inline-block ${priced
+                              ? 'bg-cyan-500/25 text-cyan-300 border border-cyan-500/50'
+                              : 'bg-red-600 text-white border border-red-400 animate-pulse'
+                            }`}
                         >
-                          <Trash2 className="w-3.5 h-3.5" />
+                          {priced
+                            ? `💰 ${Math.round(lineTotal).toLocaleString('uz-UZ')}` +
+                            (it.weight ? `·${it.weight}${it.unit || 'kg'}` : '')
+                            : "💰 Narx yo'q"}
                         </button>
-                      </div>
+                      )}
 
-                      {/* Mobil pastki qator: [Narx] | [- 1 +] | [Jami] */}
-                      <div className="flex items-center justify-between pt-1 border-t border-slate-800/40 text-xs">
-                        <span className="font-mono text-[11px] text-slate-400">
-                          {Math.round(unitPrice).toLocaleString('uz-UZ')} so'm
-                        </span>
-
-                        <div className="flex items-center gap-1.5 bg-slate-950 px-2 py-0.5 rounded-lg border border-slate-800">
-                          <button
-                            type="button"
-                            onClick={() => onUpdateQuantity && onUpdateQuantity(it, -1)}
-                            className="w-5 h-5 rounded bg-emerald-700 hover:bg-emerald-600 text-white font-black flex items-center justify-center text-xs active:scale-90"
-                          >
-                            -
-                          </button>
-                          <span className="font-mono text-xs font-black text-white w-4 text-center">
-                            {it.quantity}
-                          </span>
-                          <button
-                            type="button"
-                            onClick={() => onUpdateQuantity && onUpdateQuantity(it, 1)}
-                            className="w-5 h-5 rounded bg-emerald-700 hover:bg-emerald-600 text-white font-black flex items-center justify-center text-xs active:scale-90"
-                          >
-                            +
-                          </button>
-                        </div>
-
-                        <span className="font-mono font-bold text-emerald-400 text-xs">
-                          {Math.round(lineTotal).toLocaleString('uz-UZ')} so'm
-                        </span>
-                      </div>
-                    </div>
-
-                    {/* Desktop ko'rinish (sm va undan katta ekranlar): To'liq grid */}
-                    <div className="hidden sm:grid grid-cols-12 items-center gap-2">
-                      {/* Item Name & Meta Buttons */}
-                      <div className="col-span-4 pr-1 min-w-0">
-                        <p className="font-bold text-white text-xs sm:text-sm leading-tight break-words">
-                          {it.menu_item_name || it.name || 'Taom'}
-                        </p>
-
-                        {/* Weighted Item Price Input Trigger */}
-                        {it.is_weighted && (
-                          <button
-                            type="button"
-                            onClick={() => onOpenWeightModal && onOpenWeightModal(it)}
-                            title="Summasini kiritish"
-                            className={`mt-1 px-1.5 py-0.5 rounded-lg text-[9px] sm:text-[10px] font-black transition-all active:scale-95 block leading-tight ${priced
-                                ? 'bg-cyan-500/25 text-cyan-300 border border-cyan-500/50'
-                                : 'bg-red-600 text-white border border-red-400 animate-pulse'
-                              }`}
-                          >
-                            {priced
-                              ? `💰 ${Math.round(lineTotal).toLocaleString('uz-UZ')} so'm` +
-                              (it.weight ? ` · ${it.weight} ${it.unit || 'kg'}` : '')
-                              : '💰 NARXI YO\'Q — bosing!'}
-                          </button>
-                        )}
-
-                        {/* Size / Volume Trigger */}
-                        {!it.is_weighted && (
-                          <button
-                            type="button"
-                            onClick={() => onOpenSizeModal && onOpenSizeModal(it)}
-                            title="Taom hajmi yoki porsiyasini belgilash"
-                            className="mt-0.5 text-[9px] sm:text-[10px] text-teal-400 hover:text-teal-300 font-bold block truncate"
-                          >
-                            {it.portion_size || it.size_or_volume ? `📏 ${it.portion_size || it.size_or_volume}` : "+ o'lcham"}
-                          </button>
-                        )}
-
-                        {/* Status indicator */}
-                        <p className="text-[9px] sm:text-[10px] font-semibold text-slate-400 font-mono mt-0.5">
-                          {(it.sent_quantity || 0) > 0 ? '♨️ Oshxonada' : '✦ Yangi'}
-                        </p>
-                      </div>
-
-                      {/* Unit Price */}
-                      <div className="col-span-2 text-right font-mono text-xs text-slate-300 whitespace-nowrap">
-                        {Math.round(unitPrice).toLocaleString('uz-UZ')}
-                      </div>
-
-                      {/* Quantity controls [- 1 +] */}
-                      <div className="col-span-3 flex items-center justify-center gap-1.5">
+                      {/* O'lchanadigan taom hajmi */}
+                      {!it.is_weighted && (
                         <button
                           type="button"
-                          onClick={() => onUpdateQuantity && onUpdateQuantity(it, -1)}
-                          className="w-6 h-6 rounded-lg bg-emerald-700 hover:bg-emerald-600 text-white font-black flex items-center justify-center text-xs transition-transform active:scale-90 shrink-0"
-                          title="Kamaytirish"
+                          onClick={() => onOpenSizeModal && onOpenSizeModal(it)}
+                          title="Hajm / o'lchamni kiritish"
+                          className={`px-1.5 py-0.5 rounded text-[10px] font-black transition-all active:scale-95 inline-block ${it.portion_size
+                              ? 'bg-amber-500/25 text-amber-300 border border-amber-500/50'
+                              : 'bg-slate-800 text-slate-400 border border-dashed border-slate-600 hover:text-amber-300'
+                            }`}
                         >
-                          -
+                          {it.portion_size ? `📏 ${it.portion_size}` : "📏 Hajm"}
                         </button>
-                        <span className="font-mono text-xs sm:text-sm font-black text-white w-5 text-center">
-                          {it.quantity}
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() => onUpdateQuantity && onUpdateQuantity(it, 1)}
-                          className="w-6 h-6 rounded-lg bg-emerald-700 hover:bg-emerald-600 text-white font-black flex items-center justify-center text-xs transition-transform active:scale-90 shrink-0"
-                          title="Ko'paytirish"
-                        >
-                          +
-                        </button>
-                      </div>
+                      )}
 
-                      {/* Total Price & Delete button */}
-                      <div className="col-span-3 flex items-center justify-end gap-1.5 font-mono text-xs font-bold text-white">
-                        <span className="truncate">{Math.round(lineTotal).toLocaleString('uz-UZ')}</span>
-                        <button
-                          type="button"
-                          onClick={() => onRemoveItem && onRemoveItem(it.id)}
-                          className="p-1 rounded text-slate-500 hover:text-red-400 hover:bg-red-500/10 transition-colors shrink-0"
-                          title="O'chirish"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
+                      <span>{it.item_time || '12:00'}</span>
+                      <span>•</span>
+                      {sent > 0 && fresh > 0 ? (
+                        <>
+                          <span className="text-amber-400 font-bold">{sent}♨️</span>
+                          <span>·</span>
+                          <span className="text-emerald-400 font-bold">{fresh}✦</span>
+                        </>
+                      ) : sent > 0 ? (
+                        <span className="text-amber-400 font-bold">Oshxonada♨️</span>
+                      ) : (
+                        <span className="text-emerald-400 font-bold">Yangi✦</span>
+                      )}
                     </div>
                   </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
+
+                  {/* Narxi */}
+                  <div className="col-span-2 text-right font-bold text-slate-300 text-xs sm:text-sm font-mono truncate">
+                    {Math.round(unitPrice).toLocaleString('uz-UZ')}
+                  </div>
+
+                  {/* Soni [- 1 +] */}
+                  <div className="col-span-2 flex items-center justify-center gap-0.5">
+                    <button
+                      type="button"
+                      onClick={() => onUpdateQuantity && onUpdateQuantity(it, -1)}
+                      className="w-6 h-6 sm:w-7 sm:h-7 rounded-lg bg-emerald-700 hover:bg-emerald-600 text-white flex items-center justify-center font-black text-xs active:scale-90 shadow-sm shrink-0"
+                      title="Kamaytirish"
+                    >
+                      -
+                    </button>
+                    <span
+                      onClick={() => {
+                        setQtyModalItem(it);
+                        setQtyInput(String(it.quantity || 1));
+                      }}
+                      className="text-xs sm:text-sm font-black text-white w-4 sm:w-5 text-center font-mono cursor-pointer hover:bg-slate-800 rounded py-0.5 select-none shrink-0"
+                      title="Sonini kiritish uchun bosing"
+                    >
+                      {it.quantity}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => onUpdateQuantity && onUpdateQuantity(it, 1)}
+                      className="w-6 h-6 sm:w-7 sm:h-7 rounded-lg bg-emerald-700 hover:bg-emerald-600 text-white flex items-center justify-center font-black text-xs active:scale-90 shadow-sm shrink-0"
+                      title="Ko'paytirish"
+                    >
+                      +
+                    </button>
+                  </div>
+
+                  {/* Jami narxi */}
+                  <div className="col-span-2 text-right font-black text-emerald-400 text-xs sm:text-sm font-mono truncate">
+                    {Math.round(lineTotal).toLocaleString('uz-UZ')}
+                  </div>
+
+                  {/* O'chirish (Trash) */}
+                  <div className="col-span-1 flex justify-end">
+                    <button
+                      type="button"
+                      onClick={() => onRemoveItem && onRemoveItem(it.id)}
+                      className="p-1 rounded-lg text-slate-500 hover:text-red-400 hover:bg-red-500/10 active:scale-90 transition-all"
+                      title="Taomni o'chirish"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
 
-      {/* ── Cart Bottom: Summary & Action Buttons (Auto-expand bo'lib pastga suriladi) ── */}
-      <div className="p-2.5 sm:p-4 bg-slate-950 border-t border-slate-800 shadow-2xl space-y-2 h-auto w-full shrink-0">
-        {/* Kitchen send success notification */}
+      {/* ── Cart Bottom: Summary & Action Buttons (Doimo ko'rinib turadi, maksimal ixcham) ── */}
+      <div className="p-2 sm:p-2.5 bg-slate-950 border-t border-slate-800 shadow-2xl space-y-1 shrink-0">
+        {/* Bildirishnoma: Oshxonaga avtomatik chop etildi */}
         {kitchenSendSuccess && (
-          <div className="p-2 rounded-xl bg-emerald-500/20 border border-emerald-500/50 text-emerald-300 font-bold text-xs text-center flex items-center justify-center gap-1.5 animate-bounce-subtle">
-            <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
-            <span>✅ Buyurtma oshxona printerlariga chiqarildi!</span>
+          <div className="p-1 mb-0.5 rounded-lg bg-emerald-500/20 border border-emerald-500/50 text-emerald-300 font-bold text-xs text-center flex items-center justify-center gap-1.5 animate-bounce-subtle">
+            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+            <span>✅ Buyurtma oshxonaga chop etildi!</span>
           </div>
         )}
 
-        {/* Warning if unpriced weighted items exist */}
+        {/* Narxi kiritilmagan taom ogohlantirishi */}
         {hasUnpricedWeighted && (
-          <div className="p-2 rounded-xl bg-red-950/80 border border-red-600 text-red-200 font-bold text-xs flex items-center gap-1.5">
-            <AlertTriangle className="w-4 h-4 text-red-400 shrink-0" />
-            <span className="leading-tight text-[11px] sm:text-xs">
-              Narxi kiritilmagan tarozidagi taom bor. Summasini yozing!
-            </span>
+          <div className="p-1 mb-0.5 rounded-lg bg-red-950/70 border border-red-600 text-red-200 font-bold text-[11px] flex items-center gap-1">
+            <span className="text-xs shrink-0 leading-none">💰</span>
+            <span className="truncate">Narxi kiritilmagan taom bor!</span>
           </div>
         )}
 
-        {/* Subtotal, Service fee, Total */}
-        <div className="space-y-1 bg-slate-900/80 p-2.5 sm:p-3 rounded-2xl border border-slate-800 text-xs">
-          <div className="flex justify-between text-slate-300">
-            <span className="font-semibold">Taomlar jami:</span>
-            <span className="font-bold text-white font-mono">
-              {Math.round(subtotal).toLocaleString('uz-UZ')} so'm
-            </span>
+        {/* Subtotal & Service fee & Total compact summary (Ixcham 2 qator) */}
+        <div className="bg-slate-900/80 px-2.5 py-1.5 rounded-xl border border-slate-800 text-xs">
+          <div className="flex items-center justify-between text-slate-300 pb-1 border-b border-slate-800/80 text-[11px] sm:text-xs font-medium">
+            <span>Taomlar: <strong className="text-white font-mono">{Math.round(subtotal).toLocaleString('uz-UZ')}</strong></span>
+            {isDineIn && (
+              <span>Xizmat ({serviceFeePercent}%): <strong className="text-amber-300 font-mono">{Math.round(serviceFeeAmount).toLocaleString('uz-UZ')}</strong></span>
+            )}
           </div>
-          {isDineIn && (
-            <div className="flex justify-between text-slate-300">
-              <span className="font-semibold">Xizmat haqi ({serviceFeePercent}%):</span>
-              <span className="font-bold text-amber-300 font-mono">
-                {Math.round(serviceFeeAmount).toLocaleString('uz-UZ')} so'm
-              </span>
-            </div>
-          )}
-          <div className="flex justify-between text-xs sm:text-sm font-black text-white pt-1 border-t border-slate-800 items-baseline">
-            <span>Jami hisob:</span>
-            <span className="text-emerald-400 text-base sm:text-lg font-mono">
+          <div className="flex items-center justify-between pt-1">
+            <span className="font-black text-white text-xs uppercase tracking-wider">Jami hisob:</span>
+            <span className="text-emerald-400 text-base sm:text-lg font-mono font-black">
               {Math.round(total).toLocaleString('uz-UZ')} so'm
             </span>
           </div>
         </div>
 
-        {/* Kitchen Note */}
-        <div>
-          <button
-            type="button"
-            onClick={onOpenKitchenNote}
-            className="w-full py-1.5 px-2.5 rounded-xl bg-teal-600/15 hover:bg-teal-600/25 border border-teal-500/30 text-teal-300 font-bold text-xs transition-all truncate text-left flex items-center justify-between"
-          >
-            <span className="truncate">💬 Oshxona izohi {kitchenNote ? `("${kitchenNote}")` : ''}</span>
-            <span className="text-[10px] text-teal-400 underline shrink-0 ml-1">Tahrirlash</span>
-          </button>
-        </div>
-
-        {/* ── Action Buttons: Mobilda ham qulay grid-cols-2, min-h-[44px] ── */}
-        <div className="grid grid-cols-2 gap-2 pt-0.5">
+        {/* ── Action Buttons: 2x2 ixcham grid ── */}
+        <div className="grid grid-cols-2 gap-1.5 pt-0.5">
           {/* Oshxonaga yuborish (Buyurtmani tasdiqlash) */}
           <button
             type="button"
             onClick={onSendToKitchen}
             disabled={!order || items.length === 0 || sendingToKitchen}
-            className={`w-full min-h-[44px] py-2 px-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 disabled:opacity-40 text-slate-950 font-black text-xs sm:text-sm shadow-md transition-all active:scale-95 flex items-center justify-center gap-1.5 ${!canCheckout ? 'col-span-2' : 'col-span-1'
-              }`}
+            className={`min-h-[38px] py-1 px-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 disabled:opacity-40 text-slate-950 font-black text-xs sm:text-sm shadow-md transition-all active:scale-95 flex items-center justify-center gap-1.5 ${!canCheckout ? 'col-span-2' : ''}`}
           >
-            <Printer className="w-4 h-4 shrink-0" />
-            <span className="truncate">{sendingToKitchen ? 'Chop etilmoqda...' : '🔥 Tasdiqlash'}</span>
+            <Printer className="w-3.5 h-3.5 shrink-0" />
+            <span className="truncate">{sendingToKitchen ? 'Chop...' : '🔥 Tasdiqlash'}</span>
           </button>
 
           {/* To'landi va stolni bo'shatish (Checkout) — FAKAT Admin / Kassir */}
@@ -384,12 +302,22 @@ export const OrderCart = ({
               type="button"
               onClick={onCheckout}
               disabled={!order || items.length === 0}
-              className="w-full min-h-[44px] col-span-1 py-2 px-2.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 disabled:opacity-40 text-white font-black text-xs sm:text-sm shadow-md shadow-emerald-600/25 transition-all active:scale-95 flex items-center justify-center gap-1.5"
+              className="min-h-[38px] py-1 px-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white font-black text-xs sm:text-sm shadow-md transition-all active:scale-95 flex items-center justify-center gap-1.5"
             >
-              <CheckCircle2 className="w-4 h-4 shrink-0" />
+              <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
               <span className="truncate">✅ To'landi</span>
             </button>
           )}
+
+          {/* Oshxona izohi */}
+          <button
+            type="button"
+            onClick={onOpenKitchenNote}
+            className={`min-h-[32px] py-1 px-2 rounded-xl bg-teal-600/20 hover:bg-teal-600/30 border border-teal-500/40 text-teal-300 font-bold text-[11px] sm:text-xs transition-all truncate flex items-center justify-center gap-1 ${!canCheckout ? 'col-span-2' : ''}`}
+          >
+            <span>💬 Izoh</span>
+            {kitchenNote && <span className="text-teal-200">✓</span>}
+          </button>
 
           {/* Admin / Kassir hisob chekini chiqarish */}
           {canCheckout && onPrintBill && (
@@ -397,14 +325,124 @@ export const OrderCart = ({
               type="button"
               onClick={onPrintBill}
               disabled={!order || items.length === 0 || printingBill}
-              className="w-full min-h-[40px] col-span-2 py-2 px-3 rounded-xl bg-sky-600/20 hover:bg-sky-600/30 border border-sky-500/40 disabled:opacity-40 text-sky-300 font-bold text-xs transition-all active:scale-95 flex items-center justify-center gap-1.5"
+              className="min-h-[32px] py-1 px-2 rounded-xl bg-sky-600/20 hover:bg-sky-600/30 border border-sky-500/40 disabled:opacity-40 text-sky-300 font-bold text-[11px] sm:text-xs transition-all active:scale-95 flex items-center justify-center gap-1"
             >
-              <Receipt className="w-3.5 h-3.5 shrink-0" />
-              <span className="truncate">{printingBill ? 'Chop etilmoqda...' : '🧾 Hisob chekini chiqarish'}</span>
+              <Receipt className="w-3 h-3 shrink-0" />
+              <span className="truncate">{printingBill ? 'Chop...' : '🧾 Chek'}</span>
             </button>
           )}
         </div>
       </div>
+
+      {/* ── ALIPOSTER TEZKOR SENSORLI NUMPAD MODALI ── */}
+      {qtyModalItem && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center p-3 bg-black/80 backdrop-blur-sm animate-in fade-in">
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl max-w-xs w-full p-5 shadow-2xl">
+            <div className="flex items-center justify-between pb-2 border-b border-slate-800 mb-3">
+              <div className="flex items-center gap-1.5 min-w-0 pr-2">
+                <Hash className="w-4 h-4 text-emerald-400 shrink-0" />
+                <h4 className="text-white font-extrabold text-sm truncate">
+                  {qtyModalItem.menu_item_name || qtyModalItem.name || 'Taom soni'}
+                </h4>
+              </div>
+              <button
+                type="button"
+                onClick={() => setQtyModalItem(null)}
+                className="w-7 h-7 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white flex items-center justify-center"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Raqam oynasi */}
+            <div className="mb-3 text-center">
+              <span className="text-[11px] text-slate-400 block font-bold mb-1">Buyurtma miqdori:</span>
+              <div className="text-3xl font-black font-mono text-emerald-400 bg-slate-950 py-2.5 rounded-2xl border border-slate-800 flex items-center justify-center gap-1.5">
+                <span>{qtyInput || '0'}</span>
+                <span className="text-xs text-slate-400 font-sans font-medium">{qtyModalItem.unit || 'ta'}</span>
+              </div>
+            </div>
+
+            {/* Tezkor qo'shish tugmalari (+1, +2, +5, +10) */}
+            <div className="grid grid-cols-4 gap-1.5 mb-3">
+              {[1, 2, 5, 10].map((inc) => (
+                <button
+                  key={inc}
+                  type="button"
+                  onClick={() => setQtyInput(String((parseInt(qtyInput, 10) || 0) + inc))}
+                  className="py-1 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-mono font-bold text-amber-300 border border-slate-700 active:scale-95 transition-all"
+                >
+                  +{inc}
+                </button>
+              ))}
+            </div>
+
+            {/* Sensorli kalkulyator klaviaturasi */}
+            <div className="grid grid-cols-3 gap-1.5 mb-4">
+              {[1, 2, 3, 4, 5, 6, 7, 8, 9].map((digit) => (
+                <button
+                  key={digit}
+                  type="button"
+                  onClick={() => setQtyInput((prev) => (prev === '0' || prev === '' ? String(digit) : `${prev}${digit}`))}
+                  className="h-11 rounded-xl bg-slate-800 hover:bg-slate-700 text-base font-mono font-black text-white active:scale-95 transition-all shadow-sm"
+                >
+                  {digit}
+                </button>
+              ))}
+              <button
+                type="button"
+                onClick={() => setQtyInput('')}
+                className="h-11 rounded-xl bg-red-950/60 hover:bg-red-900/60 text-red-300 font-bold text-xs active:scale-95 transition-all"
+              >
+                C
+              </button>
+              <button
+                type="button"
+                onClick={() => setQtyInput((prev) => (prev === '0' || prev === '' ? '0' : `${prev}0`))}
+                className="h-11 rounded-xl bg-slate-800 hover:bg-slate-700 text-base font-mono font-black text-white active:scale-95 transition-all"
+              >
+                0
+              </button>
+              <button
+                type="button"
+                onClick={() => setQtyInput((prev) => (prev.length > 0 ? prev.slice(0, -1) : ''))}
+                className="h-11 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-base active:scale-95 transition-all"
+              >
+                ⌫
+              </button>
+            </div>
+
+            {/* Tasdiqlash / Bekor */}
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => setQtyModalItem(null)}
+                className="flex-1 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-bold text-slate-300 transition-colors"
+              >
+                Bekor
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const targetQty = parseInt(qtyInput, 10);
+                  if (!isNaN(targetQty) && targetQty > 0) {
+                    const delta = targetQty - qtyModalItem.quantity;
+                    if (delta !== 0 && onUpdateQuantity) {
+                      onUpdateQuantity(qtyModalItem, delta);
+                    }
+                  } else if (targetQty === 0 && onRemoveItem) {
+                    onRemoveItem(qtyModalItem.id);
+                  }
+                  setQtyModalItem(null);
+                }}
+                className="flex-1 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 font-black text-xs text-white shadow-md shadow-emerald-600/30 active:scale-95 transition-all"
+              >
+                Saqlash
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

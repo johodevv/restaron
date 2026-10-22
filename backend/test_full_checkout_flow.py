@@ -9,12 +9,19 @@ res = urllib.request.urlopen(req, timeout=5)
 token = json.loads(res.read())['access_token']
 
 # 2. Get menu item
-req_menu = urllib.request.Request('http://localhost:8000/api/v1/menu/items?restaurant_id=1',
+req_menu = urllib.request.Request('http://localhost:8000/api/v1/menu/full/1',
     headers={'Authorization': f'Bearer {token}'})
 menu_res = urllib.request.urlopen(req_menu)
-items = json.loads(menu_res.read())
-item_id = items[0]['id'] if items else 1
-print('Sample menu item id:', item_id)
+categories = json.loads(menu_res.read())
+item_id = 1
+for cat in categories:
+    for it in cat.get('items', []):
+        if not it.get('is_weighted'):
+            item_id = it['id']
+            break
+    if item_id != 1:
+        break
+print('Selected non-weighted menu item id:', item_id)
 
 # 3. Create dine-in order on table 1
 order_data = json.dumps({
