@@ -22,6 +22,7 @@ export const BillModal = ({
   tableId,
   tableNumber,
   isStaff = false,
+  qrToken = null,
   onTableCleared,
 }) => {
   const [bill, setBill] = useState(null);
@@ -48,7 +49,9 @@ export const BillModal = ({
   const fetchBill = async () => {
     if (!tableId || closingRef.current) return;
     try {
-      const data = await api.get(`/tables/${tableId}/bill`);
+      const resolvedQrToken = qrToken || (typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('table') : null);
+      const qrParam = resolvedQrToken ? `?qr_token=${encodeURIComponent(resolvedQrToken)}` : '';
+      const data = await api.get(`/tables/${tableId}/bill${qrParam}`);
       if (closingRef.current) return;
       setBill(data);
     } catch (err) {
@@ -64,7 +67,7 @@ export const BillModal = ({
       setLoading(true);
       fetchBill();
     }
-  }, [isOpen, tableId]);
+  }, [isOpen, tableId, qrToken]);
 
   useEffect(() => {
     if (!isOpen) return;

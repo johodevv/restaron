@@ -2,9 +2,10 @@
 RestAron — So'rovlar tezligini cheklash (Rate Limiter)
 DDoS, brute-force va bot hujumlaridan himoya qilish uchun sliding window algoritmi.
 """
+import inspect
 import time
 from collections import defaultdict, deque
-from typing import Optional, Callable
+from typing import Optional, Callable, Any
 from fastapi import Request, HTTPException, status
 
 
@@ -59,15 +60,28 @@ rate_limiter_storage = InMemoryRateLimiter()
 
 
 def get_client_ip(request: Request) -> str:
-    """Mijozning haqiqiy IP manzilini aniqlash (proxy/load balancer hisobga olingan)"""
-    forwarded = request.headers.get("X-Forwarded-For")
-    if forwarded:
-        # Masalan: "192.168.1.5, 10.0.0.1" -> birinchi IP
-        return forwarded.split(",")[0].strip()
-    real_ip = request.headers.get("X-Real-IP")
-    if real_ip:
-        return real_ip.strip()
-    return request.client.host if request.client else "unknown"
+    """
+    Mijozning haqiqiy IP manzilini aniqlash.
+    X-Forwarded-For va CF-Connecting-IP sarlavhalariga FAQAT so'rov
+    TRUSTED_PROXY_IPS dan kelganda ishoniladi; aks holda request.client.host.
+    """
+    client_host = request.client.host if (request.client and request.client.host) else "unknown"
+    from app.core.config import settings
+
+    if client_host in settings.trusted_proxy_set:
+        cf_ip = request.headers.get("CF-Connecting-IP")
+        if cf_ip and cf_ip.strip():
+            return cf_ip.strip()
+
+        forwarded = request.headers.get("X-Forwarded-For")
+        if forwarded and forwarded.strip():
+            return forwarded.split(",")[0].strip()
+
+        real_ip = request.headers.get("X-Real-IP")
+        if real_ip and real_ip.strip():
+            return real_ip.strip()
+
+    return client_host
 
 
 class RateLimiter:
@@ -77,7 +91,7 @@ class RateLimiter:
         self,
         times: int,
         seconds: int,
-        key_func: Optional[Callable[[Request], str]] = None,
+        key_func: Optional[Callable[[Request], Any]] = None,
         detail: Optional[str] = None,
     ):
         self.times = times
@@ -87,8 +101,12 @@ class RateLimiter:
 
     async def __call__(self, request: Request):
         if self.key_func:
-            custom_key = self.key_func(request)
-            key = f"{request.url.path}:{custom_key}"
+            res = self.key_func(request)
+            if inspect.isawaitable(res):
+                custom_key = await res
+            else:
+                custom_key = res
+            key = str(custom_key)
         else:
             client_ip = get_client_ip(request)
             key = f"{request.url.path}:{client_ip}"

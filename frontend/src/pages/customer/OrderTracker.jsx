@@ -20,14 +20,16 @@ const STATUS_STEPS = [
   { key: 'served', label: 'Yetkazib berildi', desc: 'Yoqimli ishtaha!', icon: CheckCircle2 },
 ];
 
-export const OrderTracker = ({ orderId, onOpenReview, onOpenBill, onBackToMenu }) => {
+export const OrderTracker = ({ orderId, qrToken = null, onOpenReview, onOpenBill, onBackToMenu }) => {
   const [order, setOrder] = useState(null);
   const [loading, setLoading] = useState(true);
   const { addEventListener } = useWebSocket();
 
   const fetchOrder = async () => {
     try {
-      const data = await api.get(`/orders/${orderId}`);
+      const resolvedQrToken = qrToken || (typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('table') : null);
+      const qrParam = resolvedQrToken ? `?qr_token=${encodeURIComponent(resolvedQrToken)}` : '';
+      const data = await api.get(`/orders/${orderId}${qrParam}`);
       setOrder(data);
 
       if (data.status === 'served') {
@@ -56,7 +58,7 @@ export const OrderTracker = ({ orderId, onOpenReview, onOpenBill, onBackToMenu }
     });
 
     return () => unsubscribe();
-  }, [orderId]);
+  }, [orderId, qrToken]);
 
   if (loading) {
     return (

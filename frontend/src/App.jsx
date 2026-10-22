@@ -83,7 +83,8 @@ export const App = () => {
       // Check active orders specifically for THIS table
       if (currentTable?.id) {
         try {
-          const activeOrders = await api.get(`/orders/table/${currentTable.id}/active`);
+          const qrParam = currentTable?.qr_token ? `?qr_token=${encodeURIComponent(currentTable.qr_token)}` : '';
+          const activeOrders = await api.get(`/orders/table/${currentTable.id}/active${qrParam}`);
           if (activeOrders && activeOrders.length > 0) {
             setActiveOrderId(activeOrders[0].id);
           } else {
@@ -112,7 +113,8 @@ export const App = () => {
 
     if (table?.id) {
       try {
-        const activeOrders = await api.get(`/orders/table/${table.id}/active`);
+        const qrParam = table?.qr_token ? `?qr_token=${encodeURIComponent(table.qr_token)}` : '';
+        const activeOrders = await api.get(`/orders/table/${table.id}/active${qrParam}`);
         if (activeOrders && activeOrders.length > 0) {
           setActiveOrderId(activeOrders[0].id);
         } else {
@@ -242,6 +244,7 @@ export const App = () => {
                     {currentView === 'tracker' && activeOrderId ? (
                       <OrderTracker
                         orderId={activeOrderId}
+                        qrToken={tableInfo?.qr_token}
                         onOpenReview={handleOpenReview}
                         onOpenBill={() => setBillOpen(true)}
                         onBackToMenu={() => setCurrentView('menu')}
@@ -278,6 +281,7 @@ export const App = () => {
                     onClose={() => setBillOpen(false)}
                     tableId={tableInfo?.id}
                     tableNumber={tableInfo?.number}
+                    qrToken={tableInfo?.qr_token}
                     isStaff={false}
                   />
 

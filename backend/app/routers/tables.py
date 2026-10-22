@@ -19,7 +19,7 @@ from sqlalchemy.orm import selectinload
 from typing import List, Optional, Dict, Any
 
 from app.core.database import get_db
-from app.core.security import require_role
+from app.core.security import require_role, get_optional_current_user
 from app.core.config import settings
 from app.core.rate_limit import RateLimiter, get_client_ip
 from app.models.table import Table, TableStatus, TableZone
@@ -46,12 +46,12 @@ router = APIRouter(prefix="/tables", tags=["🪑 Stollar"])
 def scan_rate_limit_key(request: Request) -> str:
     ip = get_client_ip(request)
     qr_token = request.path_params.get("qr_token", "")
-    return f"{ip}:{qr_token}"
+    return f"scan:{ip}:{qr_token}"
 
 def unlock_rate_limit_key(request: Request) -> str:
     ip = get_client_ip(request)
     table_id = request.path_params.get("table_id", "")
-    return f"{ip}:{table_id}"
+    return f"unlock:{ip}:{table_id}"
 
 _cached_qr_base_url: Optional[str] = None
 _qr_base_url_cached_at: float = 0.0
@@ -563,7 +563,12 @@ async def lock_table(
 
 
 @router.get("/{table_id}/bill", response_model=TableBillResponse, summary="Stol hisobi (Chek)")
-async def get_table_bill(table_id: int, db: AsyncSession = Depends(get_db)):
+async def get_table_bill(
+    table_id: int,
+    qr_token: Optional[str] = Query(None),
+    db: AsyncSession = Depends(get_db),
+    current_user: Optional[User] = Depends(get_optional_current_user),
+):
     """Mijoz, Ofitsiant yoki Admin stol hisobi va chekini ko'radi"""
     result = await db.execute(
         select(Table)
@@ -573,6 +578,14 @@ async def get_table_bill(table_id: int, db: AsyncSession = Depends(get_db)):
     table = result.scalar_one_or_none()
     if not table:
         raise HTTPException(status_code=404, detail="Stol topilmadi")
+
+    # Xodim bo'lmasa -> ?qr_token= shu stolning qr_token iga teng bo'lishi shart
+    if not current_user:
+        if not qr_token or qr_token != table.qr_token:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Ushbu stol hisobini ko'rish uchun yaroqli qr_token talab qilinadi",
+            )
 
     # Ushbu stoldagi faol / so'nggi to'lanmagan buyurtmalar (yoki joriy sessiya)
     order_res = await db.execute(
@@ -698,6 +711,13 @@ async def get_table_bill(table_id: int, db: AsyncSession = Depends(get_db)):
     restaurant_address = restaurant.address if restaurant else "Xorazm viloyati, Xiva tumani"
 
     items_list = [BillItemSummary(**v) for v in items_map.values()]
+    # Mehmon (xodimsiz) ko'rinishidan ichki id lar olib tashlansin
+    if not current_user:
+        for it in items_list:
+            it.order_id = None
+            it.order_item_id = None
+            it.order_item_ids = []
+
     waiter_display = ", ".join(waiter_names) if waiter_names else None
 
     return TableBillResponse(

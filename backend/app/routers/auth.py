@@ -2,13 +2,13 @@
 Auth API — Login, token olish
 """
 from datetime import timedelta
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 
 from fastapi.security import HTTPAuthorizationCredentials
 from app.core.database import get_db
-from app.core.rate_limit import RateLimiter
+from app.core.rate_limit import RateLimiter, get_client_ip
 from app.core.security import (
     verify_password, get_password_hash, create_access_token, get_current_user, security
 )
@@ -19,6 +19,16 @@ from app.schemas.user import LoginRequest, TokenResponse, UserResponse
 router = APIRouter(prefix="/auth", tags=["🔐 Auth"])
 
 
+async def login_rate_limit_key(request: Request) -> str:
+    ip = get_client_ip(request)
+    try:
+        body = await request.json()
+        username = (body.get("username") or "").strip().lower() if isinstance(body, dict) else ""
+    except Exception:
+        username = ""
+    return f"login:{ip}:{username}"
+
+
 @router.post(
     "/login",
     response_model=TokenResponse,
@@ -26,8 +36,9 @@ router = APIRouter(prefix="/auth", tags=["🔐 Auth"])
     dependencies=[
         Depends(
             RateLimiter(
-                times=60,
+                times=10,
                 seconds=60,
+                key_func=login_rate_limit_key,
                 detail="Kirish urinishlari me'yoridan oshdi. Xavfsizlik yuzasidan 1 daqiqa kuting.",
             )
         )

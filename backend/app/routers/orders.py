@@ -5,7 +5,7 @@ To'liq WebSocket integratsiyasi va 'Yetkazib berdim' funksiyasi bilan
 import asyncio
 import uuid
 from datetime import datetime, timezone, timedelta
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi import APIRouter, Depends, HTTPException, status, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, and_, update, text
 from sqlalchemy.orm import selectinload
@@ -13,7 +13,7 @@ from sqlalchemy.exc import IntegrityError
 from typing import List, Optional, Any, Set
 
 from app.core.database import get_db
-from app.core.rate_limit import RateLimiter
+from app.core.rate_limit import RateLimiter, get_client_ip
 from app.core.security import get_current_user, get_optional_current_user, require_role
 from app.models.order import Order, OrderItem, OrderStatus, CallStatus
 from app.models.menu import MenuItem, Category
@@ -468,6 +468,15 @@ def build_order_response(order: Order, table_number: Optional[int] = None, waite
         closed_at=_safe_get_attr(order, "closed_at"),
         updated_at=_safe_get_attr(order, "updated_at"),
     )
+
+
+def sanitize_order_response_for_guest(resp: OrderResponse) -> OrderResponse:
+    """Mehmon ko'rinishi uchun mijoz shaxsiy va ichki xodim ma'lumotlarini tozalash"""
+    resp.customer_phone = None
+    resp.delivery_address = None
+    resp.waiter_share_amount = 0.0
+    resp.waiter_id = None
+    return resp
 
 
 
@@ -2546,6 +2555,20 @@ async def checkout_order(
 
 
 # ─── Ofitsiant chaqirish ────────────────────────────────────
+async def call_waiter_table_key(request: Request) -> str:
+    try:
+        body = await request.json()
+        table_id = body.get("table_id") if isinstance(body, dict) else ""
+    except Exception:
+        table_id = ""
+    return f"call:{table_id}"
+
+
+def call_waiter_ip_key(request: Request) -> str:
+    ip = get_client_ip(request)
+    return f"call_ip:{ip}"
+
+
 @router.post(
     "/call-waiter",
     status_code=200,
@@ -2553,11 +2576,20 @@ async def checkout_order(
     dependencies=[
         Depends(
             RateLimiter(
-                times=3,
-                seconds=60,
-                detail="Ofitsiant chaqiruvi yuborilgan. Iltimos, xodim kelishini kuting.",
+                times=1,
+                seconds=20,
+                key_func=call_waiter_table_key,
+                detail="Ofitsiant chaqirildi, biroz kuting.",
             )
-        )
+        ),
+        Depends(
+            RateLimiter(
+                times=30,
+                seconds=60,
+                key_func=call_waiter_ip_key,
+                detail="Ofitsiant chaqirildi, biroz kuting.",
+            )
+        ),
     ],
 )
 async def call_waiter(payload: CallWaiterRequest, db: AsyncSession = Depends(get_db)):
@@ -2865,6 +2897,7 @@ async def resolve_waiter_call(
 )
 async def get_table_active_orders(
     table_id: int,
+    qr_token: Optional[str] = Query(None),
     db: AsyncSession = Depends(get_db),
     current_user: Optional[User] = Depends(get_optional_current_user),
 ):
@@ -2873,6 +2906,14 @@ async def get_table_active_orders(
     tbl = tbl_res.scalar_one_or_none()
     if not tbl or not tbl.is_active:
         raise HTTPException(status_code=404, detail="Stol topilmadi yoki faol emas")
+
+    # Xodim bo'lmasa -> qr_token shu stolning qr_token iga teng bo'lishi shart
+    if not current_user:
+        if not qr_token or qr_token != tbl.qr_token:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Ushbu stol buyurtmalarini ko'rish uchun yaroqli qr_token talab qilinadi",
+            )
 
     result = await db.execute(
         select(Order)
@@ -2899,7 +2940,7 @@ async def get_table_active_orders(
     for o in orders:
         ord_resp = build_order_response(o)
         if not current_user:
-            ord_resp.waiter_share_amount = 0.0
+            ord_resp = sanitize_order_response_for_guest(ord_resp)
         resp_list.append(ord_resp)
     return resp_list
 
@@ -3025,6 +3066,7 @@ async def list_orders(
 )
 async def get_order(
     order_id: int,
+    qr_token: Optional[str] = Query(None),
     db: AsyncSession = Depends(get_db),
     current_user: Optional[User] = Depends(get_optional_current_user),
 ):
@@ -3042,8 +3084,15 @@ async def get_order(
     if not order:
         raise HTTPException(status_code=404, detail="Buyurtma topilmadi")
 
-    # Autentifikatsiyasiz mijoz faqat o'zining so'nggi 24 soat ichidagi yoki faol buyurtmasini ko'ra oladi
+    # Autentifikatsiyasiz mijoz (token yo'q bo'lsa)
     if not current_user:
+        # ?qr_token= shu stolning qr_token iga teng bo'lishi shart, aks holda 403
+        if not order.table or not order.table.qr_token or not qr_token or qr_token != order.table.qr_token:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Ushbu buyurtmani ko'rish uchun yaroqli qr_token talab qilinadi",
+            )
+
         now = datetime.now(timezone.utc)
         order_time = order.created_at if (order.created_at and order.created_at.tzinfo) else (
             order.created_at.replace(tzinfo=timezone.utc) if order.created_at else now
@@ -3057,7 +3106,7 @@ async def get_order(
 
     resp = build_order_response(order)
     if not current_user:
-        resp.waiter_share_amount = 0.0
+        resp = sanitize_order_response_for_guest(resp)
     return resp
 
 

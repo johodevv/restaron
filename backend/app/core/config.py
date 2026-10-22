@@ -51,6 +51,13 @@ class Settings(BaseSettings):
     # Kassir uchun ruxsat etilgan maksimal chegirma foizi (%)
     MAX_CASHIER_DISCOUNT_PERCENT: float = 10.0
 
+    # Ishonchli proksi IP manzillari (X-Forwarded-For va CF-Connecting-IP uchun)
+    TRUSTED_PROXY_IPS: str = "127.0.0.1,::1"
+
+    @property
+    def trusted_proxy_set(self) -> set[str]:
+        return {ip.strip() for ip in self.TRUSTED_PROXY_IPS.split(",") if ip.strip()}
+
     class Config:
         env_file = os.path.join(BACKEND_DIR, ".env")
         env_file_encoding = "utf-8"
