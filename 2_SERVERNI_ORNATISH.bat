@@ -199,8 +199,8 @@ echo      Manzil 1-2 daqiqada tayyor bo'ladi va
 echo      SERVER_ONLINE_URL.txt fayliga yoziladi.
 echo      Ko'rish uchun: RESTARON_URL_KOR.bat
 echo.
-echo    Admin login:  maqsad
-echo    Admin parol:  01020307m
+echo    Admin yaratish uchun:
+echo      "%PYTHON_PATH%" backend\tools\create_admin.py
 echo.
 echo  ----------------------------------------------------------------
 echo   Server endi FONDA doimiy ishlaydi.

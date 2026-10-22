@@ -72,16 +72,16 @@ npm run dev
 
 ---
 
-## 🔑 Demo Kirish Ma'lumotlari
+## 🔑 Kirish Ma'lumotlari
 
-Tizimda 1-bosish bilan kiruvchi tezkor sinov akkauntlari mavjud:
+Foydalanuvchi akkauntlarini yaratish va parolini o'rnatish uchun `backend\tools\create_admin.py` skriptidan foydalaning.
 
 | Rol | Login | Parol | Huquqlari |
 |-----|-------|-------|-----------|
-| **Developer** | `developer` | `dev123456` | Platforma monitoringi, barcha restoranlar va komissiyalar |
-| **Admin** | `admin` | `admin123` | Restoran sozlamalari, menyu, stollar, QR, xodimlar |
-| **Ofitsiant** | `ofitsiant1` | `waiter123` | Buyurtmalar, chaqiruvlar, **"Yetkazib berdim"** tugmasi |
-| **Oshpaz** | `oshpaz1` | `chef123` | KDS oshxona ekrani, taomlarni "Tayyor" deb belgilash |
+| **Developer** | `developer` | `<PAROL>` | Platforma monitoringi, barcha restoranlar va komissiyalar |
+| **Admin** | `admin` | `<PAROL>` | Restoran sozlamalari, menyu, stollar, QR, xodimlar |
+| **Ofitsiant** | `ofitsiant1` | `<PAROL>` | Buyurtmalar, chaqiruvlar, **"Yetkazib berdim"** tugmasi |
+| **Oshpaz** | `oshpaz1` | `<PAROL>` | KDS oshxona ekrani, taomlarni "Tayyor" deb belgilash |
 
 ---
 

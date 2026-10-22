@@ -36,14 +36,12 @@ echo    MUHIM: stollarning QR kodlari YANGIDAN yaratiladi.
 echo    Ya'ni stollarda turgan eski chop etilgan QR kodlar
 echo    ISHLAMAY QOLADI - ularni qayta chop etishingiz kerak.
 echo.
-echo    Keyin admin logini: maqsad / 01020307m
-echo.
 echo    Zaxira nusxa olinadi: backend\zaxira\
 echo  ============================================================
 echo.
 set "OK="
-set /p OK="  Rostdan hammasini o'chirasizmi? Tasdiq uchun TOZALA deb yozing: "
-if /i not "!OK!"=="TOZALA" (
+set /p OK="  Rostdan hammasini o'chirasizmi? Tasdiq uchun HAMMASINI_OCHIR deb yozing: "
+if not "!OK!"=="HAMMASINI_OCHIR" (
     echo.
     echo  Bekor qilindi. Hech narsa o'chirilmadi.
     pause
@@ -104,7 +102,9 @@ if "!HEALTH!"=="200" (
 echo.
 echo  ============================================================
 echo    TUGADI - tizim butunlay yangi holatda.
-echo    Admin: maqsad / 01020307m
+echo    Tizimda foydalanuvchi qolmadi. Avto-seed o'chiq, shuning uchun
+echo    admin avtomatik yaratilmaydi — create_admin.py ni ishga tushiring:
+echo      "!PY!" backend\tools\create_admin.py
 echo    Eslatma: stollarning QR kodlarini qayta chop eting.
 echo  ============================================================
 echo.

@@ -184,8 +184,8 @@ def clean_everything() -> None:
         if os.path.exists(extra):
             os.remove(extra)
             print(f"[OK] O'chirildi: {extra}")
-    print("[i] Server keyingi ishga tushganda baza qaytadan yaratiladi "
-          "(admin: maqsad / 01020307m).")
+    print("[i] Tizimda foydalanuvchi qolmadi. Avto-seed o'chiq, shuning uchun "
+          "admin avtomatik yaratilmaydi — create_admin.py ni ishga tushiring.")
 
 
 def main() -> int:
@@ -203,6 +203,10 @@ def main() -> int:
         print("[i] Namuna menyu tozalanmoqda...")
         clean_menu()
     else:
+        ans = input("DIQQAT! Butun baza o'chiriladi. Tasdiqlash uchun HAMMASINI_OCHIR deb yozing: ").strip()
+        if ans != "HAMMASINI_OCHIR":
+            print("[!] Bekor qilindi. Baza o'chirilmadi.")
+            return 1
         print("[i] Butun baza o'chirilmoqda...")
         clean_everything()
     return 0

@@ -65,8 +65,8 @@ git push -u origin main
 
 ## 4-Qadam: QR Kod havolasini yangilash
 
-Deploy yakunlangach, Admin panelga kiring (`/` -> Xodimlar):
+Deploy yakunlangach, Admin panelga kiring (`/` -> Xodimlar) — admin yaratish uchun `backend/tools/create_admin.py` ni ishlating:
 - Login: `admin`
-- Parol: `admin123`
+- Parol: `<PAROL>`
 - **"Stollar & QR Kodlar"** bo'limida **"QR Base URL"** manzilini o'zingizning Vercel manzilingizga (masalan: `https://restaron.vercel.app`) sozlab qo'ying.
 - Shunda barcha stollar uchun chiqariladigan QR kodlar to'g'ridan-to'g'ri internet orqali har qanday telefonda ochiladi! 🎉

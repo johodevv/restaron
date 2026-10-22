@@ -123,8 +123,8 @@ Oxirida kirish manzillari ko'rsatiladi.
 | **Kassa / Admin** (shu kompyuterda) | http://localhost:8000 |
 | **Ofitsiant telefoni** (bir xil Wi-Fi) | `http://<kompyuter-IP>:8000` |
 
-**Admin login:** `maqsad`
-**Admin parol:** `01020307m`
+**Admin login:** `maqsad` (yoki create_admin.py orqali tanlangan login)
+**Admin parol:** `<PAROL>` (Admin yaratish uchun: `backend\tools\create_admin.py`)
 
 Kompyuter IP manzilini ko'rish: `2_SERVERNI_ORNATISH.bat` oxirida yoziladi,
 yoki buyruq satrida `ipconfig`.
@@ -489,10 +489,10 @@ tozalab, haqiqiy ishni boshlash uchun shu skriptni ishlating.**
 ### Hammasini tozalash
 
 **`RESTARON_TOZALASH_HAMMASI.bat`** — o'ng tugma → *Run as administrator*.
-Tasdiq uchun `TOZALA` deb yozish kerak.
+Tasdiq uchun `HAMMASINI_OCHIR` deb yozish kerak.
 
 Butun baza o'chiriladi va noldan yaratiladi: menyu, stollar, xodimlar,
-sozlamalar — hammasi. Keyin admin logini yana `maqsad` / `01020307m`.
+sozlamalar — hammasi. Keyin `create_admin.py` orqali yangi admin yaratiladi (parol: `<PAROL>`).
 
 > **DIQQAT:** stollarning **QR kodlari yangidan yaratiladi**, ya'ni
 > stollarda turgan eski chop etilgan QR kodlar ishlamay qoladi —
