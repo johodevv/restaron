@@ -32,6 +32,10 @@ class UserPasswordChange(BaseModel):
     new_password: str = Field(..., min_length=6)
 
 
+class UserPasswordReset(BaseModel):
+    new_password: str = Field(..., min_length=8, max_length=100)
+
+
 class UserResponse(UserBase):
     id: int
     is_active: bool

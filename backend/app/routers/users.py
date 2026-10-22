@@ -1,17 +1,47 @@
 """
-Foydalanuvchilar API — Admin tomonidan boshqarish
+Foydalanuvchilar API — Admin va Developer tomonidan boshqarish
+VAZIFA 10A: foydalanuvchilar boshqaruvi va xavfsizlik cheklovlari
 """
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, func
 from typing import List, Optional
 
 from app.core.database import get_db
-from app.core.security import get_password_hash, require_role, get_current_user
+from app.core.security import get_password_hash, require_role, get_current_user, revoke_user_tokens
+from app.core.audit import log_audit_event
 from app.models.user import User, UserRole
-from app.schemas.user import UserCreate, UserUpdate, UserResponse
+from app.schemas.user import UserCreate, UserUpdate, UserResponse, UserPasswordReset
 
 router = APIRouter(prefix="/users", tags=["👤 Foydalanuvchilar"])
+
+
+def check_user_access(current_user: User, target_user: User) -> None:
+    """
+    Ruxsatlarni tekshirish:
+    - Developer barcha foydalanuvchilarni ko'radi va boshqaradi.
+    - Admin developer rolli foydalanuvchiga tegolmaydi (403).
+    - Admin faqat o'z restoranidagi foydalanuvchilarni ko'radi va boshqaradi (403).
+    """
+    current_role = current_user.role.value if hasattr(current_user.role, "value") else str(current_user.role)
+    target_role = target_user.role.value if hasattr(target_user.role, "value") else str(target_user.role)
+
+    if current_role == "developer":
+        return
+
+    # Admin developer rolli foydalanuvchiga tegolmasin
+    if target_role == "developer":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin developer rolli foydalanuvchini ko'rish yoki boshqarish huquqiga ega emas",
+        )
+
+    # Admin faqat o'z restoranidagi foydalanuvchilarni boshqara oladi
+    if target_user.restaurant_id != current_user.restaurant_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Siz faqat o'z restoraningizdagi foydalanuvchilarni boshqara olasiz",
+        )
 
 
 @router.post(
@@ -25,7 +55,21 @@ async def create_user(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_role("admin", "developer")),
 ):
-    """Admin yangi ofitsiant yoki oshpaz yaratadi"""
+    """
+    Yangi xodim yaratish:
+    - Admin faqat waiter, chef, cashier yarata oladi.
+    - 'admin' va 'developer' rollarini faqat developer yarata oladi (aks holda 403).
+    """
+    current_role = current_user.role.value if hasattr(current_user.role, "value") else str(current_user.role)
+    target_role = payload.role.value if hasattr(payload.role, "value") else str(payload.role)
+
+    if current_role != "developer":
+        if target_role in ("admin", "developer") or target_role not in ("waiter", "chef", "cashier"):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Admin faqat waiter, chef yoki cashier yarata oladi. Admin va developer rollarini faqat developer yarata oladi.",
+            )
+
     # Username mavjudligini tekshirish
     result = await db.execute(select(User).where(User.username == payload.username))
     if result.scalar_one_or_none():
@@ -36,11 +80,8 @@ async def create_user(
 
     # Admin faqat o'z restoraniga xodim qo'sha oladi
     restaurant_id = payload.restaurant_id
-    if current_user.role == UserRole.ADMIN:
+    if current_role == "admin":
         restaurant_id = current_user.restaurant_id
-
-    # Admin yoki Developer yaratgan xodim darhol tasdiqlangan (is_approved=True) bo'ladi
-    is_appr = True
 
     new_user = User(
         username=payload.username,
@@ -48,7 +89,7 @@ async def create_user(
         phone=payload.phone,
         hashed_password=get_password_hash(payload.password),
         role=payload.role,
-        is_approved=is_appr,
+        is_approved=True,
         restaurant_id=restaurant_id,
     )
     db.add(new_user)
@@ -64,11 +105,15 @@ async def list_users(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_role("admin", "developer")),
 ):
-    """Barcha xodimlar ro'yxati (admin faqat o'z restoranini ko'radi)"""
+    """Barcha xodimlar ro'yxati (admin faqat o'z restorani va no-developerlarni ko'radi)"""
+    current_role = current_user.role.value if hasattr(current_user.role, "value") else str(current_user.role)
     query = select(User)
 
-    if current_user.role == UserRole.ADMIN:
-        query = query.where(User.restaurant_id == current_user.restaurant_id)
+    if current_role == "admin":
+        query = query.where(
+            User.restaurant_id == current_user.restaurant_id,
+            User.role != UserRole.DEVELOPER,
+        )
 
     if role:
         query = query.where(User.role == role)
@@ -84,10 +129,13 @@ async def get_user(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_role("admin", "developer")),
 ):
+    """Xodim ma'lumotlarini olish (admin faqat o'z restorani, developer emas)"""
     result = await db.execute(select(User).where(User.id == user_id))
     user = result.scalar_one_or_none()
     if not user:
         raise HTTPException(status_code=404, detail="Foydalanuvchi topilmadi")
+
+    check_user_access(current_user, user)
     return UserResponse.model_validate(user)
 
 
@@ -98,10 +146,13 @@ async def update_user(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_role("admin", "developer")),
 ):
+    """Xodim ma'lumotlarini yangilash"""
     result = await db.execute(select(User).where(User.id == user_id))
     user = result.scalar_one_or_none()
     if not user:
         raise HTTPException(status_code=404, detail="Foydalanuvchi topilmadi")
+
+    check_user_access(current_user, user)
 
     update_data = payload.model_dump(exclude_unset=True)
 
@@ -112,19 +163,35 @@ async def update_user(
             detail="O'z profilingizni nofaol holatga o'tkaza olmaysiz! Bu tizimga kira olmay qolishingizga sabab bo'ladi.",
         )
 
+    # Restoranning oxirgi faol admin'ini nofaol qilishga yo'l qo'yma (400)
+    target_role = user.role.value if hasattr(user.role, "value") else str(user.role)
+    if update_data.get("is_active") is False and target_role == "admin" and user.is_active:
+        res = await db.execute(
+            select(func.count(User.id)).where(
+                User.restaurant_id == user.restaurant_id,
+                User.role == UserRole.ADMIN,
+                User.is_active == True,
+                User.id != user.id,
+            )
+        )
+        remaining_admins = res.scalar() or 0
+        if remaining_admins == 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Restoranning oxirgi faol adminini nofaol qilib bo'lmaydi",
+            )
+
     for field, value in update_data.items():
         setattr(user, field, value)
 
-    # Agar foydalanuvchi faolsizlantirilsa yoki paroli o'zgarsa, uning barcha tokenlarini bekor qilish
-    from app.core.security import revoke_user_tokens
-    if update_data.get("is_active") is False or "password" in update_data:
+    # Agar foydalanuvchi faolsizlantirilsa, uning barcha tokenlarini bekor qilish
+    if update_data.get("is_active") is False:
         revoke_user_tokens(user.id)
 
     await db.flush()
     await db.commit()
     await db.refresh(user)
 
-    from app.core.audit import log_audit_event
     await log_audit_event(
         db=db,
         restaurant_id=user.restaurant_id or 1,
@@ -134,37 +201,120 @@ async def update_user(
         entity_id=user.id,
         details={"updated_fields": list(update_data.keys()), "target_username": user.username},
     )
+    await db.commit()
 
     return UserResponse.model_validate(user)
 
 
-@router.delete("/{user_id}", status_code=204, summary="Xodimni o'chirish")
-async def delete_user(
+@router.patch("/{user_id}/password", summary="Foydalanuvchi parolini yangilash (Admin / Developer)")
+async def reset_user_password(
     user_id: int,
+    payload: UserPasswordReset,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_role("admin", "developer")),
 ):
+    """
+    Foydalanuvchi parolini o'zgartirish:
+    - Admin (o'z restorani) yoki Developer;
+    - Parol xeshlansin;
+    - Foydalanuvchi tokenlari bekor qilinsin (revoke_user_tokens);
+    - Audit: 'user_password_reset' (parol log qilinmaydi).
+    """
     result = await db.execute(select(User).where(User.id == user_id))
     user = result.scalar_one_or_none()
     if not user:
         raise HTTPException(status_code=404, detail="Foydalanuvchi topilmadi")
 
-    # O'chirilayotgan xodimning barcha sessiyalarini darhol bekor qilish
-    from app.core.security import revoke_user_tokens
+    check_user_access(current_user, user)
+
+    # Parolni xeshlash
+    user.hashed_password = get_password_hash(payload.new_password)
+
+    # Tokenlarni bekor qilish
     revoke_user_tokens(user.id)
 
-    from app.core.audit import log_audit_event
+    await db.flush()
+    await db.commit()
+
+    # Audit log (parol hech qayerda log qilinmasin!)
     await log_audit_event(
         db=db,
         restaurant_id=user.restaurant_id or 1,
-        action="user_deleted",
+        action="user_password_reset",
         user=current_user,
         entity_type="user",
         entity_id=user.id,
-        details={"deleted_username": user.username},
+        details={"target_username": user.username},
     )
+    await db.commit()
 
-    await db.delete(user)
+    return {"message": "Parol muvaffaqiyatli yangilandi"}
+
+
+@router.delete("/{user_id}", summary="Xodimni nofaol qilish")
+async def delete_user(
+    user_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role("admin", "developer")),
+):
+    """
+    Xodimni o'chirish:
+    - Qattiq o'chirish o'rniga is_active=False va tokenlarni bekor qilish;
+    - O'zini o'zi nofaol qila olmasin (400);
+    - Restoranning oxirgi faol admin'ini nofaol qilishga yo'l qo'yilmaydi (400);
+    - Javob: Foydalanuvchi nofaol qilindi.
+    """
+    result = await db.execute(select(User).where(User.id == user_id))
+    user = result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=404, detail="Foydalanuvchi topilmadi")
+
+    check_user_access(current_user, user)
+
+    # O'zini o'zi nofaol qila olmasin
+    if current_user.id == user.id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="O'zingizni nofaol qila olmaysiz",
+        )
+
+    # Restoranning oxirgi faol admin'ini nofaol qilishga yo'l qo'yma (400)
+    target_role = user.role.value if hasattr(user.role, "value") else str(user.role)
+    if target_role == "admin" and user.is_active:
+        res = await db.execute(
+            select(func.count(User.id)).where(
+                User.restaurant_id == user.restaurant_id,
+                User.role == UserRole.ADMIN,
+                User.is_active == True,
+                User.id != user.id,
+            )
+        )
+        remaining_admins = res.scalar() or 0
+        if remaining_admins == 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Restoranning oxirgi faol adminini nofaol qilib bo'lmaydi",
+            )
+
+    # is_active=False va tokenlarni bekor qilish
+    user.is_active = False
+    revoke_user_tokens(user.id)
+
+    await db.flush()
+    await db.commit()
+
+    await log_audit_event(
+        db=db,
+        restaurant_id=user.restaurant_id or 1,
+        action="user_deactivated",
+        user=current_user,
+        entity_type="user",
+        entity_id=user.id,
+        details={"deactivated_username": user.username},
+    )
+    await db.commit()
+
+    return {"message": "Foydalanuvchi nofaol qilindi", "detail": "Foydalanuvchi nofaol qilindi"}
 
 
 @router.patch("/{user_id}/approve", response_model=UserResponse, summary="Xodimni tasdiqlash yoki rad etish")
@@ -180,16 +330,16 @@ async def approve_user(
     if not user:
         raise HTTPException(status_code=404, detail="Foydalanuvchi topilmadi")
 
+    check_user_access(current_user, user)
+
     user.is_approved = is_approved
     if not is_approved:
-        from app.core.security import revoke_user_tokens
         revoke_user_tokens(user.id)
 
     await db.flush()
     await db.commit()
     await db.refresh(user)
 
-    from app.core.audit import log_audit_event
     await log_audit_event(
         db=db,
         restaurant_id=user.restaurant_id or 1,
