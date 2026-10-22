@@ -19,6 +19,7 @@ from app.models.receipt import ReceiptArchive, ShiftReport
 from app.models.order import Order, OrderItem, OrderStatus
 from app.models.restaurant import Restaurant, RestaurantSettings
 from app.models.user import User, UserRole
+from app.models.print_job import PrintJob
 from app.schemas.receipt import (
     ReceiptArchiveResponse, ShiftReportCreate, ShiftReportResponse
 )
@@ -94,6 +95,143 @@ async def list_receipts(
     result = await db.execute(query)
     receipts = result.scalars().all()
     return receipts
+
+
+@router.get("/print-jobs/summary", summary="Printerlar bo'yicha chop etish navbati xulosasi")
+async def get_print_jobs_summary(
+    restaurant_id: Optional[int] = Query(None, description="Restoran ID"),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role("admin", "cashier", "waiter", "developer")),
+):
+    """
+    Printer bo'yicha:
+    - pending_count: kutayotgan yoki chop etilayotgan ishlar soni
+    - oldest_age_seconds: eng eski kutayotgan ishning yoshi (soniyada)
+    - last_error: oxirgi yuz bergan xatolik matni
+    """
+    rest_id = restaurant_id or current_user.restaurant_id
+    base_filter = []
+    if rest_id is not None and current_user.role != UserRole.DEVELOPER:
+        base_filter.append(PrintJob.restaurant_id == rest_id)
+    elif rest_id is not None:
+        base_filter.append(PrintJob.restaurant_id == rest_id)
+
+    # 1. Hozirda kutayotgan yoki chop etilayotgan barcha ishlar
+    stmt = (
+        select(PrintJob)
+        .where(*base_filter, PrintJob.status.in_(["pending", "printing"]))
+        .order_by(PrintJob.created_at.asc())
+    )
+    res = await db.execute(stmt)
+    active_jobs = res.scalars().all()
+
+    summary_map: Dict[str, Dict[str, Any]] = {}
+    now = datetime.now(timezone.utc)
+
+    for job in active_jobs:
+        p_name = job.printer_name or "Noma'lum"
+        if p_name not in summary_map:
+            c_at = job.created_at
+            if c_at and c_at.tzinfo is None:
+                c_at = c_at.replace(tzinfo=timezone.utc)
+            age = (now - c_at).total_seconds() if c_at else 0.0
+
+            summary_map[p_name] = {
+                "printer": p_name,
+                "printer_name": p_name,
+                "pending_count": 0,
+                "oldest_age_seconds": max(0.0, round(age, 1)),
+                "last_error": None,
+            }
+
+        summary_map[p_name]["pending_count"] += 1
+        if job.last_error and not summary_map[p_name]["last_error"]:
+            summary_map[p_name]["last_error"] = job.last_error
+
+    # Agar kutayotgan ishlarda last_error bo'lmasa, printer bo'yicha oxirgi xatoni qidirish
+    for p_name, data in summary_map.items():
+        if not data["last_error"]:
+            err_stmt = (
+                select(PrintJob.last_error)
+                .where(*base_filter, PrintJob.printer_name == p_name, PrintJob.last_error.isnot(None))
+                .order_by(PrintJob.id.desc())
+                .limit(1)
+            )
+            err_res = await db.execute(err_stmt)
+            last_err = err_res.scalar_one_or_none()
+            if last_err:
+                data["last_error"] = last_err
+
+    # Sozlamalardagi printerlarni ham qo'shish (agar pending bo'lmasa ham 0 sifatida ko'rinsin)
+    if rest_id is not None:
+        st_res = await db.execute(select(RestaurantSettings).where(RestaurantSettings.restaurant_id == rest_id))
+        st = st_res.scalar_one_or_none()
+        if st:
+            for p_attr in ("printer_customer_name", "printer_kitchen1_name", "printer_kitchen2_name", "printer_bar_name"):
+                configured_p = getattr(st, p_attr, None)
+                if configured_p and configured_p not in summary_map:
+                    err_stmt = (
+                        select(PrintJob.last_error)
+                        .where(PrintJob.restaurant_id == rest_id, PrintJob.printer_name == configured_p, PrintJob.last_error.isnot(None))
+                        .order_by(PrintJob.id.desc())
+                        .limit(1)
+                    )
+                    err_res = await db.execute(err_stmt)
+                    last_err = err_res.scalar_one_or_none()
+                    summary_map[configured_p] = {
+                        "printer": configured_p,
+                        "printer_name": configured_p,
+                        "pending_count": 0,
+                        "oldest_age_seconds": None,
+                        "last_error": last_err,
+                    }
+
+    return list(summary_map.values())
+
+
+@router.get("/print-jobs", summary="Chop etish ishlari holati (status va attempts)")
+async def get_print_jobs_by_ids(
+    ids: str = Query(..., description="Vergul bilan ajratilgan job ID lar (masalan: 1,2,3)"),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role("admin", "cashier", "waiter", "developer")),
+):
+    """
+    Berilgan ID lar bo'yicha chop etish ishlarining status va attempts ma'lumotlari.
+    """
+    job_ids = []
+    for part in ids.split(","):
+        part = part.strip()
+        if part.isdigit():
+            job_ids.append(int(part))
+
+    if not job_ids:
+        return []
+
+    stmt = select(PrintJob).where(PrintJob.id.in_(job_ids))
+    if current_user.role != UserRole.DEVELOPER and current_user.restaurant_id:
+        stmt = stmt.where(PrintJob.restaurant_id == current_user.restaurant_id)
+
+    stmt = stmt.order_by(PrintJob.id.asc())
+    res = await db.execute(stmt)
+    jobs = res.scalars().all()
+
+    return [
+        {
+            "id": job.id,
+            "restaurant_id": job.restaurant_id,
+            "order_id": job.order_id,
+            "ticket_type": job.ticket_type,
+            "printer_name": job.printer_name,
+            "status": job.status,
+            "attempts": job.attempts,
+            "next_attempt_at": job.next_attempt_at,
+            "last_error": job.last_error,
+            "alerted": job.alerted,
+            "created_at": job.created_at,
+            "printed_at": job.printed_at,
+        }
+        for job in jobs
+    ]
 
 
 @router.get("/{receipt_id}", response_model=ReceiptArchiveResponse, summary="Alohida chek tafsilotlari")

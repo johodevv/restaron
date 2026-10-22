@@ -43,8 +43,8 @@ async def lifespan(app: FastAPI):
             print(f"[WARN] Auto seed xatosi: {e}")
 
     # Printer retry queue workerni ishga tushirish
-    from app.core.printer_queue import printer_queue
-    printer_queue.start_worker()
+    from app.core.printer_queue import start_printer_worker, stop_printer_worker
+    start_printer_worker()
 
     # WebSocket heartbeat monitorini ishga tushirish
     from app.websockets.manager import manager as ws_manager
@@ -53,8 +53,9 @@ async def lifespan(app: FastAPI):
     print(f"[OK] {settings.APP_NAME} ishga tushdi!")
     yield
     await ws_manager.stop_heartbeat()
-    await printer_queue.stop_worker()
+    await stop_printer_worker()
     print("[STOP] Server to'xtatildi.")
+
 
 
 docs_enabled = bool(settings.DEBUG or getattr(settings, "ENABLE_DOCS", False))
