@@ -1789,11 +1789,15 @@ async def checkout_order(
     """
     1. To'lov turlarini hisoblaydi (Naqd, Karta, Click, Nasiya)
     2. Agar Nasiya bo'lsa -> Debt jadvalida qarzdor yozuvini yaratadi
-    3. Stolni bo'shatadi (AVAILABLE)
+    3. Stolni bo'shatadi (AVAILABLE) faqat boshqa ochiq buyurtma bo'lmasa
     4. Xprinter uchun mijoz hisob cheki (Bill / Pre-check) yaratadi
     5. ReceiptArchive ga 3 yilga saqlaydi
     6. WebSocket orqali barchaga hisob yopilganini e'lon qiladi
     """
+    # 0. SQLite'da ikkita bir vaqtdagi to'lov ketma-ket bajarilishi va race condition
+    # bo'lmasligi uchun tranzaksiyaning eng boshida qatorni qulflaymiz
+    await db.execute(text("UPDATE orders SET id = id WHERE id = :id"), {"id": order_id})
+
     res = await db.execute(
         select(Order)
         .options(
@@ -1808,7 +1812,7 @@ async def checkout_order(
         raise HTTPException(status_code=404, detail="Buyurtma topilmadi")
 
     if order.is_paid or order.status == OrderStatus.PAID:
-        raise HTTPException(status_code=400, detail="Ushbu buyurtma allaqachon to'langan va yopilgan")
+        raise HTTPException(status_code=409, detail="Ushbu buyurtma allaqachon to'langan va yopilgan")
     if order.status == OrderStatus.CANCELLED:
         raise HTTPException(status_code=400, detail="Bekor qilingan buyurtmani to'lab bo'lmaydi")
 
@@ -1823,6 +1827,13 @@ async def checkout_order(
                    "yozing — shundan keyin chek to'g'ri chiqadi.",
         )
 
+    # Bo'sh buyurtma (taom yo'q yoki subtotal == 0) to'lanmasin: 400
+    subtotal = sum(i.total_price for i in order.items)
+    if not order.items or subtotal <= 0:
+        raise HTTPException(status_code=400, detail="Bo'sh buyurtmani to'lab bo'lmaydi")
+
+    from app.core.config import settings as app_settings
+
     set_res = await db.execute(select(RestaurantSettings).where(RestaurantSettings.restaurant_id == order.restaurant_id))
     settings = set_res.scalar_one_or_none()
 
@@ -1835,8 +1846,6 @@ async def checkout_order(
     #   2) aks holda BUYURTMAGA qo'yilgan foiz (kassir shu stol uchun
     #      o'zgartirgan bo'lishi mumkin — masalan VIP xonaga 15%);
     #   3) ikkisi ham yo'q bo'lsa — sozlamadagi umumiy foiz.
-    # Ilgari 2-qadam yo'q edi: kassir stol uchun foizni o'zgartirsa ham
-    # to'lovda u 12% ga qaytib ketardi va mijozdan boshqa summa olinardi.
     if payload.service_fee_percent is not None:
         fee_pct = float(payload.service_fee_percent)
     else:
@@ -1844,9 +1853,26 @@ async def checkout_order(
             order,
             fallback=(settings.service_fee_percent if settings else None),
         )
-    subtotal = sum(i.total_price for i in order.items)
     fee_amount = subtotal * (fee_pct / 100.0)
     discount = payload.discount
+
+    # discount > subtotal + service_fee bo'lsa 400
+    if discount > (subtotal + fee_amount):
+        raise HTTPException(
+            status_code=400,
+            detail="Chegirma summasi buyurtma jami summasidan oshib ketishi mumkin emas",
+        )
+
+    # Chegirma subtotal'ning MAX_CASHIER_DISCOUNT_PERCENT foizidan oshsa va foydalanuvchi cashier bo'lsa 403
+    discount_pct = (discount / subtotal * 100.0) if subtotal > 0 else 0.0
+    user_role = current_user.role.value if hasattr(current_user.role, "value") else str(current_user.role)
+    max_cashier_discount = getattr(app_settings, "MAX_CASHIER_DISCOUNT_PERCENT", 10.0)
+    if user_role == "cashier" and discount_pct > max_cashier_discount:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Kassir uchun ruxsat etilgan maksimal chegirma {max_cashier_discount}% (kiritilgan: {round(discount_pct, 1)}%)",
+        )
+
     total = max(0.0, subtotal + fee_amount - discount)
 
     order.subtotal = subtotal
@@ -1857,7 +1883,6 @@ async def checkout_order(
     order.is_paid = True
     order.status = OrderStatus.PAID
     order.closed_at = datetime.now(timezone.utc)
-
     order.payment_method = payload.payment_method
 
     # ─── To'lov summalarini tekshirish va kassaga to'g'ri yozish ───
@@ -1911,37 +1936,56 @@ async def checkout_order(
 
     debt_obj = None
     if order.debt_amount > 0 or payload.payment_method == "debt":
-        cust_name = payload.debt_customer_name or order.customer_name or "Noma'lum Mijoz"
-        cust_phone = payload.debt_customer_phone or "—"
-        debt_obj = Debt(
-            restaurant_id=order.restaurant_id,
-            order_id=order.id,
-            customer_name=cust_name,
-            customer_phone=cust_phone,
-            amount=order.debt_amount if order.debt_amount > 0 else total,
-            paid_amount=0.0,
-            remaining_amount=order.debt_amount if order.debt_amount > 0 else total,
-            status="unpaid",
-            due_date=payload.debt_due_date,
-            note=payload.debt_note or f"Buyurtma {order.order_number} uchun qarz",
+        # Shu order_id uchun Debt allaqachon bor bo'lsa ikkinchisini yaratma
+        existing_debt_res = await db.execute(
+            select(Debt).where(Debt.order_id == order.id)
         )
-        db.add(debt_obj)
+        debt_obj = existing_debt_res.scalar_one_or_none()
+        if not debt_obj:
+            cust_name = payload.debt_customer_name or order.customer_name or "Noma'lum Mijoz"
+            cust_phone = payload.debt_customer_phone or "—"
+            debt_obj = Debt(
+                restaurant_id=order.restaurant_id,
+                order_id=order.id,
+                customer_name=cust_name,
+                customer_phone=cust_phone,
+                amount=order.debt_amount if order.debt_amount > 0 else total,
+                paid_amount=0.0,
+                remaining_amount=order.debt_amount if order.debt_amount > 0 else total,
+                status="unpaid",
+                due_date=payload.debt_due_date,
+                note=payload.debt_note or f"Buyurtma {order.order_number} uchun qarz",
+            )
+            db.add(debt_obj)
 
     waiter_user = order.waiter or current_user
     if waiter_user and waiter_user.commission_percent and waiter_user.commission_percent > 0:
         order.waiter_share_percent = waiter_user.commission_percent
         order.waiter_share_amount = subtotal * (waiter_user.commission_percent / 100.0)
 
-    if order.table:
-        order.table.status = TableStatus.AVAILABLE
-        order.table.current_pin = None
-        order.table.is_unlocked = False
-        order.table.reserved_by_name = None
-        order.table.reserved_by_phone = None
-        order.table.reserved_time = None
-        order.table.reserved_guests = None
-        order.table.deposit_amount = 0.0
-        order.table.reservation_note = None
+    # Stol faqat shu stolda boshqa ochiq buyurtma qolmaganda AVAILABLE bo'lsin
+    table_became_available = False
+    if order.table_id:
+        other_open_orders_res = await db.execute(
+            select(func.count(Order.id)).where(
+                Order.table_id == order.table_id,
+                Order.id != order.id,
+                Order.is_paid == False,
+                Order.status.notin_([OrderStatus.PAID, OrderStatus.CANCELLED]),
+            )
+        )
+        other_open_orders_count = other_open_orders_res.scalar() or 0
+        if other_open_orders_count == 0 and order.table:
+            order.table.status = TableStatus.AVAILABLE
+            order.table.current_pin = None
+            order.table.is_unlocked = False
+            order.table.reserved_by_name = None
+            order.table.reserved_by_phone = None
+            order.table.reserved_time = None
+            order.table.reserved_guests = None
+            order.table.deposit_amount = 0.0
+            order.table.reservation_note = None
+            table_became_available = True
 
     paper_width = settings.printer_paper_width if settings else 80
     popts = printer_options(settings)
@@ -2029,6 +2073,17 @@ async def checkout_order(
 
     # Audit log: kassir to'lovni qabul qildi
     from app.core.audit import log_audit_event
+    audit_details = {
+        "order_number": order.order_number,
+        "total": total,
+        "payment_method": order.payment_method,
+        "cash": round(cash_in, 2),
+        "table_id": order.table_id,
+    }
+    if discount > 0:
+        audit_details["discount"] = discount
+        audit_details["discount_percent"] = round(discount_pct, 2)
+
     await log_audit_event(
         db=db,
         restaurant_id=order.restaurant_id,
@@ -2036,16 +2091,13 @@ async def checkout_order(
         user=current_user,
         entity_type="order",
         entity_id=order.id,
-        details={
-            "order_number": order.order_number,
-            "total": total,
-            "payment_method": order.payment_method,
-            "cash": round(cash_in, 2),
-            "table_id": order.table_id,
-        },
+        details=audit_details,
     )
 
-    # Avtomatik 1-Printer (Mijoz kassa cheki) ga asinxron chop etish (non-blocking)
+    # ─── Tranzaksiyani commit qilish (printer yoki boshqa xizmatlar tufayli baza qulflanib qolmasligi uchun) ───
+    await db.commit()
+
+    # Avtomatik 1-Printer (Mijoz kassa cheki) ga asinxron chop etish (commit'dan keyin)
     if getattr(settings, "auto_print_customer_bill", True):
         cust_printer = getattr(settings, "printer_customer_name", None) or "X-Q80A"
         try:
@@ -2053,7 +2105,7 @@ async def checkout_order(
         except Exception:
             printer_queue.enqueue(bill_text, printer_name=cust_printer, **popts)
 
-    # Faqat kassa cheklari (checkout / final bill) uchun PDF arxiv saqlash (non-blocking)
+    # Faqat kassa cheklari (checkout / final bill) uchun PDF arxiv saqlash (commit'dan keyin, non-blocking)
     try:
         from app.core.pdf_generator import async_save_checkout_receipt_pdf
         pdf_payload = {
@@ -2088,6 +2140,7 @@ async def checkout_order(
         import logging
         logging.getLogger("orders").warning(f"Kassa PDF chekini arxivlashda xatolik: {exc}")
 
+    # WebSocket xabarlari (commit'dan keyin)
     status_lbl = f"Stol #{order.table.number}" if order.table else f"Buyurtma {order.order_number}"
     await manager.broadcast_to_restaurant(order.restaurant_id, {
         "type": "order_paid",
@@ -2102,7 +2155,7 @@ async def checkout_order(
         "message": f"{status_lbl} to'landi va yopildi ✅",
     })
 
-    if order.table:
+    if order.table and table_became_available:
         await manager.broadcast_to_roles(order.restaurant_id, ["waiter", "admin"], {
             "type": "table_status_updated",
             "table_id": order.table.id,

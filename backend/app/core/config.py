@@ -48,6 +48,9 @@ class Settings(BaseSettings):
     # Developer commission (%)
     COMMISSION_PERCENT: float = 5.0
 
+    # Kassir uchun ruxsat etilgan maksimal chegirma foizi (%)
+    MAX_CASHIER_DISCOUNT_PERCENT: float = 10.0
+
     class Config:
         env_file = os.path.join(BACKEND_DIR, ".env")
         env_file_encoding = "utf-8"

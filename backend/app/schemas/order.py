@@ -2,7 +2,7 @@
 Buyurtma sxemalari (Pydantic)
 """
 from pydantic import BaseModel, Field
-from typing import Optional, List
+from typing import Optional, List, Literal
 from datetime import datetime
 from app.models.order import OrderStatus, CallStatus, OrderType
 
@@ -112,13 +112,13 @@ class OrderNoteUpdate(BaseModel):
 
 class OrderCheckoutRequest(BaseModel):
     """Kassada to'lovni qabul qilish va hisobni yopish"""
-    payment_method: str = "cash"            # cash, card, click, debt, mixed
-    cash_amount: float = 0.0
-    card_amount: float = 0.0
-    click_amount: float = 0.0
-    debt_amount: float = 0.0
-    discount: float = 0.0
-    service_fee_percent: Optional[float] = None
+    payment_method: Literal["cash", "card", "click", "debt", "mixed"] = "cash"
+    cash_amount: float = Field(default=0.0, ge=0, le=10_000_000_000)
+    card_amount: float = Field(default=0.0, ge=0, le=10_000_000_000)
+    click_amount: float = Field(default=0.0, ge=0, le=10_000_000_000)
+    debt_amount: float = Field(default=0.0, ge=0, le=10_000_000_000)
+    discount: float = Field(default=0.0, ge=0)
+    service_fee_percent: Optional[float] = Field(default=None, ge=0, le=100)
     # Qarz (Nasiya) uchun ma'lumotlar
     debt_customer_name: Optional[str] = Field(default=None, max_length=100)
     debt_customer_phone: Optional[str] = Field(default=None, max_length=30)
