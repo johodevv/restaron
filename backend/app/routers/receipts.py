@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, and_, or_
 
-UZ_TZ = timezone(timedelta(hours=5))
+from app.core.timeutil import UZ_TZ, uz_day_bounds_utc, to_uz, format_uz
 from sqlalchemy.orm import selectinload
 from pydantic import BaseModel
 from typing import List, Optional
@@ -730,7 +730,8 @@ async def create_shift_report(
         .order_by(ShiftReport.created_at.desc())
     )
     prev_shift = last_z.scalars().first()
-    opened_at = prev_shift.closed_at if prev_shift else datetime.now(UZ_TZ).replace(hour=0, minute=0, second=0, microsecond=0)
+    start_today_utc, _ = uz_day_bounds_utc()
+    opened_at = prev_shift.closed_at if prev_shift else start_today_utc
     now_dt = datetime.now(timezone.utc)
 
     # Smena soni
@@ -1013,7 +1014,8 @@ async def get_current_shift_preview(
         .order_by(ShiftReport.created_at.desc())
     )
     prev_shift = last_z.scalars().first()
-    opened_at = prev_shift.closed_at if prev_shift else datetime.now(UZ_TZ).replace(hour=0, minute=0, second=0, microsecond=0)
+    start_today_utc, _ = uz_day_bounds_utc()
+    opened_at = prev_shift.closed_at if prev_shift else start_today_utc
     now_dt = datetime.now(timezone.utc)
 
     # Joriy smena raqami

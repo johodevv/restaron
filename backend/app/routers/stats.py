@@ -6,7 +6,14 @@ from sqlalchemy import select, func, and_
 from datetime import datetime, timedelta, timezone
 from typing import Optional, List, Dict, Any
 
-UZ_TZ = timezone(timedelta(hours=5))
+from app.core.timeutil import (
+    UZ_TZ,
+    to_uz,
+    uz_now,
+    uz_day_bounds_utc,
+    uz_range_bounds_utc,
+    format_uz,
+)
 
 from app.core.database import get_db
 from app.core.security import require_role
@@ -98,16 +105,16 @@ async def get_dashboard(
     current_user: User = Depends(require_role("admin", "developer")),
 ):
     """Asosiy statistika (kunlik)"""
-    today_start = datetime.now(UZ_TZ).replace(hour=0, minute=0, second=0, microsecond=0)
-    today_end = today_start + timedelta(days=1)
+    # Bugungi kun chegaralari (UZ 00:00:00 - 24:00:00 ga mos UTC vaqt)
+    today_start_utc, today_end_utc = uz_day_bounds_utc()
 
     # Bugungi buyurtmalar
     today_orders = await db.execute(
         select(func.count(Order.id), func.sum(Order.total))
         .where(
             Order.restaurant_id == restaurant_id,
-            Order.created_at >= today_start,
-            Order.created_at < today_end,
+            Order.created_at >= today_start_utc,
+            Order.created_at < today_end_utc,
             Order.status != OrderStatus.CANCELLED,
         )
     )
@@ -157,7 +164,9 @@ async def get_top_items(
     current_user: User = Depends(require_role("admin", "developer")),
 ):
     """Qaysi taomdan ko'p sotilyapti"""
-    since = datetime.now(timezone.utc) - timedelta(days=days)
+    today_uz = uz_now().date()
+    since_uz = today_uz - timedelta(days=days)
+    since_utc, _ = uz_day_bounds_utc(since_uz)
 
     result = await db.execute(
         select(
@@ -172,7 +181,7 @@ async def get_top_items(
         .join(Order, Order.id == OrderItem.order_id)
         .where(
             Order.restaurant_id == restaurant_id,
-            Order.created_at >= since,
+            Order.created_at >= since_utc,
             Order.status != OrderStatus.CANCELLED,
         )
         .group_by(MenuItem.id, MenuItem.name, MenuItem.price, MenuItem.image_url)
@@ -201,15 +210,17 @@ async def get_revenue_chart(
     current_user: User = Depends(require_role("admin", "developer")),
 ):
     """Har kunlik daromad (grafik uchun bitta SQL so'rov bilan)"""
-    start_date = (datetime.now(timezone.utc) - timedelta(days=days - 1)).replace(
-        hour=0, minute=0, second=0, microsecond=0
-    )
-    date_col = func.date(Order.created_at).label("order_date")
+    today_uz = uz_now().date()
+    first_day_uz = today_uz - timedelta(days=days - 1)
+    start_utc, _ = uz_day_bounds_utc(first_day_uz)
+
+    # Kun bo'yicha guruhlashda func.date(Order.created_at, '+5 hours') ishlatiladi (UZ kuni bo'yicha)
+    date_col = func.date(Order.created_at, "+5 hours").label("order_date")
     result = await db.execute(
         select(date_col, func.count(Order.id), func.sum(Order.total))
         .where(
             Order.restaurant_id == restaurant_id,
-            Order.created_at >= start_date,
+            Order.created_at >= start_utc,
             Order.status != OrderStatus.CANCELLED,
         )
         .group_by(date_col)
@@ -221,7 +232,7 @@ async def get_revenue_chart(
 
     data = []
     for i in range(days - 1, -1, -1):
-        day_str = (datetime.now(timezone.utc) - timedelta(days=i)).strftime("%Y-%m-%d")
+        day_str = (today_uz - timedelta(days=i)).strftime("%Y-%m-%d")
         stats = daily_stats.get(day_str, {"orders": 0, "revenue": 0.0})
         data.append({
             "date": day_str,
@@ -240,7 +251,9 @@ async def get_waiter_performance(
     current_user: User = Depends(require_role("admin", "developer")),
 ):
     """Har bir ofitsiantning ishlash statistikasi (tanlangan davr bo'yicha)"""
-    since = datetime.now(timezone.utc) - timedelta(days=days)
+    today_uz = uz_now().date()
+    since_uz = today_uz - timedelta(days=days)
+    since_utc, _ = uz_day_bounds_utc(since_uz)
 
     # Bug 8 fix: Sana filtri JOIN ON shartida to'g'ri qo'llanilgan.
     # OUTER JOIN bilan bu shunday ishlaydi: sana filtridan tashqaridagi buyurtmalar
@@ -264,7 +277,7 @@ async def get_waiter_performance(
             and_(
                 Order.waiter_id == User.id,
                 Order.restaurant_id == restaurant_id,
-                Order.created_at >= since,
+                Order.created_at >= since_utc,
                 Order.status.in_(completed_statuses),  # Faqat yakunlangan buyurtmalar
             ),
         )
@@ -272,7 +285,7 @@ async def get_waiter_performance(
             Review,
             and_(
                 Review.waiter_id == User.id,
-                Review.created_at >= since,
+                Review.created_at >= since_utc,
             ),
         )
         .where(
@@ -312,33 +325,32 @@ async def get_payments_report(
     """
     from sqlalchemy.orm import selectinload
 
+    s_date = None
+    e_date = None
     if start_date:
         try:
-            dt_start = datetime.strptime(start_date, "%Y-%m-%d").replace(tzinfo=UZ_TZ)
+            s_date = datetime.strptime(start_date.strip()[:10], "%Y-%m-%d").date()
         except ValueError:
-            dt_start = datetime.now(UZ_TZ).replace(hour=0, minute=0, second=0, microsecond=0)
-    else:
-        dt_start = datetime.now(UZ_TZ).replace(hour=0, minute=0, second=0, microsecond=0)
-
+            s_date = None
     if end_date:
         try:
-            dt_end = datetime.strptime(end_date, "%Y-%m-%d").replace(hour=23, minute=59, second=59, tzinfo=UZ_TZ)
+            e_date = datetime.strptime(end_date.strip()[:10], "%Y-%m-%d").date()
         except ValueError:
-            dt_end = dt_start + timedelta(days=1)
-    else:
-        dt_end = dt_start + timedelta(days=1)
+            e_date = None
 
-    if dt_end < dt_start:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Tugash sanasi boshlanish sanasidan oldin bo'lishi mumkin emas",
-        )
+    if s_date and e_date:
+        if e_date < s_date:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Tugash sanasi boshlanish sanasidan oldin bo'lishi mumkin emas",
+            )
+        if (e_date - s_date).days > 366:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Sana oralig'i 366 kundan oshmasligi kerak",
+            )
 
-    if (dt_end - dt_start).days > 366:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Sana oralig'i 366 kundan oshmasligi kerak",
-        )
+    start_utc, end_utc = uz_range_bounds_utc(s_date, e_date or s_date)
 
     current_role = current_user.role.value if hasattr(current_user.role, "value") else str(current_user.role)
     if current_role == "waiter":
@@ -352,8 +364,8 @@ async def get_payments_report(
         .options(selectinload(Order.table), selectinload(Order.waiter))
         .where(
             Order.restaurant_id == restaurant_id,
-            func.coalesce(Order.closed_at, Order.created_at) >= dt_start,
-            func.coalesce(Order.closed_at, Order.created_at) <= dt_end,
+            func.coalesce(Order.closed_at, Order.created_at) >= start_utc,
+            func.coalesce(Order.closed_at, Order.created_at) < end_utc,
             Order.status != OrderStatus.CANCELLED,
             # Faqat yopilgan (to'langan) buyurtmalar — bu kassa tushumi hisoboti.
             # Ochiq stollar qo'shilsa "Jami Tushum" naqd/karta/nasiya yig'indisiga
@@ -410,8 +422,8 @@ async def get_payments_report(
             "card_amount": c_card,
             "click_amount": c_click,
             "debt_amount": c_debt,
-            "created_at": o.created_at.strftime("%d.%m.%Y %H:%M") if o.created_at else "—",
-            "closed_at": o.closed_at.strftime("%d.%m.%Y %H:%M") if o.closed_at else "Еще не завершен",
+            "created_at": format_uz(o.created_at, "%d.%m.%Y %H:%M"),
+            "closed_at": format_uz(o.closed_at, "%d.%m.%Y %H:%M") if o.closed_at else "Hali yopilmagan",
             "total": tot,
             "waiter_name": w_name,
             "waiter_id": o.waiter_id,
@@ -421,8 +433,8 @@ async def get_payments_report(
         })
 
     return {
-        "start_date": dt_start.strftime("%Y-%m-%d"),
-        "end_date": dt_end.strftime("%Y-%m-%d"),
+        "start_date": (s_date or to_uz(start_utc).date()).strftime("%Y-%m-%d"),
+        "end_date": (e_date or (to_uz(end_utc) - timedelta(seconds=1)).date()).strftime("%Y-%m-%d"),
         "orders_count": len(rows),
         "total_revenue": round(total_sales, 2),
         "total_cash": round(total_cash, 2),
@@ -443,8 +455,20 @@ async def get_waiter_kpi_detail(
     current_user: User = Depends(require_role("admin", "developer")),
 ):
     """Ofitsiantlarning aniq savdosi, xizmat haqi va daromadlari tahlili (bitta SQL query bilan)"""
-    dt_start = datetime.strptime(start_date, "%Y-%m-%d").replace(tzinfo=UZ_TZ) if start_date else datetime.now(UZ_TZ).replace(hour=0, minute=0, second=0, microsecond=0)
-    dt_end = datetime.strptime(end_date, "%Y-%m-%d").replace(hour=23, minute=59, second=59, tzinfo=UZ_TZ) if end_date else dt_start + timedelta(days=1)
+    s_date = None
+    e_date = None
+    if start_date:
+        try:
+            s_date = datetime.strptime(start_date.strip()[:10], "%Y-%m-%d").date()
+        except ValueError:
+            s_date = None
+    if end_date:
+        try:
+            e_date = datetime.strptime(end_date.strip()[:10], "%Y-%m-%d").date()
+        except ValueError:
+            e_date = None
+
+    start_utc, end_utc = uz_range_bounds_utc(s_date, e_date or s_date)
 
     query = (
         select(
@@ -461,8 +485,8 @@ async def get_waiter_kpi_detail(
             Order,
             and_(
                 Order.waiter_id == User.id,
-                func.coalesce(Order.closed_at, Order.created_at) >= dt_start,
-                func.coalesce(Order.closed_at, Order.created_at) <= dt_end,
+                func.coalesce(Order.closed_at, Order.created_at) >= start_utc,
+                func.coalesce(Order.closed_at, Order.created_at) < end_utc,
                 Order.status.in_([OrderStatus.PAID, OrderStatus.SERVED]),
             ),
         )
@@ -609,6 +633,6 @@ async def get_server_health(
         },
         "active_websockets": active_ws_count,
         "recent_errors": error_logs,
-        "timestamp": datetime.now(UZ_TZ).strftime("%Y-%m-%d %H:%M:%S"),
+        "timestamp": uz_now().strftime("%Y-%m-%d %H:%M:%S"),
     }
 
