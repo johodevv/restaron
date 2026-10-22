@@ -97,37 +97,82 @@ class ConnectionManager:
         for ws in target_sockets:
             await self.send_personal_message(message, ws)
 
+    # Mijozga yuborilmaydigan xavfli kalitlar
+    SENSITIVE_TABLE_KEYS = {
+        "phone", "customer_phone", "waiter_phone", "staff_phone", "user_phone", "client_phone",
+        "commission", "commission_percent", "commission_amount", "waiter_share", "service_share", "tip",
+        "current_pin", "pin", "password", "hashed_password",
+        "token", "qr_token",
+        "customer_name", "customer_address", "address",
+    }
+
+    def _sanitize_table_payload(self, data: Any) -> Any:
+        """Stoldagi mijozga ketadigan xabardan maxfiy kalitlarni tozalash"""
+        if isinstance(data, dict):
+            return {
+                k: self._sanitize_table_payload(v)
+                for k, v in data.items()
+                if str(k).lower() not in self.SENSITIVE_TABLE_KEYS
+            }
+        elif isinstance(data, list):
+            return [self._sanitize_table_payload(v) for v in data]
+        return data
+
+    def get_online_counts(self, restaurant_id: int) -> Dict[str, int]:
+        """Restorandagi onlayn ulanishlar statistikasi"""
+        counts: Dict[str, int] = {
+            "total": 0,
+            "waiter": 0,
+            "admin": 0,
+            "chef": 0,
+            "cashier": 0,
+            "developer": 0,
+            "guest": 0,
+        }
+        connections = self._restaurant_connections.get(restaurant_id, set())
+        for ws in connections:
+            meta = self._connection_meta.get(ws, {})
+            role = meta.get("role", "guest")
+            counts["total"] += 1
+            counts[role] = counts.get(role, 0) + 1
+        return counts
+
     async def broadcast_to_role(self, restaurant_id: int, role: str, message: dict):
-        """Muayyan roldagi barcha foydalanuvchilarga yuborish (waiter, chef, admin)"""
+        """Muayyan roldagi barcha xodimlarga yuborish (guest larga HECH QACHON yuborilmaydi)"""
         role_lower = role.lower()
+        if role_lower == "guest":
+            return
         target_sockets: List[WebSocket] = []
         async with self._lock:
             connections = list(self._restaurant_connections.get(restaurant_id, set()))
             for ws in connections:
                 meta = self._connection_meta.get(ws, {})
-                # Admin har doim barcha bildirishnomalarni ko'ra oladi
-                if meta.get("role") == role_lower or meta.get("role") in ["admin", "developer"]:
+                ws_role = meta.get("role")
+                if ws_role and ws_role != "guest" and (ws_role == role_lower or ws_role in ["admin", "developer"]):
                     target_sockets.append(ws)
 
         for ws in target_sockets:
             await self.send_personal_message(message, ws)
 
     async def broadcast_to_roles(self, restaurant_id: int, roles: List[str], message: dict):
-        """Bir nechta rollarga yuborish"""
+        """Bir nechta rollarga yuborish (guest larga HECH QACHON yuborilmaydi)"""
         roles_set = {r.lower() for r in roles} | {"admin", "developer"}
+        roles_set.discard("guest")
         target_sockets: List[WebSocket] = []
         async with self._lock:
             connections = list(self._restaurant_connections.get(restaurant_id, set()))
             for ws in connections:
                 meta = self._connection_meta.get(ws, {})
-                if meta.get("role") in roles_set:
+                ws_role = meta.get("role")
+                if ws_role and ws_role != "guest" and ws_role in roles_set:
                     target_sockets.append(ws)
 
         for ws in target_sockets:
             await self.send_personal_message(message, ws)
 
     async def broadcast_to_table(self, restaurant_id: int, table_id: int, message: dict):
-        """Stolda o'tirgan mijoz(lar)ga yuborish"""
+        """Stolda o'tirgan mijoz(lar)ga yuborish (maxfiy ma'lumotlar filtrlanadi)"""
+        safe_message = self._sanitize_table_payload(message)
         target_sockets: List[WebSocket] = []
         async with self._lock:
             connections = list(self._restaurant_connections.get(restaurant_id, set()))
@@ -137,12 +182,18 @@ class ConnectionManager:
                     target_sockets.append(ws)
 
         for ws in target_sockets:
-            await self.send_personal_message(message, ws)
+            await self.send_personal_message(safe_message, ws)
 
     async def broadcast_to_restaurant(self, restaurant_id: int, message: dict):
-        """Restorandagi hamma ulanganlarga tarqatish"""
+        """Restorandagi barcha xodimlarga tarqatish (guest larga HECH QACHON yuborilmaydi)"""
+        target_sockets: List[WebSocket] = []
         async with self._lock:
-            target_sockets = list(self._restaurant_connections.get(restaurant_id, set()))
+            connections = list(self._restaurant_connections.get(restaurant_id, set()))
+            for ws in connections:
+                meta = self._connection_meta.get(ws, {})
+                ws_role = meta.get("role")
+                if ws_role and ws_role != "guest":
+                    target_sockets.append(ws)
 
         for ws in target_sockets:
             await self.send_personal_message(message, ws)

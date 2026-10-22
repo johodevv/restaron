@@ -217,9 +217,10 @@ async def test_startup_cleanup():
         old_id = old_done_job.id
         recent_id = recent_done_job.id
 
-    # Workerni qisqa ishga tushirib to'xtatamiz
+    # Oldingi worker bo'lsa to'xtatamiz va yangidan ishga tushiramiz
+    await stop_printer_worker()
     start_printer_worker()
-    await asyncio.sleep(0.1)
+    await asyncio.sleep(0.15)
     await stop_printer_worker()
 
     async with AsyncSessionLocal() as session:

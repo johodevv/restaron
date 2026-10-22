@@ -11,6 +11,7 @@ from sqlalchemy import select
 from app.core.database import get_db, async_session_factory
 from app.core.security import decode_token
 from app.models.user import User
+from app.models.table import Table
 from app.websockets.manager import manager
 
 router = APIRouter(prefix="/ws", tags=["⚡ WebSocket"])
@@ -55,12 +56,48 @@ async def websocket_endpoint(
     user_id = None
     username = None
 
-    if token:
+    has_token = token is not None and token.strip() != ""
+
+    if has_token:
         user = await authenticate_ws_token(token)
-        if user:
-            role = user.role.value if hasattr(user.role, "value") else str(user.role)
-            user_id = user.id
-            username = user.username
+        # 1. Token berilgan, lekin yaroqsiz yoki muddati o'tgan bo'lsa guest sifatida ulama — 4401 kodi bilan yop.
+        if not user:
+            await websocket.close(code=4401)
+            return
+
+        user_role_str = user.role.value if hasattr(user.role, "value") else str(user.role)
+        is_dev = user_role_str == "developer"
+
+        # 2. Xodim tokeni uchun user.restaurant_id yo'ldagi restaurant_id ga teng bo'lishi shart (developer istisno); bo'lmasa 4403 bilan yop.
+        if not is_dev and user.restaurant_id != restaurant_id:
+            await websocket.close(code=4403)
+            return
+
+        role = user_role_str
+        user_id = user.id
+        username = user.username
+    else:
+        # Token umuman yo'q bo'lsa faqat guest (mijoz) rejimi.
+        # 3. Guest uchun table_id majburiy va shu restoranga tegishli stol bo'lishi kerak (bazada tekshir); aks holda 4403.
+        if not table_id:
+            await websocket.close(code=4403)
+            return
+
+        async with async_session_factory() as session:
+            result = await session.execute(
+                select(Table.id).where(
+                    Table.id == table_id,
+                    Table.restaurant_id == restaurant_id,
+                )
+            )
+            table_row = result.scalar_one_or_none()
+            if not table_row:
+                await websocket.close(code=4403)
+                return
+
+        role = "guest"
+        user_id = None
+        username = None
 
     # Ulanishni qabul qilish
     await manager.connect(
