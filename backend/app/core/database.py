@@ -1,7 +1,10 @@
-from sqlalchemy import event
+import logging
+from sqlalchemy import event, text
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase
 from app.core.config import settings
+
+logger = logging.getLogger("database")
 
 is_sqlite = "sqlite" in settings.DATABASE_URL
 engine_kwargs = {
@@ -211,6 +214,68 @@ def _sync_sqlite_migrations(sync_conn):
             pass
 
 
+def _sync_sqlite_indexes(sync_conn):
+    """SQLite jadvallari uchun zarur indekslar va unikal qisman indeksni yaratish"""
+    indexes = [
+        ("ix_orders_table_id", "orders", ["table_id"], "CREATE INDEX IF NOT EXISTS ix_orders_table_id ON orders(table_id)"),
+        ("ix_orders_status", "orders", ["status"], "CREATE INDEX IF NOT EXISTS ix_orders_status ON orders(status)"),
+        ("ix_orders_is_paid", "orders", ["is_paid"], "CREATE INDEX IF NOT EXISTS ix_orders_is_paid ON orders(is_paid)"),
+        ("ix_orders_created_at", "orders", ["created_at"], "CREATE INDEX IF NOT EXISTS ix_orders_created_at ON orders(created_at)"),
+        ("ix_orders_closed_at", "orders", ["closed_at"], "CREATE INDEX IF NOT EXISTS ix_orders_closed_at ON orders(closed_at)"),
+        ("ix_orders_waiter_id", "orders", ["waiter_id"], "CREATE INDEX IF NOT EXISTS ix_orders_waiter_id ON orders(waiter_id)"),
+        ("ix_orders_restaurant_id_created_at", "orders", ["restaurant_id", "created_at"], "CREATE INDEX IF NOT EXISTS ix_orders_restaurant_id_created_at ON orders(restaurant_id, created_at)"),
+        ("ix_order_items_order_id", "order_items", ["order_id"], "CREATE INDEX IF NOT EXISTS ix_order_items_order_id ON order_items(order_id)"),
+        ("ix_order_items_menu_item_id", "order_items", ["menu_item_id"], "CREATE INDEX IF NOT EXISTS ix_order_items_menu_item_id ON order_items(menu_item_id)"),
+        ("ix_tables_restaurant_id", "tables", ["restaurant_id"], "CREATE INDEX IF NOT EXISTS ix_tables_restaurant_id ON tables(restaurant_id)"),
+        ("ix_receipt_archives_order_id", "receipt_archives", ["order_id"], "CREATE INDEX IF NOT EXISTS ix_receipt_archives_order_id ON receipt_archives(order_id)"),
+        ("ix_debts_order_id", "debts", ["order_id"], "CREATE INDEX IF NOT EXISTS ix_debts_order_id ON debts(order_id)"),
+        ("ix_notifications_restaurant_id", "notifications", ["restaurant_id"], "CREATE INDEX IF NOT EXISTS ix_notifications_restaurant_id ON notifications(restaurant_id)"),
+    ]
+
+    for idx_name, table_name, cols, create_sql in indexes:
+        try:
+            res = sync_conn.execute(text(f"PRAGMA table_info({table_name})"))
+            existing_cols = {row[1] for row in res.fetchall()}
+            if not existing_cols:
+                logger.warning("Indeks yaratilmadi: '%s' jadvali mavjud emas", table_name)
+                continue
+            missing = [c for c in cols if c not in existing_cols]
+            if missing:
+                logger.warning("Indeks '%s' yaratilmadi: '%s' jadvalida ustunlar mavjud emas: %s", idx_name, table_name, missing)
+                continue
+            sync_conn.execute(text(create_sql))
+        except Exception as exc:
+            logger.warning("Indeks '%s' yaratishda xatolik yuz berdi: %s", idx_name, exc)
+
+    # Unikal qisman indeks: bitta stolda faqat bitta ochiq buyurtma bo'lishi mumkin
+    try:
+        res = sync_conn.execute(text("PRAGMA table_info(orders)"))
+        orders_cols = {row[1] for row in res.fetchall()}
+        if all(col in orders_cols for col in ("table_id", "is_paid", "status")):
+            dup_res = sync_conn.execute(text(
+                "SELECT table_id, COUNT(*) as cnt FROM orders "
+                "WHERE table_id IS NOT NULL AND is_paid = 0 AND status NOT IN ('CANCELLED', 'PAID') "
+                "GROUP BY table_id HAVING cnt > 1"
+            ))
+            dup_tables = [row[0] for row in dup_res.fetchall()]
+            if dup_tables:
+                logger.warning(
+                    "Unikal qisman indeks (ux_orders_one_open_per_table) yaratilmadi: "
+                    "quyidagi stollarda bir nechta ochiq buyurtmalar mavjud (table_id): %s",
+                    dup_tables,
+                )
+            else:
+                sync_conn.execute(text(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS ux_orders_one_open_per_table "
+                    "ON orders(table_id) WHERE table_id IS NOT NULL AND is_paid = 0 "
+                    "AND status NOT IN ('CANCELLED','PAID')"
+                ))
+        else:
+            logger.warning("ux_orders_one_open_per_table indeksi yaratilmadi: orders jadvalida zarur ustunlar yo'q")
+    except Exception as exc:
+        logger.warning("Unikal qisman indeks yaratishda kutilmagan xatolik: %s", exc)
+
+
 async def create_tables():
     """Barcha jadvallarni yaratish va mavjud jadvallarni yangilash"""
     import app.models  # noqa: F401
@@ -218,6 +283,7 @@ async def create_tables():
         await conn.run_sync(Base.metadata.create_all)
         if is_sqlite:
             await conn.run_sync(_sync_sqlite_migrations)
+            await conn.run_sync(_sync_sqlite_indexes)
         # Har safar server ishga tushganda bo'sh bo'lgan tasdiqlarni tiklash
         try:
             await conn.execute(text("UPDATE users SET is_approved = 1 WHERE is_approved IS NULL"))
