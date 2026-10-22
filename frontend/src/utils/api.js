@@ -75,6 +75,37 @@ export function formatApiError(errorData) {
   return String(detail);
 }
 
+async function executeFetch(url, config, timeoutMs) {
+  const controller = new AbortController();
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, timeoutMs);
+
+  if (config.signal) {
+    if (config.signal.aborted) {
+      controller.abort();
+    } else {
+      config.signal.addEventListener('abort', () => controller.abort());
+    }
+  }
+
+  try {
+    return await fetch(url, { ...config, signal: controller.signal });
+  } catch (err) {
+    if (timedOut || err.name === 'AbortError') {
+      const timeoutErr = new Error('Server javob bermadi.');
+      timeoutErr.name = 'TimeoutError';
+      timeoutErr.isTimeout = true;
+      throw timeoutErr;
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function request(endpoint, options = {}) {
   const token = localStorage.getItem('restaron_token');
   const headers = {
@@ -93,21 +124,36 @@ async function request(endpoint, options = {}) {
   }
 
   const url = endpoint.startsWith('http') ? endpoint : `${BASE_URL}${endpoint}`;
+  const method = (options.method || 'GET').toUpperCase();
+  const isGet = method === 'GET';
+  const timeoutMs = isGet ? 15000 : 25000;
+
   let response;
   try {
-    response = await fetch(url, config);
+    response = await executeFetch(url, config, timeoutMs);
   } catch (netErr) {
-    // Qayta urinish: Wi-Fi uzilishi yoki bepul hostingdagi backend "uyqudan"
-    // uyg'onishi uchun (Render free tier ~30-60 soniya ketishi mumkin).
+    if (netErr.isTimeout) {
+      throw netErr;
+    }
+
+    if (!isGet) {
+      // POST, PATCH, DELETE tarmoq xatosida avtomatik qayta yuborilmaydi (dublikat xavfi)
+      throw new Error("Aloqa uzildi. Natija noma'lum — ro'yxatni yangilab tekshiring.");
+    }
+
+    // FAQAT GET uchun 2 marta qayta urinish
     let lastErr = netErr;
     response = null;
     for (const delay of [800, 3000]) {
       try {
         await new Promise((r) => setTimeout(r, delay));
-        response = await fetch(url, config);
+        response = await executeFetch(url, config, timeoutMs);
         break;
       } catch (retryErr) {
         lastErr = retryErr;
+        if (retryErr.isTimeout) {
+          throw retryErr;
+        }
       }
     }
     if (!response) {
@@ -138,9 +184,17 @@ async function request(endpoint, options = {}) {
   }
 
   if (!response.ok) {
+    // 401 javobida (login so'rovidan tashqari) tokenni o'chir va restaron:unauthorized hodisasi yubor
+    const isLogin = endpoint.includes('/auth/login') || endpoint.endsWith('/login');
+    if (response.status === 401 && !isLogin) {
+      localStorage.removeItem('restaron_token');
+      window.dispatchEvent(new Event('restaron:unauthorized'));
+    }
+
     let errorDetail = 'Xatolik yuz berdi';
+    let errorData = null;
     try {
-      const errorData = await response.json();
+      errorData = await response.json();
       errorDetail = formatApiError(errorData) || errorDetail;
     } catch (e) {
       // JSON emas — status bo'yicha tushunarli xabar
@@ -151,6 +205,11 @@ async function request(endpoint, options = {}) {
     }
     const err = new Error(errorDetail);
     err.status = response.status;
+    if (errorData) {
+      err.response = { status: response.status, data: errorData };
+    } else {
+      err.response = { status: response.status };
+    }
     throw err;
   }
 

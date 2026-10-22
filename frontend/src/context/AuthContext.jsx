@@ -70,6 +70,16 @@ export const AuthProvider = ({ children }) => {
     setUser(null);
   };
 
+  useEffect(() => {
+    const handleUnauthorized = () => {
+      logout();
+    };
+    window.addEventListener('restaron:unauthorized', handleUnauthorized);
+    return () => {
+      window.removeEventListener('restaron:unauthorized', handleUnauthorized);
+    };
+  }, []);
+
   const value = {
     user,
     token,
