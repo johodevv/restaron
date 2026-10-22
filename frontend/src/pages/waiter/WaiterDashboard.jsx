@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import api from '../../utils/api';
 import { preloadImages, collectImageUrls } from '../../utils/preloadImages';
 import { useAuth } from '../../context/AuthContext';
@@ -18,6 +18,7 @@ import {
   BellRing,
   Clock,
   CheckCircle2,
+  AlertCircle,
   Printer,
   Receipt,
   Search,
@@ -41,6 +42,17 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
   const { user, isAdmin, isCashier, canCheckout: authCanCheckout } = useAuth();
   const { addEventListener, playChime, connected, addNotification } = useWebSocket() || {};
   const restaurantId = user?.restaurant_id || 1;
+
+  // 7. Toast xabarlari (alert o'rniga)
+  const showToast = useCallback((message, type = 'info', title = null) => {
+    if (typeof addNotification === 'function') {
+      addNotification({
+        type,
+        title: title || (type === 'urgent' ? 'Xatolik' : type === 'warning' ? 'Ogohlantirish' : type === 'success' ? 'Muvaffaqiyatli' : 'Xabar'),
+        message: String(message || ''),
+      });
+    }
+  }, [addNotification]);
 
   // Vakolatlarni qat'iy ajratish:
   // Ofitsiant (waiter) roli hech qachon rejim almashtira olmaydi va to'lov (checkout) qila olmaydi!
@@ -67,6 +79,7 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
   const [calls, setCalls] = useState([]);
   const [readyOrders, setReadyOrders] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(null);
 
   // Active Table & Active Order (Left POS Panel)
   const [selectedTable, setSelectedTable] = useState(null);
@@ -109,13 +122,13 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
     setTransferLoading(true);
     try {
       const res = await api.post(`/tables/${selectedTable.id}/transfer/${targetTableId}`);
-      alert(res.message || "Buyurtma muvaffaqiyatli ko'chirildi! ✅");
+      showToast(res.message || "Buyurtma muvaffaqiyatli ko'chirildi! ✅", 'success');
       setTransferModalOpen(false);
       const dest = tables.find((t) => t.id === targetTableId);
       if (dest) setSelectedTable(dest);
       loadInitialData();
     } catch (err) {
-      alert(err.message || "Ko'chirishda xatolik yuz berdi");
+      showToast(err.message || "Ko'chirishda xatolik yuz berdi", 'urgent');
     } finally {
       setTransferLoading(false);
     }
@@ -179,14 +192,16 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
   const zoneCount = (z) =>
     z ? (tables || []).filter((t) => (t.room || '').trim() === z).length : (tables || []).length;
 
-  // Load initial data
+  // 3. Load initial data (xatoni ushlaydi, bo'sh ro'yxat bilan jimgina davom etmaydi)
   const loadInitialData = async () => {
+    setLoading(true);
+    setLoadError(null);
     try {
       const [tablesData, menuData, callsData, ordersData] = await Promise.all([
-        api.get(`/tables/?restaurant_id=${restaurantId}`).catch(() => []),
-        api.get(`/menu/full/${restaurantId}`).catch(() => []),
-        api.get(`/orders/calls?restaurant_id=${restaurantId}`).catch(() => []),
-        api.get(`/orders/?restaurant_id=${restaurantId}`).catch(() => []),
+        api.get(`/tables/?restaurant_id=${restaurantId}`),
+        api.get(`/menu/full/${restaurantId}`),
+        api.get(`/orders/calls?restaurant_id=${restaurantId}`),
+        api.get(`/orders/?restaurant_id=${restaurantId}`),
       ]);
 
       setTables(tablesData || []);
@@ -206,8 +221,10 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
       if (!selectedTable && tablesData && tablesData.length > 0) {
         setSelectedTable(tablesData[0]);
       }
+      setLoadError(null);
     } catch (err) {
       console.error('Waiter load error:', err);
+      setLoadError(err?.message || "Ma'lumot yuklanmadi");
     } finally {
       setLoading(false);
     }
@@ -217,12 +234,13 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
     loadInitialData();
   }, [restaurantId]);
 
-  // Load active order for selected table
-  const fetchTableActiveOrder = async (tbl) => {
-    if (!tbl) return;
+  // Load active order for selected table (accepts table object or table id)
+  const fetchTableActiveOrder = async (tblOrId) => {
+    const tableIdToFetch = typeof tblOrId === 'object' ? tblOrId?.id : tblOrId;
+    if (!tableIdToFetch) return;
     setOrderLoading(true);
     try {
-      const activeOrders = await api.get(`/orders/table/${tbl.id}/active`).catch(() => []);
+      const activeOrders = await api.get(`/orders/table/${tableIdToFetch}/active`).catch(() => []);
       if (activeOrders && activeOrders.length > 0) {
         const ord = activeOrders[0];
         setActiveOrder(ord);
@@ -245,6 +263,58 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
     }
   }, [selectedTable?.id]);
 
+  const selectedTableRef = useRef(selectedTable);
+  useEffect(() => {
+    selectedTableRef.current = selectedTable;
+  }, [selectedTable]);
+
+  // 4. Qayta yuklash: 'restaron:ws-open', 'visibilitychange' (ko'rinadigan) va 'online' hodisalarida
+  // Zaxira sifatida sahifa ko'rinib turganda har 30 soniyada tables ro'yxatini yangilash
+  useEffect(() => {
+    const handleReload = () => {
+      loadInitialData();
+      if (selectedTableRef.current) {
+        fetchTableActiveOrder(selectedTableRef.current);
+      }
+    };
+
+    const handleWsOpen = () => {
+      handleReload();
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        handleReload();
+      }
+    };
+
+    const handleOnline = () => {
+      handleReload();
+    };
+
+    window.addEventListener('restaron:ws-open', handleWsOpen);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('online', handleOnline);
+
+    const pollInterval = setInterval(async () => {
+      if (document.visibilityState === 'visible') {
+        try {
+          const freshTables = await api.get(`/tables/?restaurant_id=${restaurantId}`);
+          if (Array.isArray(freshTables)) {
+            setTables(freshTables);
+          }
+        } catch (_) {}
+      }
+    }, 30000);
+
+    return () => {
+      window.removeEventListener('restaron:ws-open', handleWsOpen);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('online', handleOnline);
+      clearInterval(pollInterval);
+    };
+  }, [restaurantId]);
+
   // Stollar ro'yxati yangilanganda tanlangan stolning holatini ham
   // yangilab turamiz (boshqa qurilmada stol yopilgan bo'lishi mumkin).
   useEffect(() => {
@@ -257,6 +327,7 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
 
   // WebSocket real-time updates (Granular & Zero-overhead, avoids full-page network refetches)
   useEffect(() => {
+    if (!addEventListener) return;
     const unsub = addEventListener('*', (event) => {
       if (event.type === 'call_waiter') {
         if (soundEnabled && playChime) playChime('urgent');
@@ -293,7 +364,8 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
             setActiveOrder(null);
           }
         }
-      } else if (event.type === 'order_paid') {
+      } else if (event.type === 'order_paid' || event.type === 'order_cancelled') {
+        // 2. Stol faqat order_paid, order_cancelled yoki table_status_updated (status=available) kelganda bo'shasin
         setTables((prev) =>
           prev.map((t) =>
             t.id === event.table_id
@@ -306,12 +378,18 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
           setActiveOrder(null);
         }
       } else if (event.type === 'order_updated' || event.type === 'new_order') {
-        const isCancelled = event.order?.status === 'cancelled' || !event.order?.items || event.order?.items?.length === 0;
+        // 2. 'bekor qilingan' deb faqat event.order?.status === 'cancelled' bo'lganda hisobla
+        const isCancelled = event.order?.status === 'cancelled';
         if (event.table_id) {
           setTables((prev) =>
-            prev.map((t) =>
-              t.id === event.table_id ? { ...t, status: isCancelled ? 'available' : 'occupied', is_occupied: !isCancelled } : t
-            )
+            prev.map((t) => {
+              if (t.id !== event.table_id) return t;
+              return {
+                ...t,
+                status: isCancelled ? 'available' : 'occupied',
+                is_occupied: !isCancelled,
+              };
+            })
           );
         }
         if (selectedTable && event.table_id === selectedTable.id) {
@@ -322,8 +400,23 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
               setActiveOrder(event.order);
             }
           } else {
-            fetchTableActiveOrder(selectedTable);
+            // event.order yo'q bo'lsa stolni BO'SH qilma: band qoldir va tanlangan stol uchun fetchTableActiveOrder(event.table_id) bilan yangila
+            fetchTableActiveOrder(event.table_id);
           }
+        }
+      } else if (event.type === 'stop_list_updated') {
+        // 5. stop_list_updated hodisasini tingla va menyudagi taom mavjudligini yangila (CustomerMenu.jsx shaklida)
+        if (event.item_id) {
+          setCategories((prevCats) =>
+            prevCats.map((cat) => ({
+              ...cat,
+              items: (cat.items || []).map((item) =>
+                item.id === event.item_id
+                  ? { ...item, is_stop_list: event.is_stop_list, is_available: event.is_available }
+                  : item
+              ),
+            }))
+          );
         }
       }
     });
@@ -358,12 +451,12 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
   // Add Item to Table (Click on food card) — Tezkor va Optimistik
   const handleAddItem = async (menuItem) => {
     if (menuItem.is_stop_list || menuItem.is_available === false) {
-      alert(`"${menuItem.name}" hozirda stop-listda (tugagan)`);
+      showToast(`"${menuItem.name}" hozirda stop-listda (tugagan)`, 'warning');
       return;
     }
 
     if (!selectedTable && orderType === 'table') {
-      alert('Iltimos, avval stolni tanlang');
+      showToast('Iltimos, avval stolni tanlang', 'warning');
       return;
     }
 
@@ -490,7 +583,7 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
     } catch (err) {
       console.warn("Taom qo'shishda xatolik:", err);
       const errMsg = err?.response?.data?.detail || err?.message || "Taom qo'shishda xatolik yuz berdi";
-      alert(errMsg);
+      showToast(errMsg, 'urgent');
       if (selectedTable) fetchTableActiveOrder(selectedTable);
     }
   };
@@ -555,7 +648,7 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
     } catch (err) {
       console.warn('Soni yangilashda xatolik:', err);
       const errMsg = err?.response?.data?.detail || err?.message || "Taom sonini o'zgartirishda xatolik yuz berdi";
-      alert(errMsg);
+      showToast(errMsg, 'urgent');
       if (selectedTable) fetchTableActiveOrder(selectedTable);
     }
   };
@@ -611,7 +704,7 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
         return;
       }
       console.warn("Taomni o'chirishda xatolik:", err);
-      alert(errMsg);
+      showToast(errMsg, 'urgent');
       if (selectedTable) fetchTableActiveOrder(selectedTable);
     }
   };
@@ -626,7 +719,7 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
     const hasPrice = !isNaN(pr) && pr >= 0 && String(priceValue).trim() !== '';
     const hasWeight = !isNaN(w) && w > 0;
     if (!hasPrice && !hasWeight) {
-      alert('Summani kiriting (masalan: 204000)');
+      showToast('Summani kiriting (masalan: 204000)', 'warning');
       return;
     }
     setSavingWeight(true);
@@ -643,7 +736,7 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
       setWeightValue('');
       setPriceValue('');
     } catch (err) {
-      alert(err.message || 'Narxni saqlashda xatolik');
+      showToast(err.message || 'Narxni saqlashda xatolik', 'urgent');
     } finally {
       setSavingWeight(false);
     }
@@ -662,7 +755,7 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
       setSizeModalItem(null);
       setSizeValue('');
     } catch (err) {
-      alert(err.message || 'Hajmni saqlashda xatolik');
+      showToast(err.message || 'Hajmni saqlashda xatolik', 'urgent');
     } finally {
       setSavingSize(false);
     }
@@ -678,7 +771,7 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
       setActiveOrder(updated);
       setKitchenNoteModalOpen(false);
     } catch (err) {
-      alert(err.message || 'Xatolik');
+      showToast(err.message || 'Xatolik', 'urgent');
     }
   };
 
@@ -690,15 +783,7 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
   // begunok printerdan chiqmagan bo'lsa "qayta chiqarish" so'raladi.
   const handleSendToKitchen = async (reprint = false) => {
     if (!activeOrder || !activeOrder.items || activeOrder.items.length === 0) {
-      if (typeof addNotification === 'function') {
-        addNotification({
-          title: "Buyurtma bo'sh",
-          message: "Buyurtmada taomlar yo'q! Avval o'ng tomondan taom qo'shing.",
-          type: "warning",
-        });
-      } else {
-        alert("Buyurtmada taomlar yo'q! Avval o'ng tomondan taom qo'shing.");
-      }
+      showToast("Buyurtmada taomlar yo'q! Avval o'ng tomondan taom qo'shing.", "warning");
       return;
     }
     setSendingToKitchen(true);
@@ -723,13 +808,7 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
       }
 
       // 1. Javobdan keyin alert/modal o'rniga qisqa toast: Oshxonaga yuborildi
-      if (typeof addNotification === 'function') {
-        addNotification({
-          title: "Oshxona",
-          message: "Oshxonaga yuborildi",
-          type: "info",
-        });
-      }
+      showToast("Oshxonaga yuborildi", "info", "Oshxona");
 
       setKitchenSendSuccess(true);
       setTimeout(() => setKitchenSendSuccess(false), 4000);
@@ -756,13 +835,7 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
               // Hammasi done bo'lsa toast: Chek chiqdi
               if (allDone) {
                 clearInterval(pollTimer);
-                if (typeof addNotification === 'function') {
-                  addNotification({
-                    title: "Chop etildi",
-                    message: "Chek chiqdi",
-                    type: "success",
-                  });
-                }
+                showToast("Chek chiqdi", "success", "Chop etildi");
                 return;
               }
 
@@ -780,13 +853,7 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
                   )
                 ).join(', ') || 'oshxona printeri';
 
-                if (typeof addNotification === 'function') {
-                  addNotification({
-                    title: "Kutilmoqda",
-                    message: `Chek hali chiqmadi (${pNames}), tizim qayta urinyapti`,
-                    type: "warning",
-                  });
-                }
+                showToast(`Chek hali chiqmadi (${pNames}), tizim qayta urinyapti`, "warning", "Kutilmoqda");
               }
             }
 
@@ -802,15 +869,7 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
         }, 1000);
       }
     } catch (err) {
-      if (typeof addNotification === 'function') {
-        addNotification({
-          title: "Xatolik",
-          message: err.message || 'Oshxonaga yuborishda xatolik yuz berdi',
-          type: "urgent",
-        });
-      } else {
-        alert(err.message || 'Oshxonaga yuborishda xatolik yuz berdi');
-      }
+      showToast(err.message || 'Oshxonaga yuborishda xatolik yuz berdi', 'urgent');
     } finally {
       setSendingToKitchen(false);
     }
@@ -821,11 +880,11 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
   // Ofitsiantda bu tugma yo'q — chekni kassa (admin) chiqaradi.
   const handlePrintBill = async () => {
     if (!selectedTable) {
-      alert('Avval stolni tanlang');
+      showToast('Avval stolni tanlang', 'warning');
       return;
     }
     if (!activeOrder || !(activeOrder.items || []).length) {
-      alert("Bu stolda hali zakas yo'q");
+      showToast("Bu stolda hali zakas yo'q", 'warning');
       return;
     }
     setPrintingBill(true);
@@ -840,15 +899,15 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
       // Server `success` maydonida printerdan chiqdi-chiqmaganini aytadi.
       if (res.success === false) {
         setReceiptModalOpen(true);
-        alert(
-          `${res.message || 'Chek printerdan chiqmadi'}\n\n` +
-          `Chek ekranda ochildi — "Chop etish" tugmasi orqali chiqarishingiz mumkin.`
+        showToast(
+          `${res.message || 'Chek printerdan chiqmadi'}. Chek ekranda ochildi — "Chop etish" tugmasi orqali chiqarishingiz mumkin.`,
+          'warning'
         );
       } else {
-        alert(`✅ Chek ${res.printer_name || 'kassa printeri'} ga yuborildi`);
+        showToast(`Chek ${res.printer_name || 'kassa printeri'} ga yuborildi`, 'success');
       }
     } catch (err) {
-      alert(err.message || 'Chek chiqarishda xatolik');
+      showToast(err.message || 'Chek chiqarishda xatolik', 'urgent');
     } finally {
       setPrintingBill(false);
     }
@@ -860,7 +919,7 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
       await api.post(`/orders/calls/${callId}/resolve`, {});
       setCalls((prev) => prev.filter((c) => c.id !== callId));
     } catch (err) {
-      alert(err.message || 'Xatolik');
+      showToast(err.message || 'Xatolik', 'urgent');
     }
   };
 
@@ -871,7 +930,7 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
       setReadyOrders((prev) => prev.filter((o) => o.id !== orderId));
       confetti({ particleCount: 50, spread: 50 });
     } catch (err) {
-      alert(err.message || 'Xatolik');
+      showToast(err.message || 'Xatolik', 'urgent');
     }
   };
 
@@ -890,6 +949,31 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
 
   return (
     <div className="h-[calc(100vh-64px)] max-h-[calc(100vh-64px)] overflow-hidden bg-slate-950 text-slate-100 flex flex-col font-sans select-none">
+      {/* 6. Ulanish yo'q bo'lsa tepada sariq banner: Aloqa yo'q, qayta ulanmoqda */}
+      {connected === false && (
+        <div className="bg-amber-500/95 text-slate-950 font-bold px-4 py-2 text-center text-xs sm:text-sm flex items-center justify-center gap-2 shadow-md shrink-0 z-50">
+          <RefreshCw className="w-4 h-4 animate-spin text-slate-950 shrink-0" />
+          <span>Aloqa yo'q, qayta ulanmoqda...</span>
+        </div>
+      )}
+
+      {/* 3. Ma'lumot yuklanmadi qizil blok + Qayta urinish tugmasi */}
+      {loadError && (
+        <div className="bg-red-950/95 border-b border-red-700 text-red-200 px-4 py-2.5 flex items-center justify-between gap-4 shadow-lg shrink-0 z-40">
+          <div className="flex items-center gap-2 text-xs sm:text-sm font-semibold">
+            <AlertCircle className="w-4 h-4 text-red-400 shrink-0" />
+            <span>Ma'lumot yuklanmadi: {loadError}</span>
+          </div>
+          <button
+            onClick={() => loadInitialData()}
+            className="flex items-center gap-1.5 px-3 py-1 bg-red-600 hover:bg-red-500 text-white rounded-lg text-xs font-bold transition-all shrink-0 active:scale-95 shadow"
+          >
+            <RefreshCw className="w-3.5 h-3.5" />
+            <span>Qayta urinish</span>
+          </button>
+        </div>
+      )}
+
       {/* Printer statusi (navbat to'lib qolsa yoki printer ishlamasa ogohlantirish) */}
       <PrinterStatusBanner />
       {/* ─── Yuqori panel ──────────────────────────────────────────── */}
