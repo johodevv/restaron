@@ -35,7 +35,7 @@ async def lifespan(app: FastAPI):
     """Startup va shutdown hodisalari"""
     # Jadvallarni yaratish
     await create_tables()
-    if os.getenv("DISABLE_AUTO_SEED", "false").lower() not in ("1", "true", "yes"):
+    if os.getenv("AUTO_SEED", "false").lower() in ("1", "true", "yes"):
         try:
             from seed import seed
             await seed()
