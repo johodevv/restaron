@@ -301,10 +301,23 @@ if os.path.exists(frontend_dist) and os.path.exists(os.path.join(frontend_dist, 
         )
         if any(full_path.startswith(p) for p in BACKEND_PREFIXES):
             raise HTTPException(status_code=404, detail="Not found")
-        file_path = os.path.join(frontend_dist, full_path)
-        if os.path.exists(file_path) and os.path.isfile(file_path):
-            return FileResponse(file_path)
-        return FileResponse(os.path.join(frontend_dist, "index.html"))
+
+        if "\x00" in full_path:
+            raise HTTPException(status_code=404, detail="Not found")
+
+        root = os.path.realpath(frontend_dist)
+        target = os.path.realpath(os.path.join(root, full_path))
+        index_file = os.path.join(root, "index.html")
+
+        try:
+            if os.path.commonpath([root, target]) != root:
+                return FileResponse(index_file)
+        except ValueError:
+            return FileResponse(index_file)
+
+        if os.path.isfile(target):
+            return FileResponse(target)
+        return FileResponse(index_file)
 else:
     @app.get("/", tags=["🏠 Asosiy"])
     async def root():
