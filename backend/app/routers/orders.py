@@ -752,16 +752,26 @@ async def waiter_create_order(
         norm_order_type = "dine_in"
 
     if table_id:
+        # 1. table_id bor bo'lsa, funksiya boshida stol qatorini qulflash (race condition oldini olish)
+        await db.execute(update(Table).where(Table.id == table_id).values(status=Table.status))
+
         result = await db.execute(select(Table).where(Table.id == table_id))
         table = result.scalar_one_or_none()
         if not table:
             raise HTTPException(status_code=404, detail="Stol topilmadi")
+
+        # 4. Stol va foydalanuvchi restorani mosligini tekshirish (developer istisno)
+        user_role = current_user.role.value if hasattr(current_user.role, "value") else str(current_user.role)
+        if user_role != "developer" and table.restaurant_id != current_user.restaurant_id:
+            raise HTTPException(status_code=403, detail="Ushbu stol boshqa restoranga tegishli")
+
         table.status = TableStatus.OCCUPIED
         if not hall_name:
             hall_name = table.room or f"Zal"
 
         # Stolda allaqachon to'lanmagan faol buyurtma mavjud bo'lsa,
         # yangi dublikat hisob ochmasdan mavjud buyurtmaga biriktiramiz:
+        # 2. .scalars().first() ishlatamiz (bir nechta bo'lsa ham 500 bermaslik uchun)
         existing_order_id_res = await db.execute(
             select(Order.id)
             .where(
@@ -777,7 +787,7 @@ async def waiter_create_order(
             )
             .order_by(Order.created_at.desc())
         )
-        existing_order_id = existing_order_id_res.scalar_one_or_none()
+        existing_order_id = existing_order_id_res.scalars().first()
         if existing_order_id:
             if payload.items:
                 return await waiter_add_items(
@@ -801,8 +811,11 @@ async def waiter_create_order(
             else:
                 hall_name = "Kassa"
 
+    # 4. Buyurtma restaurant_id sini payload'dan emas, stoldan (yoki current_user dan) olish
+    restaurant_id = table.restaurant_id if table else (current_user.restaurant_id or payload.restaurant_id or 1)
+
     # Restoran sozlamalarini olish (xizmat foizi)
-    set_res = await db.execute(select(RestaurantSettings).where(RestaurantSettings.restaurant_id == payload.restaurant_id))
+    set_res = await db.execute(select(RestaurantSettings).where(RestaurantSettings.restaurant_id == restaurant_id))
     settings = set_res.scalar_one_or_none()
     service_fee_pct = settings.service_fee_percent if settings else 12.0
 
@@ -814,7 +827,7 @@ async def waiter_create_order(
 
     order = Order(
         order_number=tmp_order_number,
-        restaurant_id=payload.restaurant_id,
+        restaurant_id=restaurant_id,
         table_id=resolved_table_id,
         waiter_id=current_user.id,
         order_type=norm_order_type,
@@ -828,9 +841,45 @@ async def waiter_create_order(
         status=OrderStatus.PENDING,
     )
     db.add(order)
-    await db.flush()
+    # 3. Order qo'shilgandagi flush IntegrityError bersa (unikal indeks poygasi):
+    # rollback, mavjud ochiq buyurtmani qayta top va taomlarni unga waiter_add_items orqali qo'sh
+    try:
+        await db.flush()
+    except IntegrityError:
+        await db.rollback()
+        if resolved_table_id:
+            existing_order_id_res = await db.execute(
+                select(Order.id)
+                .where(
+                    Order.table_id == resolved_table_id,
+                    Order.is_paid == False,
+                    Order.status.in_([
+                        OrderStatus.PENDING,
+                        OrderStatus.CONFIRMED,
+                        OrderStatus.PREPARING,
+                        OrderStatus.READY,
+                        OrderStatus.SERVED,
+                    ]),
+                )
+                .order_by(Order.created_at.desc())
+            )
+            existing_order_id = existing_order_id_res.scalars().first()
+            if existing_order_id:
+                if payload.items:
+                    return await waiter_add_items(
+                        order_id=existing_order_id,
+                        payload=WaiterAddItemsRequest(items=payload.items, send_to_kitchen_immediately=False),
+                        db=db,
+                        current_user=current_user,
+                    )
+                else:
+                    loaded = await load_order_full(db, existing_order_id)
+                    if not loaded:
+                        raise HTTPException(status_code=404, detail="Buyurtma topilmadi")
+                    return build_order_response(loaded)
+        raise
 
-    order_number = f"#R{payload.restaurant_id}-{order.id:04d}"
+    order_number = f"#R{restaurant_id}-{order.id:04d}"
     order.order_number = order_number
 
     # Barcha taomlarni bitta SQL so'rovda olish (N+1 Query optimizatsiyasi 1.5.1)
@@ -893,8 +942,17 @@ async def waiter_create_order(
         order.waiter_share_amount = subtotal * (current_user.commission_percent / 100.0)
 
     await db.flush()
+    # 6. new_order WebSocket xabari await db.commit() DAN KEYIN yuborilsin
+    await db.commit()
+
+    full_order = await load_order_full(db, order.id)
+    if not full_order:
+        full_order = order
 
     waiter_name = current_user.full_name or current_user.username
+    order_resp = build_order_response(full_order, table.number if table else None, waiter_name)
+    order_dict = order_resp.model_dump() if hasattr(order_resp, "model_dump") else order_resp.dict()
+
     ws_payload = {
         "type": "new_order",
         "order_id": order.id,
@@ -910,14 +968,11 @@ async def waiter_create_order(
         "total": order.total,
         "items": items_details,
         "created_at": datetime.now(timezone.utc).isoformat(),
+        "order": order_dict,
     }
-    await manager.broadcast_to_roles(payload.restaurant_id, ["waiter", "admin", "chef"], ws_payload)
+    await manager.broadcast_to_roles(restaurant_id, ["waiter", "admin", "chef"], ws_payload)
 
-    await db.commit()
-    full_order = await load_order_full(db, order.id)
-    if not full_order:
-        full_order = order
-    return build_order_response(full_order, table.number if table else None, waiter_name)
+    return order_resp
 
 
 # ─── Ochiq stolga taom qo'shish (Dozakaz) ───────────────────────
@@ -957,7 +1012,7 @@ async def waiter_add_items(
     for item_data in payload.items:
         menu_item = menu_items_map.get(item_data.menu_item_id)
         if not menu_item:
-            continue
+            raise HTTPException(status_code=404, detail="Taom topilmadi")
 
         # Stop-list tekshiruvi (1.5.2)
         if not menu_item.is_available or menu_item.is_stop_list:
