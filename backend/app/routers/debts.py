@@ -30,7 +30,7 @@ async def list_debts(
     limit: int = Query(50, le=200),
     offset: int = 0,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role("admin", "waiter", "developer")),
+    current_user: User = Depends(require_role("admin", "cashier", "waiter", "developer")),
 ):
     """Qarzlar ro'yxatini filtrlash va qidirish bilan olish"""
     query = select(Debt).where(Debt.restaurant_id == restaurant_id)
@@ -84,14 +84,35 @@ async def get_debt_stats(
 async def create_debt(
     payload: DebtCreate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role("admin", "waiter", "developer")),
+    current_user: User = Depends(require_role("admin", "cashier", "developer")),
 ):
-    """Yangi qarzdor qaydini yaratish"""
+    """Yangi qarzdor qaydini yaratish (faqat admin, cashier, developer)"""
+    c_name = (payload.customer_name or "").strip()
+    c_phone = (payload.customer_phone or "").strip()
+
+    invalid_names = {"noma'lum mijoz", "nomalum mijoz", "noma'lum", "nomalum", "unknown", "none"}
+    if not c_name or c_name.lower() in invalid_names:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Mijoz ismi kiritilishi shart ('Noma'lum Mijoz' qabul qilinmaydi)",
+        )
+
+    if not c_phone or len(c_phone) < 7:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Mijoz telefon raqami kiritilishi shart",
+        )
+
+    restaurant_id = payload.restaurant_id
+    current_role = current_user.role.value if hasattr(current_user.role, "value") else str(current_user.role)
+    if current_role != "developer" and current_user.restaurant_id:
+        restaurant_id = current_user.restaurant_id
+
     debt = Debt(
-        restaurant_id=payload.restaurant_id,
+        restaurant_id=restaurant_id,
         order_id=payload.order_id,
-        customer_name=payload.customer_name,
-        customer_phone=payload.customer_phone,
+        customer_name=c_name,
+        customer_phone=c_phone,
         amount=payload.amount,
         paid_amount=0.0,
         remaining_amount=payload.amount,
@@ -109,7 +130,7 @@ async def create_debt(
 async def get_debt(
     debt_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role("admin", "waiter", "developer")),
+    current_user: User = Depends(require_role("admin", "cashier", "waiter", "developer")),
 ):
     result = await db.execute(select(Debt).where(Debt.id == debt_id))
     debt = result.scalar_one_or_none()
@@ -123,9 +144,9 @@ async def pay_debt(
     debt_id: int,
     payload: DebtPayment,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role("admin", "waiter", "developer")),
+    current_user: User = Depends(require_role("admin", "cashier", "developer")),
 ):
-    """Qarzga to'lov kiritish"""
+    """Qarzga to'lov kiritish (faqat admin, cashier, developer)"""
     result = await db.execute(select(Debt).where(Debt.id == debt_id))
     debt = result.scalar_one_or_none()
     if not debt:

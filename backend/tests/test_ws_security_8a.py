@@ -57,6 +57,8 @@ async def setup_test_data():
                 status=TableStatus.AVAILABLE,
             )
             session.add(t2)
+        else:
+            t2.restaurant_id = 2
 
         # Create Waiter User in Rest 1
         res_u = await session.execute(select(User).where(User.username == "waiter_ws_test"))

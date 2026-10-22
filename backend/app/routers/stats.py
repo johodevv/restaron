@@ -1,6 +1,6 @@
 import os
 import socket
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, and_
 from datetime import datetime, timedelta, timezone
@@ -327,6 +327,25 @@ async def get_payments_report(
             dt_end = dt_start + timedelta(days=1)
     else:
         dt_end = dt_start + timedelta(days=1)
+
+    if dt_end < dt_start:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Tugash sanasi boshlanish sanasidan oldin bo'lishi mumkin emas",
+        )
+
+    if (dt_end - dt_start).days > 366:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Sana oralig'i 366 kundan oshmasligi kerak",
+        )
+
+    current_role = current_user.role.value if hasattr(current_user.role, "value") else str(current_user.role)
+    if current_role == "waiter":
+        waiter_id = current_user.id
+
+    if current_role != "developer" and current_user.restaurant_id:
+        restaurant_id = current_user.restaurant_id
 
     query = (
         select(Order)

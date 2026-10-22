@@ -2949,15 +2949,21 @@ async def get_table_active_orders(
 # ─── Buyurtmalar ro'yxati ─────────────────────────────────
 @router.get("/", response_model=List[OrderSummary], summary="Buyurtmalar ro'yxati (pagination bilan)")
 async def list_orders(
-    restaurant_id: int,
+    restaurant_id: Optional[int] = Query(None, description="Restoran ID (faqat developer uchun)"),
     status: Optional[OrderStatus] = None,
     table_id: Optional[int] = None,
     order_type: Optional[str] = None,
-    limit: int = Query(default=100, ge=1, le=500, description="Qaytariladigan buyurtmalar soni"),
+    limit: int = Query(default=100, ge=1, le=300, description="Qaytariladigan buyurtmalar soni"),
     offset: int = Query(default=0, ge=0, description="O'tkazib yuboriladigan buyurtmalar soni"),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role("admin", "waiter", "chef", "developer")),
+    current_user: User = Depends(require_role("admin", "cashier", "waiter", "chef", "developer")),
 ):
+    current_role = current_user.role.value if hasattr(current_user.role, "value") else str(current_user.role)
+    if current_role == "developer":
+        effective_restaurant_id = restaurant_id or current_user.restaurant_id
+    else:
+        effective_restaurant_id = current_user.restaurant_id or 1
+
     query = (
         select(Order)
         .options(
@@ -2965,8 +2971,10 @@ async def list_orders(
             selectinload(Order.waiter),
             selectinload(Order.items).selectinload(OrderItem.menu_item),
         )
-        .where(Order.restaurant_id == restaurant_id)
     )
+    if effective_restaurant_id is not None:
+        query = query.where(Order.restaurant_id == effective_restaurant_id)
+
 
     if status:
         query = query.where(Order.status == status)

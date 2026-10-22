@@ -1044,7 +1044,7 @@ async def set_table_service_fee(
     table_id: int,
     payload: TableServiceFeeRequest,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role("admin", "waiter", "developer", "cashier")),
+    current_user: User = Depends(require_role("admin", "cashier", "developer")),
 ):
     """Shu stolning OCHIQ hisobiga boshqa xizmat haqi foizini qo'yish.
 
@@ -1060,6 +1060,10 @@ async def set_table_service_fee(
     table = res.scalar_one_or_none()
     if not table:
         raise HTTPException(status_code=404, detail="Stol topilmadi")
+
+    current_role = current_user.role.value if hasattr(current_user.role, "value") else str(current_user.role)
+    if current_role != "developer" and current_user.restaurant_id and table.restaurant_id != current_user.restaurant_id:
+        raise HTTPException(status_code=403, detail="Bu stol sizning restoraningizga tegishli emas")
 
     orders_res = await db.execute(
         select(Order)
@@ -1077,6 +1081,7 @@ async def set_table_service_fee(
             detail=f"Stol #{table.number} da ochiq hisob yo'q — foizni o'zgartirib bo'lmaydi.",
         )
 
+    old_percent = orders[0].service_fee_percent if orders else None
     pct = round(float(payload.percent), 2)
     for o in orders:
         subtotal = sum((i.total_price or 0.0) for i in o.items)
@@ -1086,6 +1091,22 @@ async def set_table_service_fee(
         o.total = round(subtotal + o.service_fee_amount - (o.discount or 0.0), 2)
 
     await db.flush()
+
+    await log_audit_event(
+        db=db,
+        restaurant_id=table.restaurant_id,
+        action="service_fee_changed",
+        user=current_user,
+        entity_type="table",
+        entity_id=table.id,
+        details={
+            "table_number": table.number,
+            "old_percent": old_percent,
+            "new_percent": pct,
+            "orders_count": len(orders),
+        },
+    )
+
     await db.commit()
 
     total = round(sum((o.total or 0.0) for o in orders), 2)
