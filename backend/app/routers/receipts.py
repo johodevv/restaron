@@ -26,9 +26,10 @@ from app.schemas.receipt import (
 from app.core.printer_service import (
     scan_network_printers,
     format_kitchen_ticket, format_pre_check, format_shift_report,
-    get_installed_printers, async_print_to_windows_printer, DEFAULT_FONT_SIZE,
+    get_installed_printers, DEFAULT_FONT_SIZE,
     printer_options, receipt_title,
 )
+from app.core.printer_queue import enqueue_print_job, wake_printer_worker
 
 router = APIRouter(prefix="/receipts", tags=["🖨️ Cheklar Arxivi va Kassa Hisobotlari"])
 
@@ -315,7 +316,8 @@ async def codepage_test(
     sample = "АБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЪЫЬЭЮЯ"
 
     set_res = await db.execute(select(RestaurantSettings))
-    target = (payload.printer_name or getattr(st, "printer_customer_name", None) or "").strip()
+    st = set_res.scalar_one_or_none()
+    target = (payload.printer_name or (getattr(st, "printer_customer_name", None) if st else None) or "").strip()
     if not target:
         raise HTTPException(status_code=400, detail="Printer sozlanmagan: printer_name ko'rsatilmadi")
 
@@ -366,10 +368,40 @@ async def print_receipt_usb(
     if not r or not r.raw_text:
         raise HTTPException(status_code=404, detail="Chek matni topilmadi")
 
-    res = await async_print_to_windows_printer(r.raw_text, printer_name=printer_name)
-    if not res.get("success"):
-        raise HTTPException(status_code=500, detail=res.get("error", "Chop etishda xatolik"))
-    return res
+    set_res = await db.execute(
+        select(RestaurantSettings).where(RestaurantSettings.restaurant_id == r.restaurant_id)
+    )
+    settings = set_res.scalar_one_or_none()
+    popts = printer_options(settings)
+
+    target_printer = (printer_name or (getattr(settings, "printer_customer_name", None) if settings else None) or "XP-Q80A").strip()
+
+    ticket_type = "bill"
+    if r.receipt_type == "kitchen":
+        ticket_type = "kitchen"
+    elif r.receipt_type in ("x_report", "z_report"):
+        ticket_type = "kassa"
+
+    job = await enqueue_print_job(
+        db,
+        restaurant_id=r.restaurant_id,
+        order_id=r.order_id,
+        ticket_type=ticket_type,
+        printer_name=target_printer,
+        raw_text=r.raw_text,
+        options=popts,
+    )
+    await db.commit()
+    wake_printer_worker()
+
+    return {
+        "success": True,
+        "job_id": job.id,
+        "status": "queued",
+        "printer": target_printer,
+        "printer_name": target_printer,
+        "message": f"Chek {target_printer} printeri navbatiga qo'shildi",
+    }
 
 
 @router.get("/{receipt_id}/pdf", summary="Arxivlangan kassa chekining PDF faylini yuklab olish")
@@ -490,13 +522,30 @@ async def print_raw_usb(
             char_spacing=popts["char_spacing"],
         )
 
-    res = await async_print_to_windows_printer(
-        text, printer_name=payload.printer_name,
-        cut_paper=payload.cut_paper, **popts,
+    target_printer = (payload.printer_name or (getattr(st, "printer_customer_name", None) if st else None) or "XP-Q80A").strip()
+    job = await enqueue_print_job(
+        db,
+        restaurant_id=payload.restaurant_id,
+        order_id=None,
+        ticket_type="test",
+        printer_name=target_printer,
+        raw_text=text,
+        options={
+            **popts,
+            "cut_paper": payload.cut_paper,
+        },
     )
-    if not res.get("success"):
-        raise HTTPException(status_code=500, detail=res.get("error", "Chop etishda xatolik"))
-    return res
+    await db.commit()
+    wake_printer_worker()
+
+    return {
+        "success": True,
+        "job_id": job.id,
+        "status": "queued",
+        "printer": target_printer,
+        "printer_name": target_printer,
+        "message": f"Sinov cheki {target_printer} printeri navbatiga qo'shildi",
+    }
 
 
 # ─── Smena hisoboti (X-Report va Z-Report) ──────────────────────
@@ -769,17 +818,35 @@ async def create_shift_report(
     res.open_orders_count = open_orders_count
 
     # Agar USB orqali avtomatik chop etish so'ralgan bo'lsa
+    job = None
     if getattr(payload, "print_to_usb", False):
         try:
-            printer_name = getattr(settings, "printer_customer_name", None)
-            res.print_status = await async_print_to_windows_printer(
-                raw_text,
+            printer_name = (getattr(settings, "printer_customer_name", None) or "XP-Q80A").strip()
+            job = await enqueue_print_job(
+                db,
+                restaurant_id=restaurant_id,
+                order_id=None,
+                ticket_type="kassa",
                 printer_name=printer_name,
-                cut_paper=True,
-                **popts,
+                raw_text=raw_text,
+                options={
+                    **popts,
+                    "cut_paper": True,
+                },
             )
         except Exception as e:
             res.print_status = {"success": False, "error": str(e)}
+
+    await db.commit()
+    if job:
+        wake_printer_worker()
+        res.print_status = {
+            "success": True,
+            "job_id": job.id,
+            "status": "queued",
+            "printer": job.printer_name,
+            "printer_name": job.printer_name,
+        }
 
     return res
 
@@ -983,13 +1050,28 @@ async def print_shift_report_usb(
     settings = set_res.scalar_one_or_none()
     popts = printer_options(settings)
     printer_name = getattr(settings, "printer_customer_name", None)
+    target_printer = (printer_name or "XP-Q80A").strip()
 
-    res = await async_print_to_windows_printer(
-        rec.raw_text,
-        printer_name=printer_name,
-        cut_paper=True,
-        **popts,
+    job = await enqueue_print_job(
+        db,
+        restaurant_id=report.restaurant_id,
+        order_id=None,
+        ticket_type="kassa",
+        printer_name=target_printer,
+        raw_text=rec.raw_text,
+        options={
+            **popts,
+            "cut_paper": True,
+        },
     )
-    if not res.get("success"):
-        raise HTTPException(status_code=500, detail=res.get("error", "Chop etishda xatolik"))
-    return res
+    await db.commit()
+    wake_printer_worker()
+
+    return {
+        "success": True,
+        "job_id": job.id,
+        "status": "queued",
+        "printer": target_printer,
+        "printer_name": target_printer,
+        "message": f"Smena hisoboti {target_printer} printeri navbatiga qo'shildi",
+    }

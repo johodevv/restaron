@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, and_, update, text
 from sqlalchemy.orm import selectinload
 from sqlalchemy.exc import IntegrityError
-from typing import List, Optional, Any
+from typing import List, Optional, Any, Set
 
 from app.core.database import get_db
 from app.core.rate_limit import RateLimiter
@@ -34,11 +34,15 @@ from app.schemas.order import (
     OrderNoteUpdate, OrderCheckoutRequest
 )
 from app.core.printer_service import (
-    format_kitchen_ticket, format_pre_check, async_print_to_windows_printer,
+    format_kitchen_ticket, format_pre_check,
     DEFAULT_FONT_SIZE, printer_options, receipt_title,
 )
 import logging
-from app.core.printer_queue import print_with_retry, printer_queue
+from app.core.printer_queue import (
+    enqueue_print_job,
+    wake_printer_worker,
+)
+
 from app.core.sms_telegram import send_telegram_alert
 from app.websockets.manager import manager
 from app.core.idempotency import IdempotencyHandler, get_idempotency_handler
@@ -47,6 +51,23 @@ router = APIRouter(prefix="/orders", tags=["📋 Buyurtmalar"])
 
 UZ_TZ = timezone(timedelta(hours=5))
 logger = logging.getLogger("orders")
+
+# ─── Fon vazifalarini kuzatish (Garbage collection'dan himoya) ───────
+_bg_tasks: Set[asyncio.Task] = set()
+
+def create_bg_task(coro) -> asyncio.Task:
+    task = asyncio.create_task(coro)
+    _bg_tasks.add(task)
+    def _done_callback(t: asyncio.Task):
+        _bg_tasks.discard(t)
+        try:
+            if not t.cancelled() and t.exception():
+                logger.error(f"Fon vazifasida xatolik: {t.exception()}", exc_info=t.exception())
+        except Exception as e:
+            logger.error(f"Fon vazifasi istisnosini tekshirishda xatolik: {e}")
+    task.add_done_callback(_done_callback)
+    return task
+
 
 KITCHEN_STATION_MAP = {
     # Hot kitchen (1-oshxona: qozon taomlari)
@@ -93,7 +114,14 @@ def resolve_kitchen_station(st_raw: Optional[str]) -> str:
     return station
 
 
-async def _send_cancellation_receipt(order: Order, menu_item: Optional[MenuItem], cancelled_qty: int, waiter_name: str, settings: Optional[RestaurantSettings]):
+async def _send_cancellation_receipt(
+    db: AsyncSession,
+    order: Order,
+    menu_item: Optional[MenuItem],
+    cancelled_qty: int,
+    waiter_name: str,
+    settings: Optional[RestaurantSettings],
+):
     try:
         dish_name = getattr(menu_item, "name_cyrillic", None) or (menu_item.name if menu_item else "Таом")
         st = getattr(menu_item, "kitchen_station", "hot_kitchen") if menu_item else "hot_kitchen"
@@ -121,10 +149,19 @@ async def _send_cancellation_receipt(order: Order, menu_item: Optional[MenuItem]
             f"Vaqt: {now_str}\n"
             "--------------------------------\n\n\n"
         )
-        popts = printer_options(settings) if settings else {"codepage": "cp866", "font_size": 1, "char_spacing": 0, "paper_width": 80}
-        await print_with_retry(otmena_text, printer_name=station_printer, **popts)
+        popts = printer_options(settings) if settings else {"codepage": 17, "font_size": "katta", "char_spacing": 0, "paper_width": 80}
+        await enqueue_print_job(
+            db,
+            restaurant_id=order.restaurant_id,
+            order_id=order.id,
+            ticket_type="cancel",
+            printer_name=station_printer,
+            raw_text=otmena_text,
+            options=popts,
+        )
     except Exception as e:
-        logger.warning(f"Otmena chekini chop etishda xatolik: {e}")
+        logger.warning(f"Otmena chekini navbatga qo'yishda xatolik: {e}")
+
 
 
 def generate_order_number(restaurant_id: int, count: int) -> str:
@@ -1236,7 +1273,7 @@ async def update_item_quantity(
         set_res = await db.execute(select(RestaurantSettings).where(RestaurantSettings.restaurant_id == order.restaurant_id))
         settings = set_res.scalar_one_or_none()
         waiter_name = (order.waiter.full_name or order.waiter.username) if order.waiter else (current_user.full_name or current_user.username)
-        asyncio.create_task(_send_cancellation_receipt(order, order_item.menu_item, cancelled_qty, waiter_name, settings))
+        await _send_cancellation_receipt(db, order, order_item.menu_item, cancelled_qty, waiter_name, settings)
         order_item.sent_quantity = payload.quantity
 
     order_item.quantity = payload.quantity
@@ -1251,6 +1288,8 @@ async def update_item_quantity(
     await recalc_order_totals(db, order)
     await db.flush()
     await db.commit()
+    wake_printer_worker()
+
 
     full_order = await load_order_full(db, order_id)
     if not full_order:
@@ -1350,7 +1389,7 @@ async def update_item_delta(
             set_res = await db.execute(select(RestaurantSettings).where(RestaurantSettings.restaurant_id == order.restaurant_id))
             settings = set_res.scalar_one_or_none()
             waiter_name = (order.waiter.full_name or order.waiter.username) if order.waiter else (current_user.full_name or current_user.username)
-            asyncio.create_task(_send_cancellation_receipt(order, order_item.menu_item, cancelled_qty, waiter_name, settings))
+            await _send_cancellation_receipt(db, order, order_item.menu_item, cancelled_qty, waiter_name, settings)
 
         if order.items:
             order.items = [i for i in order.items if i.id != item_id]
@@ -1404,7 +1443,7 @@ async def update_item_delta(
             set_res = await db.execute(select(RestaurantSettings).where(RestaurantSettings.restaurant_id == order.restaurant_id))
             settings = set_res.scalar_one_or_none()
             waiter_name = (order.waiter.full_name or order.waiter.username) if order.waiter else (current_user.full_name or current_user.username)
-            asyncio.create_task(_send_cancellation_receipt(order, order_item.menu_item, cancelled_qty, waiter_name, settings))
+            await _send_cancellation_receipt(db, order, order_item.menu_item, cancelled_qty, waiter_name, settings)
             order_item.sent_quantity = new_quantity
 
         order_item.quantity = new_quantity
@@ -1420,6 +1459,8 @@ async def update_item_delta(
     await db.flush()
     # 4. Broadcast await db.commit() dan keyin bo'lsin
     await db.commit()
+    wake_printer_worker()
+
 
     full_order = await load_order_full(db, order_id) or order
     resp = build_order_response(full_order)
@@ -1638,7 +1679,7 @@ async def delete_order_item(
         set_res = await db.execute(select(RestaurantSettings).where(RestaurantSettings.restaurant_id == order.restaurant_id))
         settings = set_res.scalar_one_or_none()
         waiter_name = (order.waiter.full_name or order.waiter.username) if order.waiter else (current_user.full_name or current_user.username)
-        asyncio.create_task(_send_cancellation_receipt(order, order_item.menu_item, cancelled_qty, waiter_name, settings))
+        await _send_cancellation_receipt(db, order, order_item.menu_item, cancelled_qty, waiter_name, settings)
 
     if order.items:
         order.items = [i for i in order.items if i.id != item_id]
@@ -1657,6 +1698,8 @@ async def delete_order_item(
     await recalc_order_totals(db, order)
     await db.flush()
     await db.commit()
+    wake_printer_worker()
+
 
     full_order = await load_order_full(db, order_id)
     if not full_order:
@@ -1791,25 +1834,32 @@ async def print_order_bill(
         footer_message=getattr(settings, "receipt_footer", None) if settings else "Tashrifingiz uchun rahmat!",
     )
 
-    print_status = False
-    print_error = None
-    if getattr(settings, "auto_print_customer_bill", True):
-        try:
-            p_res = await print_with_retry(bill_text, printer_name=cust_printer, **popts)
-            print_status = p_res.get("success", False)
-            if not print_status:
-                print_error = p_res.get("error") or p_res.get("warning")
-        except Exception as e:
-            print_error = str(e)
+    job = None
+    if getattr(settings, "auto_print_customer_bill", True) and cust_printer:
+        job = await enqueue_print_job(
+            db,
+            restaurant_id=order.restaurant_id,
+            order_id=order.id,
+            ticket_type="bill",
+            printer_name=cust_printer,
+            raw_text=bill_text,
+            options=popts,
+        )
+        await db.commit()
+        wake_printer_worker()
 
     return {
         "success": True,
         "order_id": order.id,
         "order_number": order.order_number,
         "raw_text": bill_text,
-        "printed": print_status,
-        "print_error": print_error,
+        "job_id": job.id if job else None,
+        "status": "queued" if job else "skipped",
+        "printed": False,
+        "queued": True if job else False,
+        "print_error": None if (job or not getattr(settings, "auto_print_customer_bill", True)) else "Printer sozlanmagan",
     }
+
 
 
 # ─── Oshxonaga yuborish (На кухню — Begunok) ───────────────────
@@ -2000,9 +2050,6 @@ async def send_to_kitchen(
             "ticket_text": ticket_text,
         })
 
-    # 2. sent_quantity belgilash va ReceiptArchive yozuvlari commit qilinsin, KEYIN chop etish:
-    await db.commit()
-
     generated_tickets = []
     for item_data in prepared_tickets:
         st_key = item_data["station"]
@@ -2011,33 +2058,23 @@ async def send_to_kitchen(
         st_items = item_data["items"]
         ticket_text = item_data["ticket_text"]
 
-        print_status = False
+        job = None
         print_error = None
-        is_queued = False
 
         if not st_printer:
             print_error = f"Printer sozlanmagan: {st_title}"
             logger.warning(f"send_to_kitchen: {print_error} (order_id={order.id})")
         elif auto_print:
-            try:
-                p_res = await print_with_retry(
-                    ticket_text, printer_name=st_printer, **popts
-                )
-                print_status = p_res.get("success", False)
-                is_queued = bool(p_res.get("queued"))
-                if is_queued:
-                    print_error = p_res.get("warning", "Printerga ulanib bo'lmadi (navbatga olindi)")
-                elif not print_status:
-                    print_error = p_res.get("error", "Chop etishda xatolik")
-            except Exception as e:
-                try:
-                    printer_queue.enqueue(
-                        ticket_text, printer_name=st_printer, **popts
-                    )
-                    is_queued = True
-                    print_error = f"{str(e)} (navbatga qo'yildi)"
-                except Exception:
-                    print_error = f"Chop etish xatosi: {str(e)}"
+            t_type = "bar" if st_key == "bar" else "kitchen"
+            job = await enqueue_print_job(
+                db,
+                restaurant_id=order.restaurant_id,
+                order_id=order.id,
+                ticket_type=t_type,
+                printer_name=st_printer,
+                raw_text=ticket_text,
+                options=popts,
+            )
         else:
             print_error = "Avtomatik chop etish sozlamalarda o'chirilgan"
 
@@ -2047,10 +2084,17 @@ async def send_to_kitchen(
             "printer_name": st_printer,
             "items": st_items,
             "raw_text": ticket_text,
-            "printed": print_status,
-            "queued": is_queued,
+            "job_id": job.id if job else None,
+            "status": "queued" if job else "skipped",
+            "printed": False,
+            "queued": True if job is not None else False,
             "print_error": print_error,
         })
+
+    # sent_quantity belgilash, ReceiptArchive va print_jobs yozuvlari BIR tranzaksiyada commit qilinadi:
+    await db.commit()
+    wake_printer_worker()
+
 
     main_raw_text = "\n------------------------------------------\n".join(combined_texts) if combined_texts else ""
 
@@ -2403,18 +2447,24 @@ async def checkout_order(
         details=audit_details,
     )
 
-    # ─── Tranzaksiyani commit qilish (printer yoki boshqa xizmatlar tufayli baza qulflanib qolmasligi uchun) ───
-    await db.commit()
-
     if getattr(settings, "auto_print_customer_bill", True):
         cust_printer = (getattr(settings, "printer_customer_name", None) or "").strip()
         if cust_printer:
-            try:
-                await print_with_retry(bill_text, printer_name=cust_printer, **popts)
-            except Exception:
-                printer_queue.enqueue(bill_text, printer_name=cust_printer, **popts)
+            await enqueue_print_job(
+                db,
+                restaurant_id=order.restaurant_id,
+                order_id=order.id,
+                ticket_type="kassa",
+                printer_name=cust_printer,
+                raw_text=bill_text,
+                options=popts,
+            )
         else:
-            logger.warning("checkout_order: Mijoz kassa cheki chop etilmadi — printer sozlanmagan (printer_customer_name)")
+            logger.warning("checkout_order: Mijoz kassa cheki navbatga qo'yilmadi — printer sozlanmagan (printer_customer_name)")
+
+    # ─── Tranzaksiyani commit qilish (barcha o'zgarishlar va chop etish navbati BIR tranzaksiyada) ───
+    await db.commit()
+    wake_printer_worker()
 
     # Faqat kassa cheklari (checkout / final bill) uchun PDF arxiv saqlash (commit'dan keyin, non-blocking)
     try:
@@ -2446,10 +2496,11 @@ async def checkout_order(
             "wifi_pass": settings.receipt_wifi_pass if settings else None,
             "created_at": order.created_at,
         }
-        asyncio.create_task(async_save_checkout_receipt_pdf(pdf_payload))
+        create_bg_task(async_save_checkout_receipt_pdf(pdf_payload))
     except Exception as exc:
         import logging
         logging.getLogger("orders").warning(f"Kassa PDF chekini arxivlashda xatolik: {exc}")
+
 
     # WebSocket xabarlari (commit'dan keyin)
     status_lbl = f"Stol #{order.table.number}" if order.table else f"Buyurtma {order.order_number}"
@@ -2595,7 +2646,8 @@ async def call_waiter(payload: CallWaiterRequest, db: AsyncSession = Depends(get
             f"💬 <b>Izoh:</b> {payload.note or 'Yordam kerak'}\n"
             f"⏰ <b>Vaqt:</b> {datetime.now().strftime('%H:%M')}"
         )
-        asyncio.create_task(send_telegram_alert(settings.telegram_bot_token, settings.telegram_chat_id, tg_text))
+        create_bg_task(send_telegram_alert(settings.telegram_bot_token, settings.telegram_chat_id, tg_text))
+
 
     # Mijozga qabul qilinganligi xabari
     await manager.broadcast_to_table(
@@ -3265,9 +3317,7 @@ async def update_order_status(
             settings = set_res.scalar_one_or_none()
             waiter_name = (order.waiter.full_name or order.waiter.username) if order.waiter else (current_user.full_name or current_user.username)
             for item in sent_items:
-                asyncio.create_task(
-                    _send_cancellation_receipt(order, item.menu_item, item.sent_quantity, waiter_name, settings)
-                )
+                await _send_cancellation_receipt(db, order, item.menu_item, item.sent_quantity, waiter_name, settings)
 
         from app.core.audit import log_audit_event
         await log_audit_event(
@@ -3309,6 +3359,9 @@ async def update_order_status(
     )
 
     await db.flush()
+    await db.commit()
+    wake_printer_worker()
+
 
     # WebSocket orqali status yangilanishini tarqatish
     await manager.broadcast_to_restaurant(

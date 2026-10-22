@@ -26,10 +26,11 @@ from app.models.order import Order, OrderItem, OrderStatus, CallStatus
 from app.models.restaurant import Restaurant, RestaurantSettings
 from app.models.receipt import ReceiptArchive
 from app.core.printer_service import (
-    format_pre_check, async_print_to_windows_printer, DEFAULT_FONT_SIZE,
+    format_pre_check, DEFAULT_FONT_SIZE,
     printer_options, receipt_title,
 )
-from app.core.printer_queue import print_with_retry
+from app.core.printer_queue import enqueue_print_job, wake_printer_worker
+
 from app.schemas.table import TableCreate, TableUpdate, TableResponse, TablePublic, TableReserveRequest
 from app.schemas.order import TableBillResponse, BillItemSummary
 from app.websockets.manager import manager
@@ -1182,9 +1183,6 @@ async def print_table_bill(
         char_spacing=popts["char_spacing"],
     )
 
-    # 1-Printer (USB yoki LAN IP) ga asinxron chop etish (retry queue bilan, non-blocking)
-    p_res = await print_with_retry(bill_text, printer_name=cust_printer, **popts)
-
     archive = ReceiptArchive(
         restaurant_id=table.restaurant_id,
         order_id=target_orders[0].id if target_orders else None,
@@ -1202,21 +1200,28 @@ async def print_table_bill(
         raw_text=bill_text,
     )
     db.add(archive)
-    await db.commit()
 
-    printed_ok = bool(p_res.get("success", False))
-    is_queued = bool(p_res.get("queued", False))
-    msg = (
-        f"Chek {cust_printer} printeriga yuborildi"
-        if printed_ok and not is_queued else
-        (p_res.get("warning") or f"Printerga ({cust_printer}) ulanib bo'lmadi, navbatga olindi")
-        if is_queued else
-        f"Printerga ({cust_printer}) yuborib bo'lmadi: {p_res.get('error') or 'xatolik'}. Chek matni ekranda ko'rsatildi."
+    target_order_id = target_orders[0].id if target_orders else None
+    job = await enqueue_print_job(
+        db,
+        restaurant_id=table.restaurant_id,
+        order_id=target_order_id,
+        ticket_type="bill",
+        printer_name=cust_printer,
+        raw_text=bill_text,
+        options=popts,
     )
+    await db.commit()
+    wake_printer_worker()
+
     return {
-        "success": printed_ok,
+        "success": True,
+        "job_id": job.id,
+        "status": "queued",
+        "printed": False,
+        "queued": True,
         "printer_name": cust_printer,
-        "message": msg,
+        "message": f"Chek {cust_printer} printeri navbatiga qo'shildi",
         "raw_text": bill_text,
         "total": grand_total,
     }
