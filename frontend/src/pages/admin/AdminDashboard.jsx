@@ -6,6 +6,7 @@ import { useWebSocket } from '../../context/WebSocketContext';
 import BillModal from '../../components/BillModal';
 import CheckoutModal from '../../components/CheckoutModal';
 import ThermalReceiptModal from '../../components/ThermalReceiptModal';
+import PrinterStatusBanner from '../../components/PrinterStatusBanner';
 import { DebtsTab } from './DebtsTab';
 import { ReceiptsArchiveTab } from './ReceiptsArchiveTab';
 import { PaymentsReportTab } from './PaymentsReportTab';
@@ -866,6 +867,9 @@ export const AdminDashboard = () => {
 
   return (
     <div className={`mx-auto px-2 sm:px-4 animate-fade-in ${tab === 'pos' ? 'w-full py-1 pb-1 space-y-2' : 'max-w-7xl py-6 pb-24 space-y-4'}`}>
+      {/* Printer statusi (navbat to'lib qolsa yoki printer ishlamasa ogohlantirish) */}
+      <PrinterStatusBanner />
+
       {/* Top Header — Faqat POS bo'lmagan sahifalarda chiqadi */}
       {tab !== 'pos' && (
         <div className="p-6 rounded-3xl glass-card border border-theme-border bg-gradient-to-r from-theme-surface via-theme-bg to-theme-surface flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-xl">

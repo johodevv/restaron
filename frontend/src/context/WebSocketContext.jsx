@@ -201,6 +201,7 @@ export const WebSocketProvider = ({ children, restaurantId = 1, tableId = null }
       value={{
         connected,
         notifications,
+        addNotification,
         removeNotification,
         lastEvent,
         addEventListener,

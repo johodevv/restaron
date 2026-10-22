@@ -16,6 +16,9 @@ export const ToastContainer = () => {
         if (n.type === 'urgent') {
           borderClass = 'border-red-500 shadow-lg shadow-red-500/20';
           bgIcon = <AlertCircle className="w-5 h-5 text-red-400 shrink-0" />;
+        } else if (n.type === 'warning') {
+          borderClass = 'border-amber-500 shadow-lg shadow-amber-500/20';
+          bgIcon = <AlertCircle className="w-5 h-5 text-amber-400 shrink-0" />;
         } else if (n.type === 'success') {
           borderClass = 'border-emerald-500 shadow-lg shadow-emerald-500/20';
           bgIcon = <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />;

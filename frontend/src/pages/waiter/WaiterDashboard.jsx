@@ -5,6 +5,7 @@ import { useAuth } from '../../context/AuthContext';
 import { useWebSocket } from '../../context/WebSocketContext';
 import { ThermalReceiptModal } from '../../components/ThermalReceiptModal';
 import CheckoutModal from '../../components/CheckoutModal';
+import PrinterStatusBanner from '../../components/PrinterStatusBanner';
 import confetti from 'canvas-confetti';
 import {
   UtensilsCrossed,
@@ -38,7 +39,7 @@ import {
 
 export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckout: propCanCheckout } = {}) => {
   const { user, isAdmin, isCashier, canCheckout: authCanCheckout } = useAuth();
-  const { addEventListener, playChime, connected } = useWebSocket();
+  const { addEventListener, playChime, connected, addNotification } = useWebSocket() || {};
   const restaurantId = user?.restaurant_id || 1;
 
   // Vakolatlarni qat'iy ajratish:
@@ -689,7 +690,15 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
   // begunok printerdan chiqmagan bo'lsa "qayta chiqarish" so'raladi.
   const handleSendToKitchen = async (reprint = false) => {
     if (!activeOrder || !activeOrder.items || activeOrder.items.length === 0) {
-      alert("Buyurtmada taomlar yo'q! Avval o'ng tomondan taom qo'shing.");
+      if (typeof addNotification === 'function') {
+        addNotification({
+          title: "Buyurtma bo'sh",
+          message: "Buyurtmada taomlar yo'q! Avval o'ng tomondan taom qo'shing.",
+          type: "warning",
+        });
+      } else {
+        alert("Buyurtmada taomlar yo'q! Avval o'ng tomondan taom qo'shing.");
+      }
       return;
     }
     setSendingToKitchen(true);
@@ -713,34 +722,95 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
         return;
       }
 
-      // Printerga chiqmagan begunoklar bormi?
-      const tickets = res.tickets || [];
-      const failed = tickets.filter((t) => !t.printed);
-
-      if (res.raw_text) {
-        setThermalReceiptText(res.raw_text);
-        setReceiptModalTitle(
-          `Oshxona Begunogi (${selectedTable?.room || 'Zal'} N#${selectedTable?.number || ''})`
-        );
-        // Printerdan chiqmagan bo'lsa -- chekni EKRANDA ko'rsatamiz, aks holda
-        // ofitsiant begunok chiqmaganini bilmay qoladi.
-        if (failed.length > 0) {
-          setReceiptModalOpen(true);
-          const sabab = failed[0].print_error || 'printer topilmadi';
-          alert(
-            `Begunok printerdan chiqmadi (${failed.map((t) => t.printer_name).join(', ')}).\n` +
-            `Sabab: ${sabab}\n\n` +
-            `Chek ekranda ochildi - "Chop etish" tugmasi orqali chiqarishingiz mumkin.`
-          );
-        }
+      // 1. Javobdan keyin alert/modal o'rniga qisqa toast: Oshxonaga yuborildi
+      if (typeof addNotification === 'function') {
+        addNotification({
+          title: "Oshxona",
+          message: "Oshxonaga yuborildi",
+          type: "info",
+        });
       }
+
       setKitchenSendSuccess(true);
       setTimeout(() => setKitchenSendSuccess(false), 4000);
       confetti({ particleCount: 75, spread: 70, origin: { y: 0.7 } });
       if (soundEnabled && playChime) playChime('success');
       await fetchTableActiveOrder(selectedTable);
+
+      // 2. tickets[].job_id lar bo'yicha GET /receipts/print-jobs?ids=... ni har 1s (max 15s) so'rab turish
+      const tickets = res.tickets || [];
+      const jobIds = tickets.map((t) => t.job_id).filter(Boolean);
+
+      if (jobIds.length > 0) {
+        let secondsPassed = 0;
+        let warnedPending = false;
+
+        const pollTimer = setInterval(async () => {
+          secondsPassed += 1;
+          try {
+            const jobs = await api.get(`/receipts/print-jobs?ids=${jobIds.join(',')}`);
+            if (Array.isArray(jobs) && jobs.length > 0) {
+              const allDone = jobs.every((j) => j.status === 'done');
+              const hasPending = jobs.some((j) => j.status === 'pending' || j.status === 'printing');
+
+              // Hammasi done bo'lsa toast: Chek chiqdi
+              if (allDone) {
+                clearInterval(pollTimer);
+                if (typeof addNotification === 'function') {
+                  addNotification({
+                    title: "Chop etildi",
+                    message: "Chek chiqdi",
+                    type: "success",
+                  });
+                }
+                return;
+              }
+
+              // 8 soniyadan keyin ham pending bo'lsa sariq xabar:
+              // Chek hali chiqmadi (printer nomi), tizim qayta urinyapti.
+              // Bu holatda 'Qayta chiqarish' tugmasini TAKLIF QILMA (ikki chek chiqib qoladi).
+              if (secondsPassed >= 8 && hasPending && !warnedPending) {
+                warnedPending = true;
+                const pNames = Array.from(
+                  new Set(
+                    jobs
+                      .filter((j) => j.status === 'pending' || j.status === 'printing')
+                      .map((j) => j.printer_name)
+                      .filter(Boolean)
+                  )
+                ).join(', ') || 'oshxona printeri';
+
+                if (typeof addNotification === 'function') {
+                  addNotification({
+                    title: "Kutilmoqda",
+                    message: `Chek hali chiqmadi (${pNames}), tizim qayta urinyapti`,
+                    type: "warning",
+                  });
+                }
+              }
+            }
+
+            if (secondsPassed >= 15) {
+              clearInterval(pollTimer);
+            }
+          } catch (pollErr) {
+            console.warn('Print jobs polling xatosi:', pollErr);
+            if (secondsPassed >= 15) {
+              clearInterval(pollTimer);
+            }
+          }
+        }, 1000);
+      }
     } catch (err) {
-      alert(err.message || 'Oshxonaga yuborishda xatolik yuz berdi');
+      if (typeof addNotification === 'function') {
+        addNotification({
+          title: "Xatolik",
+          message: err.message || 'Oshxonaga yuborishda xatolik yuz berdi',
+          type: "urgent",
+        });
+      } else {
+        alert(err.message || 'Oshxonaga yuborishda xatolik yuz berdi');
+      }
     } finally {
       setSendingToKitchen(false);
     }
@@ -820,6 +890,8 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
 
   return (
     <div className="h-[calc(100vh-64px)] max-h-[calc(100vh-64px)] overflow-hidden bg-slate-950 text-slate-100 flex flex-col font-sans select-none">
+      {/* Printer statusi (navbat to'lib qolsa yoki printer ishlamasa ogohlantirish) */}
+      <PrinterStatusBanner />
       {/* ─── Yuqori panel ──────────────────────────────────────────── */}
       <header className="h-14 bg-emerald-950/80 border-b border-emerald-800/60 px-4 flex items-center justify-between shadow-lg backdrop-blur-md shrink-0">
         <div className="flex items-center gap-3">
