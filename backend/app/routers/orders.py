@@ -37,6 +37,7 @@ from app.core.printer_service import (
     format_kitchen_ticket, format_pre_check, async_print_to_windows_printer,
     DEFAULT_FONT_SIZE, printer_options, receipt_title,
 )
+import logging
 from app.core.printer_queue import print_with_retry, printer_queue
 from app.core.sms_telegram import send_telegram_alert
 from app.websockets.manager import manager
@@ -44,20 +45,69 @@ from app.websockets.manager import manager
 router = APIRouter(prefix="/orders", tags=["📋 Buyurtmalar"])
 
 UZ_TZ = timezone(timedelta(hours=5))
+logger = logging.getLogger("orders")
+
+KITCHEN_STATION_MAP = {
+    # Hot kitchen (1-oshxona: qozon taomlari)
+    "hot_kitchen": "hot_kitchen",
+    "hot": "hot_kitchen",
+    "kitchen1": "hot_kitchen",
+    "qozon": "hot_kitchen",
+    # Cold kitchen (2-oshxona: baliq, somsa, shashlik/mangal)
+    "cold_kitchen": "cold_kitchen",
+    "cold": "cold_kitchen",
+    "kitchen2": "cold_kitchen",
+    "somsa": "cold_kitchen",
+    "baliq": "cold_kitchen",
+    "mangal": "cold_kitchen",
+    "grill": "cold_kitchen",
+    "fish": "cold_kitchen",
+    # Bar (ichimliklar, choy, suv)
+    "bar": "bar",
+    "drink": "bar",
+    "drinks": "bar",
+    "ichimlik": "bar",
+    "ichimliklar": "bar",
+    "choyxona": "bar",
+    # Kassa (mijozga berish, USB printer)
+    "customer_only": "kassa",
+    "customer": "kassa",
+    "kassa": "kassa",
+    "bill_only": "kassa",
+    # Ikkala oshxona
+    "all_kitchens": "all",
+    "both": "all",
+    "all": "all",
+}
+
+
+def resolve_kitchen_station(st_raw: Optional[str]) -> str:
+    if not st_raw:
+        return "hot_kitchen"
+    st = str(st_raw).lower().strip()
+    station = KITCHEN_STATION_MAP.get(st)
+    if not station:
+        logger.warning(f"Noma'lum kitchen_station: '{st_raw}', hot_kitchen ga yo'naltirilmoqda")
+        return "hot_kitchen"
+    return station
 
 
 async def _send_cancellation_receipt(order: Order, menu_item: Optional[MenuItem], cancelled_qty: int, waiter_name: str, settings: Optional[RestaurantSettings]):
     try:
         dish_name = getattr(menu_item, "name_cyrillic", None) or (menu_item.name if menu_item else "Таом")
         st = getattr(menu_item, "kitchen_station", "hot_kitchen") if menu_item else "hot_kitchen"
-        st = (st or "hot_kitchen").lower().strip()
+        station = resolve_kitchen_station(st)
 
-        if st in ["bar", "drink", "drinks", "ichimlik", "ichimliklar", "choyxona"]:
-            station_printer = (getattr(settings, "printer_bar_name", None) or "").strip() or (getattr(settings, "printer_customer_name", None) or "X-Q80A")
-        elif st in ["cold_kitchen", "kitchen2", "somsa", "baliq"] or any(key in st for key in ["cold", "kitchen2", "2", "baliq", "fish", "somsa", "mangal", "grill"]):
-            station_printer = getattr(settings, "printer_kitchen2_name", None) or "X-Q80A"
+        if station == "bar":
+            station_printer = (getattr(settings, "printer_bar_name", None) or "").strip() or (getattr(settings, "printer_customer_name", None) or "").strip()
+        elif station == "cold_kitchen":
+            station_printer = (getattr(settings, "printer_kitchen2_name", None) or "").strip()
         else:
-            station_printer = getattr(settings, "printer_kitchen1_name", None) or "X-Q80A"
+            station_printer = (getattr(settings, "printer_kitchen1_name", None) or "").strip()
+
+        if not station_printer:
+            logger.warning(f"Otmena cheki chop etilmadi — printer sozlanmagan: stansiya={station}")
+            return
 
         table_num = order.table.number if order.table else "—"
         now_str = datetime.now(UZ_TZ).strftime("%d.%m.%Y %H:%M")
@@ -73,8 +123,7 @@ async def _send_cancellation_receipt(order: Order, menu_item: Optional[MenuItem]
         popts = printer_options(settings) if settings else {"codepage": "cp866", "font_size": 1, "char_spacing": 0, "paper_width": 80}
         await print_with_retry(otmena_text, printer_name=station_printer, **popts)
     except Exception as e:
-        import logging
-        logging.getLogger("orders").warning(f"Otmena chekini chop etishda xatolik: {e}")
+        logger.warning(f"Otmena chekini chop etishda xatolik: {e}")
 
 
 def generate_order_number(restaurant_id: int, count: int) -> str:
@@ -1663,7 +1712,12 @@ async def print_order_bill(
         select(RestaurantSettings).where(RestaurantSettings.restaurant_id == order.restaurant_id)
     )
     settings = s_res.scalar_one_or_none()
-    cust_printer = getattr(settings, "printer_customer_name", None) or "X-Q80A"
+    cust_printer = (getattr(settings, "printer_customer_name", None) or "").strip()
+    if not cust_printer:
+        raise HTTPException(
+            status_code=400,
+            detail="Printer sozlanmagan: Mijoz kassa cheki (printer_customer_name)",
+        )
     popts = printer_options(settings)
 
     items_for_receipt = []
@@ -1751,6 +1805,9 @@ async def send_to_kitchen(
     3. ReceiptArchive ga 'kitchen' sifatida saqlaydi
     4. Oshpaz KDS ekraniga WebSocket xabar beradi
     """
+    # 0. SQLite'da ikkita bir vaqtdagi so'rov race condition bo'lmasligi uchun qatorni qulflaymiz:
+    await db.execute(text("UPDATE orders SET id = id WHERE id = :id"), {"id": order_id})
+
     res = await db.execute(
         select(Order)
         .options(
@@ -1765,23 +1822,10 @@ async def send_to_kitchen(
         raise HTTPException(status_code=404, detail="Buyurtma topilmadi")
 
     # Oshxonaga faqat YANGI qo'shilganlar chiqadi.
-    #
-    # Ofitsiant 1 somsa yuborgandan keyin yana 1 somsa qo'shsa, oshxonada
-    # "1 somsa" chiqishi kerak — "2 somsa" emas, aks holda oshpaz ikkita
-    # tayyorlaydi. Shuning uchun har qatorda "nechta yuborilgan"
-    # (sent_quantity) saqlanadi va begunokka faqat farqi chiqadi.
-    #
-    # Ilgari bu yerda "yangisi bo'lmasa — hammasini chiqar" degan zahira
-    # yo'l bor edi: tugma ikkinchi marta bosilganda butun buyurtma
-    # qaytadan chiqib ketardi.
     pending: List[tuple] = []   # (OrderItem, shu begunokda chiqadigan yangi soni)
     for it in order.items:
         qty = it.quantity or 0
         already = it.sent_quantity or 0
-        # Ofitsiant yuborgandan keyin sonini kamaytirgan bo'lsa
-        # (already > qty) hisobni kamaytirmaymiz: oshxona ko'pini
-        # tayyorlayotgan bo'lishi mumkin, keyin qayta qo'shilsa
-        # ikkinchi marta chiqib ketmasligi kerak.
         delta = qty - already
         if delta > 0:
             pending.append((it, delta))
@@ -1800,9 +1844,6 @@ async def send_to_kitchen(
         }
 
     if reprint:
-        # Begunok printerdan chiqmagan bo'lsa ofitsiant qaytadan
-        # chiqaradi: butun buyurtma chiqadi va begunok tepasida
-        # "ТАКРОР" deb yoziladi — oshpaz ikkinchi marta tayyorlamasin.
         target_items = [(it, it.quantity or 0) for it in order.items if (it.quantity or 0) > 0]
     else:
         target_items = pending
@@ -1825,35 +1866,22 @@ async def send_to_kitchen(
     settings = set_res.scalar_one_or_none()
     paper_width = settings.printer_paper_width if settings else 80
 
-    # Printer marshruti (stansiya -> printer):
-    #   hot_kitchen  -> 1-Oshxona (qozon taomlari)
-    #   cold_kitchen -> 2-Oshxona (baliq, somsa, mangal)
-    #   bar          -> BAR (choy, suv, ichimliklar)
-    # MUHIM: ilgari "bar" stansiyasi hech qayerda tekshirilmasdi va
-    # oxirgi `else` orqali 1-OSHXONAGA tushib ketardi — shuning uchun
-    # suv va ichimliklar oshxona printeridan chiqardi.
     k1_items = []
     k2_items = []
     bar_items = []
     kassa_items = []
 
     for it, send_qty in target_items:
-        st = getattr(it.menu_item, "kitchen_station", "hot_kitchen") if it.menu_item else "hot_kitchen"
-        st = (st or "hot_kitchen").lower().strip()
+        st_raw = getattr(it.menu_item, "kitchen_station", None) if it.menu_item else None
+        station = resolve_kitchen_station(st_raw)
 
         dish_name = getattr(it.menu_item, "name_cyrillic", None) or (it.menu_item.name if it.menu_item else "Таом")
 
         item_dict = {
             "name": dish_name,
-            # MUHIM: qatordagi umumiy son emas, shu begunokda oshxonaga
-            # chiqayotgan YANGI son.
             "quantity": send_qty,
             "note": it.special_note,
-            # O'lchanadigan taomning hajmi — oshxona nechchi litr/kg
-            # ekanini begunokdan ko'rishi uchun.
             "size": it.portion_size,
-            # Tortiladigan taom: begunokda "1.35 кг" yoki tortilmagan
-            # bo'lsa "ТОРТИЛСИН!" deb chiqadi.
             "weight": it.weight,
             "manual_price": it.manual_price,
             "unit": (getattr(it.menu_item, "unit", None) or "kg") if it.menu_item else "kg",
@@ -1861,47 +1889,43 @@ async def send_to_kitchen(
         }
 
         # Stansiya bo'yicha saralash
-        if st in ["customer_only", "customer", "kassa", "bill_only"]:
-            # KASSA: oshxonaga YUBORILMAYDI, lekin kassadagi (USB) printerdan
-            # begunok chiqadi — kassir suv/non berib yuborishi uchun.
-            # Ilgari bu yerda `continue` turardi: hech qanday chek chiqmasdi.
+        if station == "kassa":
             kassa_items.append(item_dict)
-        elif st in ["bar", "drink", "drinks", "ichimlik", "ichimliklar", "choyxona"]:
+        elif station == "bar":
             bar_items.append(item_dict)
-        elif st in ["all_kitchens", "both", "all"]:
-            k1_items.append(item_dict)
+        elif station == "cold_kitchen":
             k2_items.append(item_dict)
-        elif st in ["cold_kitchen", "kitchen2", "somsa", "baliq"] or any(key in st for key in ["cold", "kitchen2", "2", "baliq", "fish", "somsa", "mangal", "grill"]):
+        elif station == "all":
+            k1_items.append(item_dict)
             k2_items.append(item_dict)
         else:
             k1_items.append(item_dict)
 
-    k1_title = getattr(settings, "kitchen1_title", None) or "1-Oshxona (Qozon taomlari)"
-    k2_title = getattr(settings, "kitchen2_title", None) or "2-Oshxona (Baliq / Somsa)"
-    bar_title = getattr(settings, "bar_title", None) or "BAR (Ichimliklar)"
-    k1_printer = getattr(settings, "printer_kitchen1_name", None) or "X-Q80A"
-    k2_printer = getattr(settings, "printer_kitchen2_name", None) or "X-Q80A"
+    k1_title = (getattr(settings, "kitchen1_title", None) or "").strip() or "1-Oshxona (Qozon taomlari)"
+    k2_title = (getattr(settings, "kitchen2_title", None) or "").strip() or "2-Oshxona (Baliq / Somsa)"
+    bar_title = (getattr(settings, "bar_title", None) or "").strip() or "BAR (Ichimliklar)"
+    kassa_title = "KASSA (Mijozga berish)"
+
+    k1_printer = (getattr(settings, "printer_kitchen1_name", None) or "").strip()
+    k2_printer = (getattr(settings, "printer_kitchen2_name", None) or "").strip()
+    kassa_printer = (getattr(settings, "printer_customer_name", None) or "").strip()
     # Bar printeri sozlanmagan bo'lsa — kassa printeriga chiqadi.
-    # Oshxonaga esa HECH QACHON yuborilmaydi.
-    bar_printer = (getattr(settings, "printer_bar_name", None) or "").strip() \
-        or (getattr(settings, "printer_customer_name", None) or "X-Q80A")
+    bar_printer = (getattr(settings, "printer_bar_name", None) or "").strip() or kassa_printer
+
     auto_print = getattr(settings, "auto_print_kitchen", True)
     popts = printer_options(settings)
     cp = popts["codepage"]
     fsize = popts["font_size"]
 
-    generated_tickets = []
-    combined_texts = []
-
-    # Har bir stansiya uchun bir xil ish: begunok matni -> printer -> arxiv.
-    # Ilgari bu blok har stansiya uchun qayta-qayta yozilgan edi.
-    kassa_printer = getattr(settings, "printer_customer_name", None) or "X-Q80A"
     stations = [
         ("hot_kitchen", k1_title, k1_printer, k1_items, "KITCHEN1"),
         ("cold_kitchen", k2_title, k2_printer, k2_items, "KITCHEN2"),
         ("bar", bar_title, bar_printer, bar_items, "BAR"),
-        ("kassa", "KASSA (Mijozga berish)", kassa_printer, kassa_items, "KASSA"),
+        ("kassa", kassa_title, kassa_printer, kassa_items, "KASSA"),
     ]
+
+    prepared_tickets = []
+    combined_texts = []
 
     for station_key, station_title, station_printer, station_items, prefix in stations:
         if not station_items:
@@ -1923,29 +1947,6 @@ async def send_to_kitchen(
         )
         combined_texts.append(ticket_text)
 
-        print_status = False
-        print_error = None
-        is_queued = False
-        if auto_print:
-            try:
-                p_res = await print_with_retry(
-                    ticket_text, printer_name=station_printer, **popts
-                )
-                print_status = p_res.get("success", False)
-                is_queued = bool(p_res.get("queued"))
-                if is_queued:
-                    print_error = p_res.get("warning", "Printerga ulanib bo'lmadi (navbatga olindi)")
-                elif not print_status:
-                    print_error = p_res.get("error", "Chop etishda xatolik")
-            except Exception as e:
-                printer_queue.enqueue(
-                    ticket_text, printer_name=station_printer, **popts
-                )
-                is_queued = True
-                print_error = f"{str(e)} (navbatga qo'yildi)"
-        else:
-            print_error = "Avtomatik chop etish sozlamalarda o'chirilgan"
-
         db.add(ReceiptArchive(
             restaurant_id=order.restaurant_id,
             order_id=order.id,
@@ -1964,18 +1965,65 @@ async def send_to_kitchen(
             raw_text=ticket_text,
         ))
 
-        generated_tickets.append({
+        prepared_tickets.append({
             "station": station_key,
             "station_title": station_title,
             "printer_name": station_printer,
             "items": station_items,
+            "ticket_text": ticket_text,
+        })
+
+    # 2. sent_quantity belgilash va ReceiptArchive yozuvlari commit qilinsin, KEYIN chop etish:
+    await db.commit()
+
+    generated_tickets = []
+    for item_data in prepared_tickets:
+        st_key = item_data["station"]
+        st_title = item_data["station_title"]
+        st_printer = item_data["printer_name"]
+        st_items = item_data["items"]
+        ticket_text = item_data["ticket_text"]
+
+        print_status = False
+        print_error = None
+        is_queued = False
+
+        if not st_printer:
+            print_error = f"Printer sozlanmagan: {st_title}"
+            logger.warning(f"send_to_kitchen: {print_error} (order_id={order.id})")
+        elif auto_print:
+            try:
+                p_res = await print_with_retry(
+                    ticket_text, printer_name=st_printer, **popts
+                )
+                print_status = p_res.get("success", False)
+                is_queued = bool(p_res.get("queued"))
+                if is_queued:
+                    print_error = p_res.get("warning", "Printerga ulanib bo'lmadi (navbatga olindi)")
+                elif not print_status:
+                    print_error = p_res.get("error", "Chop etishda xatolik")
+            except Exception as e:
+                try:
+                    printer_queue.enqueue(
+                        ticket_text, printer_name=st_printer, **popts
+                    )
+                    is_queued = True
+                    print_error = f"{str(e)} (navbatga qo'yildi)"
+                except Exception:
+                    print_error = f"Chop etish xatosi: {str(e)}"
+        else:
+            print_error = "Avtomatik chop etish sozlamalarda o'chirilgan"
+
+        generated_tickets.append({
+            "station": st_key,
+            "station_title": st_title,
+            "printer_name": st_printer,
+            "items": st_items,
             "raw_text": ticket_text,
             "printed": print_status,
             "queued": is_queued,
             "print_error": print_error,
         })
-
-    await db.flush()
 
     main_raw_text = "\n------------------------------------------\n".join(combined_texts) if combined_texts else ""
 
@@ -2324,13 +2372,15 @@ async def checkout_order(
     # ─── Tranzaksiyani commit qilish (printer yoki boshqa xizmatlar tufayli baza qulflanib qolmasligi uchun) ───
     await db.commit()
 
-    # Avtomatik 1-Printer (Mijoz kassa cheki) ga asinxron chop etish (commit'dan keyin)
     if getattr(settings, "auto_print_customer_bill", True):
-        cust_printer = getattr(settings, "printer_customer_name", None) or "X-Q80A"
-        try:
-            await print_with_retry(bill_text, printer_name=cust_printer, **popts)
-        except Exception:
-            printer_queue.enqueue(bill_text, printer_name=cust_printer, **popts)
+        cust_printer = (getattr(settings, "printer_customer_name", None) or "").strip()
+        if cust_printer:
+            try:
+                await print_with_retry(bill_text, printer_name=cust_printer, **popts)
+            except Exception:
+                printer_queue.enqueue(bill_text, printer_name=cust_printer, **popts)
+        else:
+            logger.warning("checkout_order: Mijoz kassa cheki chop etilmadi — printer sozlanmagan (printer_customer_name)")
 
     # Faqat kassa cheklari (checkout / final bill) uchun PDF arxiv saqlash (commit'dan keyin, non-blocking)
     try:

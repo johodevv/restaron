@@ -177,8 +177,9 @@ async def codepage_test(
     sample = "АБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЪЫЬЭЮЯ"
 
     set_res = await db.execute(select(RestaurantSettings))
-    st = set_res.scalars().first()
-    target = payload.printer_name or getattr(st, "printer_customer_name", None) or "X-Q80A"
+    target = (payload.printer_name or getattr(st, "printer_customer_name", None) or "").strip()
+    if not target:
+        raise HTTPException(status_code=400, detail="Printer sozlanmagan: printer_name ko'rsatilmadi")
 
     chunks = [b"\x1b\x40\x1c\x2e\x1c\x43\x00"]   # init + ieroglif rejimini o'chirish
     chunks.append("*** KOD SAHIFASI SINOVI ***\nQaysi qator TO'G'RI o'qilsa,\nraqamini Sozlamalarga yozing.\n\n".encode("cp866", errors="replace"))

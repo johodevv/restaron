@@ -107,9 +107,9 @@ class RestaurantSettings(Base):
     sms_template = Column(Text, default="Hurmatli {name}, {restaurant} restoranidagi {amount} so'm qarzingizni to'lashingizni so'raymiz.")
 
     # 3 ta Chek Printerlari va Oshxona Routing Sozlamalari
-    printer_customer_name = Column(String(100), default="X-Q80A", nullable=True)      # 1-Printer: Mijoz kassa cheki (USB)
-    printer_kitchen1_name = Column(String(100), default="X-Q80A", nullable=True)       # 2-Printer: 1-Oshxona (USB nomi yoki LAN IP)
-    printer_kitchen2_name = Column(String(100), default="X-Q80A", nullable=True)       # 3-Printer: 2-Oshxona (USB nomi yoki LAN IP)
+    printer_customer_name = Column(String(100), default=None, nullable=True)      # 1-Printer: Mijoz kassa cheki (USB)
+    printer_kitchen1_name = Column(String(100), default=None, nullable=True)       # 2-Printer: 1-Oshxona (USB nomi yoki LAN IP)
+    printer_kitchen2_name = Column(String(100), default=None, nullable=True)       # 3-Printer: 2-Oshxona (USB nomi yoki LAN IP)
     kitchen1_title = Column(String(100), default="1-Oshxona (Qozon taomlari)", nullable=True)
     kitchen2_title = Column(String(100), default="2-Oshxona (Baliq / Somsa)", nullable=True)
     # 4-Printer: BAR (choy, suv, ichimliklar). Bo'sh qoldirilsa bar
