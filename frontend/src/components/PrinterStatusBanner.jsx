@@ -13,7 +13,8 @@ export const PrinterStatusBanner = () => {
       const data = await api.get('/receipts/print-jobs/summary');
       if (!isMountedRef.current) return;
       if (Array.isArray(data)) {
-        // oldest_age_seconds > 20 bo'lgan printerlarni filtrlaymiz
+        // oldest_age_seconds > 20 bo'lgan printerlarni
+        //  filtrlaymiz
         const stuck = data.filter(
           (p) =>
             p.oldest_age_seconds !== null &&
@@ -39,14 +40,14 @@ export const PrinterStatusBanner = () => {
     // WebSocket hodisalari: print_alert va print_ok
     const unsubAlert = addEventListener
       ? addEventListener('print_alert', () => {
-          fetchSummary();
-        })
+        fetchSummary();
+      })
       : null;
 
     const unsubOk = addEventListener
       ? addEventListener('print_ok', () => {
-          fetchSummary();
-        })
+        fetchSummary();
+      })
       : null;
 
     return () => {
