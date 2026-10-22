@@ -127,7 +127,7 @@ export const CheckoutModal = ({ isOpen, onClose, order, tableLabel, onPaid }) =>
         payload.debt_due_date = debtDueDate || null;
       }
 
-      const res = await api.post(`/orders/${order.id}/checkout`, payload);
+      const res = await api.post(`/orders/${order.id}/checkout`, payload, { idempotent: true });
       onClose();
       if (onPaid) onPaid(res);
     } catch (err) {

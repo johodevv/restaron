@@ -108,11 +108,29 @@ async function executeFetch(url, config, timeoutMs) {
 
 async function request(endpoint, options = {}) {
   const token = localStorage.getItem('restaron_token');
+  const method = (options.method || 'GET').toUpperCase();
   const headers = {
     'Content-Type': 'application/json',
     ...(token ? { Authorization: `Bearer ${token}` } : {}),
     ...options.headers,
   };
+
+  const isIdempotent = Boolean(
+    options.idempotent ||
+    (method === 'POST' && (
+      endpoint.includes('/waiter-create') ||
+      endpoint.includes('/add-items') ||
+      endpoint.includes('/send-to-kitchen') ||
+      endpoint.includes('/checkout')
+    ))
+  );
+
+  if (isIdempotent && !headers['Idempotency-Key']) {
+    headers['Idempotency-Key'] =
+      typeof crypto !== 'undefined' && crypto.randomUUID
+        ? crypto.randomUUID()
+        : `idemp_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`;
+  }
 
   const config = {
     ...options,
@@ -124,7 +142,6 @@ async function request(endpoint, options = {}) {
   }
 
   const url = endpoint.startsWith('http') ? endpoint : `${BASE_URL}${endpoint}`;
-  const method = (options.method || 'GET').toUpperCase();
   const isGet = method === 'GET';
   const timeoutMs = isGet ? 15000 : 25000;
 
@@ -221,10 +238,10 @@ async function request(endpoint, options = {}) {
 }
 
 export const api = {
-  get: (endpoint) => request(endpoint, { method: 'GET' }),
-  post: (endpoint, body) => request(endpoint, { method: 'POST', body }),
-  patch: (endpoint, body) => request(endpoint, { method: 'PATCH', body }),
-  delete: (endpoint) => request(endpoint, { method: 'DELETE' }),
+  get: (endpoint, options = {}) => request(endpoint, { ...options, method: 'GET' }),
+  post: (endpoint, body, options = {}) => request(endpoint, { ...options, method: 'POST', body }),
+  patch: (endpoint, body, options = {}) => request(endpoint, { ...options, method: 'PATCH', body }),
+  delete: (endpoint, options = {}) => request(endpoint, { ...options, method: 'DELETE' }),
 };
 
 export default api;

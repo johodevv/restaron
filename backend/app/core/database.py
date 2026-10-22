@@ -289,4 +289,10 @@ async def create_tables():
             await conn.execute(text("UPDATE users SET is_approved = 1 WHERE is_approved IS NULL"))
         except Exception:
             pass
+        # 24 soatdan eski idempotency yozuvlarini startda tozalash
+        try:
+            from app.core.idempotency import cleanup_expired_idempotency_keys_sync
+            await conn.run_sync(cleanup_expired_idempotency_keys_sync)
+        except Exception:
+            pass
 

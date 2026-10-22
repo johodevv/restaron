@@ -10,6 +10,7 @@ from app.models.commission import CommissionLog
 from app.models.debt import Debt
 from app.models.receipt import ReceiptArchive, ShiftReport
 from app.models.audit_log import AuditLog
+from app.models.idempotency import IdempotencyKey
 
 __all__ = [
     "Base",
@@ -29,5 +30,6 @@ __all__ = [
     "ReceiptArchive",
     "ShiftReport",
     "AuditLog",
+    "IdempotencyKey",
 ]
 

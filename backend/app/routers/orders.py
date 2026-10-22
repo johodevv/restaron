@@ -41,6 +41,7 @@ import logging
 from app.core.printer_queue import print_with_retry, printer_queue
 from app.core.sms_telegram import send_telegram_alert
 from app.websockets.manager import manager
+from app.core.idempotency import IdempotencyHandler, get_idempotency_handler
 
 router = APIRouter(prefix="/orders", tags=["📋 Buyurtmalar"])
 
@@ -786,14 +787,18 @@ async def create_order(payload: OrderCreate, db: AsyncSession = Depends(get_db))
     return build_order_response(full_order, table.number if table else None, waiter_name)
 
 
-# ─── Ofitsiant / Kassa: Yangi buyurtma yaratish (Ali Poster POS) ───
 @router.post("/waiter-create", response_model=OrderResponse, status_code=201, summary="Buyurtma yaratish (Ofitsiant / Kassa POS)")
 async def waiter_create_order(
     payload: WaiterOrderCreate,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_role("waiter", "admin", "developer", "cashier")),
+    idempotency: IdempotencyHandler = Depends(get_idempotency_handler),
 ):
     """Ofitsiant yoki kassir stol, olib ketish (s soboy) yoki yetkazish uchun buyurtma yaratadi"""
+    cached = await idempotency.get_cached_response(current_user.id)
+    if cached is not None:
+        return cached
+
     table = None
     table_id = payload.table_id
     hall_name = payload.hall_name
@@ -840,17 +845,22 @@ async def waiter_create_order(
         existing_order_id = existing_order_id_res.scalars().first()
         if existing_order_id:
             if payload.items:
-                return await waiter_add_items(
+                delegated = await waiter_add_items(
                     order_id=existing_order_id,
                     payload=WaiterAddItemsRequest(items=payload.items, send_to_kitchen_immediately=False),
                     db=db,
                     current_user=current_user,
+                    idempotency=idempotency,
                 )
+                await idempotency.save_response(current_user.id, delegated, status_code=201)
+                return delegated
             else:
                 loaded = await load_order_full(db, existing_order_id)
                 if not loaded:
                     raise HTTPException(status_code=404, detail="Buyurtma topilmadi")
-                return build_order_response(loaded)
+                existing_resp = build_order_response(loaded)
+                await idempotency.save_response(current_user.id, existing_resp, status_code=201)
+                return existing_resp
     else:
         # Takeaway va Delivery uchun avtomatik zal/manzil nomi
         if not hall_name:
@@ -916,17 +926,22 @@ async def waiter_create_order(
             existing_order_id = existing_order_id_res.scalars().first()
             if existing_order_id:
                 if payload.items:
-                    return await waiter_add_items(
+                    delegated = await waiter_add_items(
                         order_id=existing_order_id,
                         payload=WaiterAddItemsRequest(items=payload.items, send_to_kitchen_immediately=False),
                         db=db,
                         current_user=current_user,
+                        idempotency=idempotency,
                     )
+                    await idempotency.save_response(current_user.id, delegated, status_code=201)
+                    return delegated
                 else:
                     loaded = await load_order_full(db, existing_order_id)
                     if not loaded:
                         raise HTTPException(status_code=404, detail="Buyurtma topilmadi")
-                    return build_order_response(loaded)
+                    existing_resp = build_order_response(loaded)
+                    await idempotency.save_response(current_user.id, existing_resp, status_code=201)
+                    return existing_resp
         raise
 
     order_number = f"#R{restaurant_id}-{order.id:04d}"
@@ -1022,6 +1037,7 @@ async def waiter_create_order(
     }
     await manager.broadcast_to_roles(restaurant_id, ["waiter", "admin", "chef"], ws_payload)
 
+    await idempotency.save_response(current_user.id, order_resp, status_code=201)
     return order_resp
 
 
@@ -1032,8 +1048,13 @@ async def waiter_add_items(
     payload: WaiterAddItemsRequest,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_role("waiter", "admin", "developer", "cashier")),
+    idempotency: IdempotencyHandler = Depends(get_idempotency_handler),
 ):
     """Ofitsiant faol buyurtmaga qo'shimcha taomlar qo'shadi"""
+    cached = await idempotency.get_cached_response(current_user.id)
+    if cached is not None:
+        return cached
+
     # 1. Buyurtma qatorini qulflash (race condition oldini olish)
     await db.execute(text("UPDATE orders SET id = id WHERE id = :id"), {"id": order_id})
 
@@ -1152,6 +1173,7 @@ async def waiter_add_items(
         "added_items": added_details,
     })
 
+    await idempotency.save_response(current_user.id, resp)
     return resp
 
 
@@ -1797,6 +1819,7 @@ async def send_to_kitchen(
     reprint: bool = False,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_role("waiter", "admin", "developer", "cashier")),
+    idempotency: IdempotencyHandler = Depends(get_idempotency_handler),
 ):
     """
     Ofitsiant 'На кухню' tugmasini bosadi:
@@ -1805,6 +1828,10 @@ async def send_to_kitchen(
     3. ReceiptArchive ga 'kitchen' sifatida saqlaydi
     4. Oshpaz KDS ekraniga WebSocket xabar beradi
     """
+    cached = await idempotency.get_cached_response(current_user.id)
+    if cached is not None:
+        return cached
+
     # 0. SQLite'da ikkita bir vaqtdagi so'rov race condition bo'lmasligi uchun qatorni qulflaymiz:
     await db.execute(text("UPDATE orders SET id = id WHERE id = :id"), {"id": order_id})
 
@@ -2043,7 +2070,7 @@ async def send_to_kitchen(
         }
     )
 
-    return {
+    res = {
         "success": True,
         "order_id": order.id,
         "items_count": sum(q for _it, q in target_items),
@@ -2051,6 +2078,8 @@ async def send_to_kitchen(
         "tickets": generated_tickets,
         "raw_text": main_raw_text,
     }
+    await idempotency.save_response(current_user.id, res)
+    return res
 
 
 # ─── To'lov va Stolni yopish (К оплате — Kassa) ───────────────
@@ -2060,6 +2089,7 @@ async def checkout_order(
     payload: OrderCheckoutRequest,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_role("admin", "cashier", "developer")),
+    idempotency: IdempotencyHandler = Depends(get_idempotency_handler),
 ):
     """
     1. To'lov turlarini hisoblaydi (Naqd, Karta, Click, Nasiya)
@@ -2069,6 +2099,10 @@ async def checkout_order(
     5. ReceiptArchive ga 3 yilga saqlaydi
     6. WebSocket orqali barchaga hisob yopilganini e'lon qiladi
     """
+    cached = await idempotency.get_cached_response(current_user.id)
+    if cached is not None:
+        return cached
+
     # 0. SQLite'da ikkita bir vaqtdagi to'lov ketma-ket bajarilishi va race condition
     # bo'lmasligi uchun tranzaksiyaning eng boshida qatorni qulflaymiz
     await db.execute(text("UPDATE orders SET id = id WHERE id = :id"), {"id": order_id})
@@ -2442,7 +2476,7 @@ async def checkout_order(
         })
 
     order = await load_order_full(db, order.id) or order
-    return {
+    res = {
         "success": True,
         "order_id": order.id,
         "order_number": order.order_number,
@@ -2454,6 +2488,8 @@ async def checkout_order(
         "debt_created": bool(debt_obj),
         "order": build_order_response(order),
     }
+    await idempotency.save_response(current_user.id, res)
+    return res
 
 
 

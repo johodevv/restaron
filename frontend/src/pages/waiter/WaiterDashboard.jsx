@@ -396,7 +396,7 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
               payload.delivery_address = deliveryAddress.trim() || "Manzil";
             }
           }
-          return await api.post('/orders/waiter-create', payload);
+          return await api.post('/orders/waiter-create', payload, { idempotent: true });
         })();
 
         creatingOrderRef.current = createPromise;
@@ -470,10 +470,14 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
         orderQueueRef.current = orderQueueRef.current
           .catch(() => {})
           .then(async () => {
-            const updated = await api.post(`/orders/${orderId}/add-items`, {
-              items: [{ menu_item_id: menuItem.id, quantity: 1 }],
-              send_to_kitchen_immediately: false,
-            });
+            const updated = await api.post(
+              `/orders/${orderId}/add-items`,
+              {
+                items: [{ menu_item_id: menuItem.id, quantity: 1 }],
+                send_to_kitchen_immediately: false,
+              },
+              { idempotent: true }
+            );
             if (reqId === latestRequestIdRef.current && updated) {
               setActiveOrder(updated);
               openWeightModalIfNeeded(updated, menuItem.id);
@@ -692,7 +696,8 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
     try {
       const res = await api.post(
         `/orders/${activeOrder.id}/send-to-kitchen${reprint ? '?reprint=true' : ''}`,
-        {}
+        {},
+        { idempotent: true }
       );
 
       // Yangi taom yo'q: oshxonaga qayta-qayta bir xil begunok chiqib
