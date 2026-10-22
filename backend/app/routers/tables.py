@@ -34,6 +34,7 @@ from app.schemas.table import TableCreate, TableUpdate, TableResponse, TablePubl
 from app.schemas.order import TableBillResponse, BillItemSummary
 from app.websockets.manager import manager
 from app.core.disk_utils import ensure_disk_space
+from app.core.audit import log_audit_event
 
 router = APIRouter(prefix="/tables", tags=["🪑 Stollar"])
 
@@ -675,6 +676,30 @@ async def get_table_bill(table_id: int, db: AsyncSession = Depends(get_db)):
     )
 
 
+async def open_orders_count(db: AsyncSession, table_id: int) -> int:
+    """Ochiq (is_paid=False, status CANCELLED/PAID emas) buyurtmalar soni"""
+    res = await db.execute(
+        select(func.count(Order.id)).where(
+            Order.table_id == table_id,
+            Order.is_paid == False,
+            Order.status.notin_([OrderStatus.PAID, OrderStatus.CANCELLED]),
+        )
+    )
+    return res.scalar() or 0
+
+
+async def get_open_orders(db: AsyncSession, table_id: int) -> List[Order]:
+    """Ochiq (is_paid=False, status CANCELLED/PAID emas) buyurtmalar ro'yxati"""
+    res = await db.execute(
+        select(Order).where(
+            Order.table_id == table_id,
+            Order.is_paid == False,
+            Order.status.notin_([OrderStatus.PAID, OrderStatus.CANCELLED]),
+        )
+    )
+    return res.scalars().all()
+
+
 class TableCheckoutRequest(BaseModel):
     """Stolni yopishda to'lov turi (ko'rsatilmasa — naqd)"""
     payment_method: str = "cash"
@@ -685,7 +710,7 @@ async def checkout_table(
     table_id: int,
     payload: Optional[TableCheckoutRequest] = None,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role("waiter", "admin", "developer")),
+    current_user: User = Depends(require_role("admin", "cashier", "developer")),
 ):
     """Admin yoki ofitsiant stol hisobini yopadi, buyurtmalarni to'langan deb belgilaydi va stolni bo'shatadi"""
     result = await db.execute(select(Table).where(Table.id == table_id))
@@ -774,6 +799,20 @@ async def checkout_table(
     table.reserved_guests = None
     table.deposit_amount = 0.0
     table.reservation_note = None
+    await log_audit_event(
+        db=db,
+        restaurant_id=table.restaurant_id,
+        action="table_checkout",
+        user=current_user,
+        entity_type="table",
+        entity_id=table.id,
+        details={
+            "table_number": table.number,
+            "payment_method": method,
+            "orders_count": len(active_orders),
+            "order_numbers": [o.order_number for o in active_orders],
+        },
+    )
     await db.flush()
     await db.commit()
 
@@ -1275,6 +1314,7 @@ async def update_table_status(
     table_id: int,
     table_status: Optional[str] = Query(None),
     payload: Optional[Dict[str, Any]] = Body(None),
+    force: bool = Query(False),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_role("waiter", "admin", "developer", "cashier")),
 ):
@@ -1290,14 +1330,41 @@ async def update_table_status(
     if not raw_status and table_status:
         raw_status = table_status
 
-    if not raw_status:
-        raw_status = "available"
+    if not raw_status or not str(raw_status).strip():
+        raise HTTPException(status_code=400, detail="Stol statusi ko'rsatilmadi")
 
     status_str = str(raw_status).lower().strip()
     try:
         new_enum_status = TableStatus(status_str)
     except ValueError:
-        new_enum_status = TableStatus.AVAILABLE
+        valid_statuses = [s.value for s in TableStatus]
+        raise HTTPException(
+            status_code=400,
+            detail=f"Noto'g'ri status: '{raw_status}'. Ruxsat etilgan statuslar: {valid_statuses}",
+        )
+
+    if new_enum_status == TableStatus.AVAILABLE:
+        open_count = await open_orders_count(db, table.id)
+        if open_count > 0:
+            user_role_str = current_user.role.value if hasattr(current_user.role, "value") else str(current_user.role)
+            if force and user_role_str in ("admin", "developer"):
+                open_orders = await get_open_orders(db, table.id)
+                await log_audit_event(
+                    db=db,
+                    restaurant_id=table.restaurant_id,
+                    action="table_force_cleared",
+                    user=current_user,
+                    entity_type="table",
+                    entity_id=table.id,
+                    details={
+                        "table_number": table.number,
+                        "source": "update_table_status",
+                        "order_numbers": [o.order_number for o in open_orders],
+                        "open_orders_count": open_count,
+                    },
+                )
+            else:
+                raise HTTPException(status_code=409, detail="Stolda ochiq hisob bor")
 
     old_status = table.status.value if hasattr(table.status, "value") else str(table.status)
     table.status = new_enum_status
@@ -1339,6 +1406,12 @@ async def transfer_table(
     current_user: User = Depends(require_role("waiter", "admin", "developer", "cashier")),
 ):
     """Buyurtmalarni boshqa stolga ko'chirish va stollar holatini sinxronlash"""
+    if from_table_id == to_table_id:
+        raise HTTPException(
+            status_code=400,
+            detail="Boshlang'ich va maqsad stol bir xil bo'lishi mumkin emas",
+        )
+
     from_res = await db.execute(select(Table).where(Table.id == from_table_id))
     from_table = from_res.scalar_one_or_none()
     to_res = await db.execute(select(Table).where(Table.id == to_table_id))
@@ -1347,21 +1420,19 @@ async def transfer_table(
     if not from_table or not to_table:
         raise HTTPException(status_code=404, detail="Stol topilmadi")
 
-    # from_table dagi faol to'lanmagan buyurtmalarni topish
-    orders_res = await db.execute(
-        select(Order).where(
-            Order.table_id == from_table_id,
-            Order.is_paid == False,
-            Order.status.in_([
-                OrderStatus.PENDING,
-                OrderStatus.CONFIRMED,
-                OrderStatus.PREPARING,
-                OrderStatus.READY,
-                OrderStatus.SERVED,
-            ]),
+    to_open_count = await open_orders_count(db, to_table_id)
+    if to_open_count > 0:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Maqsad stol #{to_table.number} da ochiq buyurtmalar mavjud. Bo'sh stolni tanlang",
         )
-    )
-    active_orders = orders_res.scalars().all()
+
+    active_orders = await get_open_orders(db, from_table_id)
+    if not active_orders:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Stol #{from_table.number} da ko'chiriladigan ochiq buyurtma topilmadi",
+        )
 
     for ord in active_orders:
         ord.table_id = to_table.id
@@ -1388,6 +1459,23 @@ async def transfer_table(
     from_table.reserved_guests = None
     from_table.deposit_amount = 0.0
     from_table.reservation_note = None
+
+    await log_audit_event(
+        db=db,
+        restaurant_id=from_table.restaurant_id,
+        action="table_transfer",
+        user=current_user,
+        entity_type="table",
+        entity_id=from_table.id,
+        details={
+            "from_table_id": from_table.id,
+            "from_table_number": from_table.number,
+            "to_table_id": to_table.id,
+            "to_table_number": to_table.number,
+            "transferred_orders_count": len(active_orders),
+            "order_numbers": [o.order_number for o in active_orders],
+        },
+    )
 
     await db.flush()
     await db.commit()
@@ -1436,8 +1524,9 @@ async def transfer_table(
 @router.post("/{table_id}/clear", response_model=TableResponse, summary="Stolni tozalash / bo'shatish")
 async def clear_table(
     table_id: int,
+    force: bool = Query(False),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role("waiter", "admin", "developer")),
+    current_user: User = Depends(require_role("waiter", "admin", "developer", "cashier")),
 ):
     """Mijoz ketganidan keyin stolni bo'sh deb belgilash"""
     result = await db.execute(select(Table).where(Table.id == table_id))
@@ -1445,9 +1534,37 @@ async def clear_table(
     if not table:
         raise HTTPException(status_code=404, detail="Stol topilmadi")
 
+    open_count = await open_orders_count(db, table.id)
+    if open_count > 0:
+        user_role_str = current_user.role.value if hasattr(current_user.role, "value") else str(current_user.role)
+        if force and user_role_str in ("admin", "developer"):
+            open_orders = await get_open_orders(db, table.id)
+            await log_audit_event(
+                db=db,
+                restaurant_id=table.restaurant_id,
+                action="table_force_cleared",
+                user=current_user,
+                entity_type="table",
+                entity_id=table.id,
+                details={
+                    "table_number": table.number,
+                    "source": "clear_table",
+                    "order_numbers": [o.order_number for o in open_orders],
+                    "open_orders_count": open_count,
+                },
+            )
+        else:
+            raise HTTPException(status_code=409, detail="Stolda ochiq hisob bor")
+
     table.status = TableStatus.AVAILABLE
     table.is_unlocked = False
     table.current_pin = None
+    table.reserved_by_name = None
+    table.reserved_by_phone = None
+    table.reserved_time = None
+    table.reserved_guests = None
+    table.deposit_amount = 0.0
+    table.reservation_note = None
     await db.flush()
     await db.commit()
 
