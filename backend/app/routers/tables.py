@@ -416,25 +416,11 @@ async def list_tables(
     ],
 )
 async def scan_qr(qr_token: str, db: AsyncSession = Depends(get_db)):
-    # 1. QR token bo'yicha qidirish
+    # Faqat noyob UUID qr_token bo'yicha qidirish (raqam bilan skan qilish xavfsizlik sababli o'chirildi)
     result = await db.execute(
         select(Table).where(Table.qr_token == qr_token, Table.is_active == True)
     )
     table = result.scalar_one_or_none()
-
-    # 2. Agar topilmasa va raqamli bo'lsa, stol raqami yoki ID bo'yicha topish
-    if not table and qr_token.isdigit():
-        num = int(qr_token)
-        result = await db.execute(
-            select(Table).where((Table.number == num) | (Table.id == num), Table.is_active == True)
-        )
-        found_tables = result.scalars().all()
-        if len(found_tables) > 1:
-            logger.warning(
-                f"QR skan: raqam/ID {num} bo'yicha bir nechta stol topildi! "
-                f"Stollar ID: {[t.id for t in found_tables]}, birinchisi (ID: {found_tables[0].id}) ishlatildi."
-            )
-        table = found_tables[0] if found_tables else None
 
     if not table:
         raise HTTPException(status_code=404, detail="QR kod yaroqsiz yoki stol faol emas")
@@ -486,8 +472,9 @@ async def scan_qr(qr_token: str, db: AsyncSession = Depends(get_db)):
         )
 
     res = TablePublic.model_validate(table)
-    res.pin = table.current_pin
-    res.current_pin = table.current_pin
+    # PIN mijozga qaytarilmaydi — faqat ofitsiant POS / WebSocket orqali ko'radi
+    res.pin = None
+    res.current_pin = None
     res.is_unlocked = bool(table.is_unlocked)
     return res
 

@@ -140,16 +140,17 @@ async def test_unlock_table_success_matching_restaurant():
 
 
 @pytest.mark.anyio
-async def test_scan_qr_multiple_rows_no_error(caplog):
-    """(Table.number == x) bir nechta qator qaytarsa xato bermasligi va warning log yozishi kerak"""
-    import logging
+async def test_scan_qr_only_uuid_token_no_digit():
+    """scan/{x} faqat UUID qr_token bilan ishlashi kerak, oddiy raqam (number) 404 berishi kerak"""
     client = TestClient(app)
-    # Stollar 501 va 502 ikkalasi ham number=50 ga ega
-    with caplog.at_level(logging.WARNING):
-        resp = client.get("/api/v1/tables/scan/50")
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["number"] == 50
-        # Logger warning yozilganini tekshirish
-        warnings = [r.message for r in caplog.records if "bir nechta stol topildi" in r.message]
-        assert len(warnings) >= 1
+    # 1. Oddiy raqam 50 bilan kirish 404 berishi kerak
+    resp_digit = client.get("/api/v1/tables/scan/50")
+    assert resp_digit.status_code == 404
+
+    # 2. Haqiqiy qr_token bilan kirish 200 berishi kerak va PIN mijozga qaytmasligi kerak
+    resp_token = client.get("/api/v1/tables/scan/qr-token-501")
+    assert resp_token.status_code == 200
+    data = resp_token.json()
+    assert data["number"] == 50
+    assert data.get("pin") is None
+    assert data.get("current_pin") is None
