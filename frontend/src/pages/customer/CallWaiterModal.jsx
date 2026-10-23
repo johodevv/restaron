@@ -10,7 +10,7 @@ const QUICK_REASONS = [
   '🧂 Ziravorlar (Tuz, qalampir)',
 ];
 
-export const CallWaiterModal = ({ isOpen, onClose, tableId, tableNumber }) => {
+export const CallWaiterModal = ({ isOpen, onClose, tableId, tableNumber, qrToken }) => {
   const [selectedReason, setSelectedReason] = useState('');
   const [customNote, setCustomNote] = useState('');
   const [loading, setLoading] = useState(false);
@@ -26,6 +26,7 @@ export const CallWaiterModal = ({ isOpen, onClose, tableId, tableNumber }) => {
     try {
       await api.post('/orders/call-waiter', {
         table_id: tableId,
+        qr_token: qrToken || new URLSearchParams(window.location.search).get('table'),
         note: finalNote,
       });
       setSuccess(true);

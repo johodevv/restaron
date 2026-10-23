@@ -1,3 +1,4 @@
+from app.core.types import UTCDateTime
 """
 RestAron — PrintJob modeli
 Chop etish navbati va uning holati (server o'chib-yonsa ham yo'qolmaydi)
@@ -25,11 +26,11 @@ class PrintJob(Base):
     # Holatlari: pending/printing/done/cancelled
     status = Column(String(20), nullable=False, default="pending", index=True)
     attempts = Column(Integer, nullable=False, default=0)
-    next_attempt_at = Column(DateTime(timezone=True), nullable=False, default=func.now(), server_default=func.now())
+    next_attempt_at = Column(UTCDateTime(), nullable=False, default=func.now(), server_default=func.now())
     last_error = Column(Text, nullable=True)
     alerted = Column(Boolean, nullable=False, default=False)
-    created_at = Column(DateTime(timezone=True), nullable=False, default=func.now(), server_default=func.now())
-    printed_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(UTCDateTime(), nullable=False, default=func.now(), server_default=func.now())
+    printed_at = Column(UTCDateTime(), nullable=True)
 
     __table_args__ = (
         Index("ix_print_jobs_status_next_attempt_at", "status", "next_attempt_at"),

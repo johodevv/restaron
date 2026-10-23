@@ -29,7 +29,7 @@ class TableUpdate(BaseModel):
     reserved_by_phone: Optional[str] = None
     reserved_time: Optional[str] = None
     reserved_guests: Optional[int] = None
-    deposit_amount: Optional[float] = None
+    deposit_amount: Optional[float] = Field(None, ge=0, le=10_000_000_000, allow_inf_nan=False)
     reservation_note: Optional[str] = None
 
 
@@ -42,7 +42,7 @@ class TableReserveRequest(BaseModel):
     reserved_by_phone: Optional[str] = None
     reserved_time: Optional[str] = None
     reserved_guests: Optional[int] = None
-    deposit_amount: Optional[float] = 0.0
+    deposit_amount: Optional[float] = Field(0.0, ge=0, le=10_000_000_000, allow_inf_nan=False)
     note: Optional[str] = None
     reservation_note: Optional[str] = None
 

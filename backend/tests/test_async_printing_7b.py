@@ -56,6 +56,10 @@ async def test_bg_tasks_lifecycle():
 async def test_enqueue_print_job_in_transaction():
     """2: enqueue_print_job tranzaksiya bilan birga commit qilinishi va wake_printer_worker chaqirilishi"""
     async with AsyncSessionLocal() as db:
+        from app.models import Restaurant, Order
+        db.add(Restaurant(id=1, name='Printer test', slug='printer-test-7b'))
+        db.add(Order(id=99999, restaurant_id=1, order_number='PRINT-99999'))
+        await db.flush()
         job = await enqueue_print_job(
             db,
             restaurant_id=1,

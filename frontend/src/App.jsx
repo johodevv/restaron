@@ -22,6 +22,7 @@ const DeveloperDashboard = lazy(() => import('./pages/developer/DeveloperDashboa
 const Login = lazy(() => import('./pages/auth/Login'));
 const DunyoLanding = lazy(() => import('./pages/customer/DunyoLanding'));
 const TableWaitingVerification = lazy(() => import('./pages/customer/TableWaitingVerification'));
+const KitchenDashboard = lazy(() => import('./pages/kitchen/KitchenDashboard'));
 
 const PageLoader = () => (
   <div className="min-h-[40vh] flex items-center justify-center">
@@ -30,7 +31,7 @@ const PageLoader = () => (
 );
 
 export const App = () => {
-  const { user, isWaiter, isAdmin, isCashier, isDev, loading: authLoading } = useAuth();
+  const { user, isWaiter, isChef, isAdmin, isCashier, isDev, loading: authLoading } = useAuth();
   const [currentView, setCurrentView] = useState('menu'); // 'menu' | 'tracker' | 'login'
   const [activeOrderId, setActiveOrderId] = useState(null);
   const [reviewOrder, setReviewOrder] = useState(null);
@@ -153,6 +154,14 @@ export const App = () => {
   };
 
   const restaurantId = user?.restaurant_id || tableInfo?.restaurant_id || 1;
+  const { setActiveThemes } = useTheme();
+  useEffect(() => {
+    let cancelled = false;
+    api.get(`/restaurants/${restaurantId}`).then(data => {
+      if (!cancelled && data.settings?.active_themes?.length) setActiveThemes(data.settings.active_themes);
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [restaurantId, user?.id]);
 
   // Xodim login bo'lgan — loadingTable ni kutmaydi (darhol dashboard ko'rsatiladi)
   // Mijoz — auth va tableInfo ikkalasini kutadi
@@ -189,18 +198,18 @@ export const App = () => {
 
           {/* If Logged in as Staff */}
           {user && (
-            <div>
-              <Navbar
-                currentView={currentView}
-                onNavigate={setCurrentView}
-              />
-              <main>
+            <div className="h-[100dvh] flex flex-col overflow-hidden">
+              <div className="shrink-0">
+                <Navbar currentView={currentView} onNavigate={setCurrentView} />
+              </div>
+              <main className="flex-1 min-h-0 overflow-auto">
                 <Suspense fallback={<PageLoader />}>
                   {/* Ofitsiant faqat zaldagi stollarga xizmat ko'rsatish panelini oladi */}
                   {isWaiter && <WaiterDashboard />}
+                  {isChef && <KitchenDashboard />}
                   {/* Admin va Kassir boshqaruv, kassa, POS, Olib ketish va Dastavka panelini oladi */}
                   {isDev ? <DeveloperDashboard /> : ((isAdmin || isCashier) && <AdminDashboard />)}
-                  {!isWaiter && !isAdmin && !isCashier && !isDev && (
+                  {!isWaiter && !isChef && !isAdmin && !isCashier && !isDev && (
                     <div className="max-w-md mx-auto mt-20 p-6 rounded-2xl bg-theme-card border border-theme-border text-center space-y-2">
                       <p className="text-lg font-bold text-theme-text">Bu hisob uchun panel yo'q</p>
                       <p className="text-sm text-theme-muted">

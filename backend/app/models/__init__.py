@@ -12,6 +12,8 @@ from app.models.receipt import ReceiptArchive, ShiftReport
 from app.models.audit_log import AuditLog
 from app.models.idempotency import IdempotencyKey
 from app.models.print_job import PrintJob
+from app.models.deposit import DepositMovement
+from app.models.token_revocation import TokenRevocation
 
 __all__ = [
     "Base",

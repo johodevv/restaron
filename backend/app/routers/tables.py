@@ -12,13 +12,15 @@ from io import BytesIO
 from datetime import datetime, timezone
 from pydantic import BaseModel, Field
 from fastapi import APIRouter, Depends, HTTPException, status, Body, Query, Request
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 from sqlalchemy.orm import selectinload
 from typing import List, Optional, Dict, Any
 
 from app.core.database import get_db
+from app.core.transactions import lock_rows
+from app.core.deposits import set_deposit, record_movement
 from app.core.security import require_role, get_optional_current_user
 from app.core.config import settings
 from app.core.rate_limit import RateLimiter, get_client_ip
@@ -42,6 +44,21 @@ from app.core.audit import log_audit_event
 logger = logging.getLogger("tables")
 
 router = APIRouter(prefix="/tables", tags=["🪑 Stollar"])
+
+
+@router.get('/qr-image/{qr_token}')
+async def qr_image(qr_token: str, base_url: str = Query(..., max_length=512), db=Depends(get_db)):
+    from urllib.parse import urlparse
+    parsed = urlparse(base_url)
+    if parsed.scheme not in ('http', 'https') or not parsed.netloc:
+        raise HTTPException(422, 'QR uchun http yoki https manzil kiriting')
+    table = await db.scalar(select(Table).where(Table.qr_token == qr_token, Table.is_active == True))
+    if not table:
+        raise HTTPException(404, 'Stol topilmadi')
+    output = BytesIO()
+    qrcode.make(f'{base_url.rstrip("/")}/?table={qr_token}').save(output, format='PNG')
+    output.seek(0)
+    return StreamingResponse(output, media_type='image/png', headers={'Cache-Control': 'private, max-age=300'})
 
 def scan_rate_limit_key(request: Request) -> str:
     ip = get_client_ip(request)
@@ -648,7 +665,7 @@ async def get_table_bill(
 
         for item in o.items:
             m_id = item.menu_item_id
-            name = item.menu_item.name if item.menu_item else f"Taom #{m_id}"
+            name = item.name_snapshot or (item.menu_item.name if item.menu_item else f"Taom #{m_id}")
             size = (item.portion_size or "").strip() or None
             wt = item.weight if (item.weight and item.weight > 0) else None
             unit = (getattr(item.menu_item, "unit", None) or "dona") if item.menu_item else "dona"
@@ -657,7 +674,7 @@ async def get_table_bill(
             # qatorda turadi. Tortiladigan taom esa HECH QACHON
             # birlashtirilmaydi — har bir baliqning o'z og'irligi bor va
             # kassir uni alohida tuzata olishi kerak.
-            key = ("w", item.id) if weighed else (m_id, size, wt)
+            key = ("w", item.id) if weighed else (m_id, name, size, wt)
             if key not in items_map:
                 items_map[key] = {
                     "menu_item_id": m_id,
@@ -702,8 +719,11 @@ async def get_table_bill(
         cfg = rsettings.service_fee_percent if rsettings else None
         service_fee_percent = 12.0 if cfg is None else float(cfg)
 
-    service_fee_amount = round(subtotal * (service_fee_percent / 100.0), 2)
-    grand_total = round(subtotal + service_fee_amount, 2)
+    service_fee_amount = round(sum(round(sum(i.total_price or 0 for i in o.items) *
+        ((o.service_fee_percent if o.service_fee_percent is not None else service_fee_percent) / 100), 2) for o in orders), 2)
+    discount = sum(o.discount or 0 for o in orders)
+    grand_total = round(subtotal + service_fee_amount - discount, 2)
+    advance = (table.deposit_amount or 0) if has_open_bill else sum(o.advance_amount or 0 for o in orders)
 
     restaurant = table.restaurant
     restaurant_name = restaurant.name if restaurant else "Dunyo Choyxonasi"
@@ -735,8 +755,10 @@ async def get_table_bill(
         subtotal=subtotal,
         service_fee_percent=service_fee_percent,
         service_fee_amount=service_fee_amount,
-        discount=0.0,
+        discount=discount,
         grand_total=grand_total,
+        advance_amount=advance,
+        amount_due=max(0, grand_total - advance),
         has_active_orders=has_open_bill,
         is_paid=is_all_paid,
         created_at=earliest_time or table.created_at,
@@ -779,135 +801,22 @@ async def checkout_table(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_role("admin", "cashier", "developer")),
 ):
-    """Admin yoki ofitsiant stol hisobini yopadi, buyurtmalarni to'langan deb belgilaydi va stolni bo'shatadi"""
-    result = await db.execute(select(Table).where(Table.id == table_id))
-    table = result.scalar_one_or_none()
+    from app.routers.orders import checkout_order
+    from app.schemas.order import OrderCheckoutRequest
+    from app.core.idempotency import IdempotencyHandler
+    await lock_rows(db, Table, [table_id])
+    table = await db.scalar(select(Table).where(Table.id == table_id))
     if not table:
-        raise HTTPException(status_code=404, detail="Stol topilmadi")
-
-    method = (payload.payment_method if payload else "cash") or "cash"
-    if method not in ("cash", "card", "click"):
-        raise HTTPException(
-            status_code=400,
-            detail="Stolni yopishda faqat naqd, karta yoki Click qabul qilinadi. "
-                   "Nasiya uchun buyurtma kassasidan (checkout) foydalaning.",
-        )
-
-    set_res = await db.execute(
-        select(RestaurantSettings).where(RestaurantSettings.restaurant_id == table.restaurant_id)
-    )
-    rest_settings = set_res.scalar_one_or_none()
-    _cfg_fee = rest_settings.service_fee_percent if rest_settings else None
-    default_fee = 12.0 if _cfg_fee is None else float(_cfg_fee)
-
-    # Ushbu stoldagi barcha to'lanmagan faol buyurtmalarni PAID qilish
-    orders_res = await db.execute(
-        select(Order)
-        .options(selectinload(Order.items).selectinload(OrderItem.menu_item))
-        .where(
-            Order.table_id == table.id,
-            Order.is_paid == False,
-            Order.status != OrderStatus.CANCELLED,
-        )
-    )
-    active_orders = orders_res.scalars().all()
-
-    # Tortilmagan taom bo'lsa stolni yopib bo'lmaydi — summa noto'g'ri
-    # bo'lib qoladi (tortiladigan taom narxi 0 bo'lib hisoblanadi).
-    not_weighed = []
-    for o in active_orders:
-        for it in o.items:
-            mi = it.menu_item
-            priced = (it.manual_price is not None and it.manual_price >= 0) or \
-                     bool(it.weight and it.weight > 0)
-            if mi and getattr(mi, "is_weighted", False) and not priced:
-                not_weighed.append(mi.name)
-    if not_weighed:
-        raise HTTPException(
-            status_code=400,
-            detail="Stolni yopib bo'lmaydi: " + ", ".join(sorted(set(not_weighed))) +
-                   " narxi kiritilmagan. Ofitsiant panelida summasini yozing.",
-        )
-
-    closed_at = datetime.now(timezone.utc)
-    for o in active_orders:
-        # Summalarni qayta hisoblaymiz — hisobot va kassa mos kelishi uchun
-        subtotal = sum(i.total_price or 0.0 for i in o.items)
-        fee_pct = o.service_fee_percent if o.service_fee_percent is not None else default_fee
-        fee_amount = round(subtotal * (float(fee_pct) / 100.0), 2)
-        total = round(max(0.0, subtotal + fee_amount - (o.discount or 0.0)), 2)
-
-        o.subtotal = subtotal
-        o.service_fee_percent = fee_pct
-        o.service_fee_amount = fee_amount
-        o.total = total
-
-        # To'lovni kassaga yozamiz — aks holda buyurtma "to'langan" bo'lib
-        # ko'rinadi, lekin to'lovlar hisobotida 0 so'm bo'lib qoladi.
-        o.payment_method = method
-        o.cash_amount = total if method == "cash" else 0.0
-        o.card_amount = total if method == "card" else 0.0
-        o.click_amount = total if method == "click" else 0.0
-        o.debt_amount = 0.0
-
-        o.is_paid = True
-        o.status = OrderStatus.PAID
-        o.closed_at = closed_at
-        if o.call_waiter:
-            o.call_waiter = False
-            o.call_status = CallStatus.COMPLETED
-
-    table.status = TableStatus.AVAILABLE
-    table.is_unlocked = False
-    table.current_pin = None
-    table.reserved_by_name = None
-    table.reserved_by_phone = None
-    table.reserved_time = None
-    table.reserved_guests = None
-    table.deposit_amount = 0.0
-    table.reservation_note = None
-    await log_audit_event(
-        db=db,
-        restaurant_id=table.restaurant_id,
-        action="table_checkout",
-        user=current_user,
-        entity_type="table",
-        entity_id=table.id,
-        details={
-            "table_number": table.number,
-            "payment_method": method,
-            "orders_count": len(active_orders),
-            "order_numbers": [o.order_number for o in active_orders],
-        },
-    )
-    await db.flush()
-    await db.commit()
-
-    # Real-time WebSocket orqali xabar
-    await manager.broadcast_to_restaurant(
-        table.restaurant_id,
-        {
-            "type": "table_cleared",
-            "table_id": table.id,
-            "table_number": table.number,
-            "status": TableStatus.AVAILABLE.value,
-            "new_status": TableStatus.AVAILABLE.value,
-            "message": f"Stol #{table.number} hisobi yopildi va bo'shatildi",
-        },
-    )
-
-    # Mijoz stoliga xabar
-    await manager.broadcast_to_table(
-        table.restaurant_id,
-        table.id,
-        {
-            "type": "bill_paid",
-            "table_id": table.id,
-            "table_number": table.number,
-            "message": "To'lovingiz qabul qilindi. Tashrifingiz uchun rahmat!",
-        },
-    )
-
+        raise HTTPException(404, 'Stol topilmadi')
+    active_orders = await get_open_orders(db, table_id)
+    if not active_orders:
+        raise HTTPException(409, "Stolda yopiladigan ochiq hisob yo'q")
+    if len(active_orders) != 1:
+        raise HTTPException(409, "Stolda bir nechta eski hisob bor; kassa oynasida har birini alohida yoping")
+    method = (payload.payment_method if payload else 'cash') or 'cash'
+    await checkout_order(active_orders[0].id, OrderCheckoutRequest(payment_method=method),
+                         db, current_user, IdempotencyHandler(None, '', db))
+    await db.refresh(table)
     return TableResponse.model_validate(table)
 
 
@@ -933,6 +842,7 @@ async def remove_bill_items(
     uchun `order_item_ids` ro'yxati yuboriladi va kerakli soni
     oxirgisidan boshlab ayriladi.
     """
+    await lock_rows(db, Table, [table_id])
     res = await db.execute(select(Table).where(Table.id == table_id))
     table = res.scalar_one_or_none()
     if not table:
@@ -964,7 +874,9 @@ async def remove_bill_items(
             detail=f"Hisobda bu taomdan {available} ta bor — {to_remove} tasini olib bo'lmaydi.",
         )
 
-    removed_name = (items[0].menu_item.name if items[0].menu_item else "Taom")
+    from app.routers.orders import _send_cancellation_receipt, load_order_full
+    rsettings = await db.scalar(select(RestaurantSettings).where(RestaurantSettings.restaurant_id == table.restaurant_id))
+    removed_name = items[0].name_snapshot or (items[0].menu_item.name if items[0].menu_item else "Taom")
     removed = 0
     touched_orders = set()
 
@@ -975,10 +887,21 @@ async def remove_bill_items(
         qty = it.quantity or 0
         take = min(qty, to_remove - removed)
         removed += take
+        cancelled_qty = max(0, min(it.sent_quantity or 0, qty) - (qty - take))
+        if cancelled_qty:
+            full_order = await load_order_full(db, it.order_id)
+            await _send_cancellation_receipt(db, full_order, it.menu_item, cancelled_qty,
+                current_user.full_name or current_user.username, rsettings)
+            await log_audit_event(db=db, restaurant_id=table.restaurant_id, action='remove_kitchen_bill_item',
+                user=current_user, entity_type='order_item', entity_id=it.id,
+                details={'order_id':it.order_id,'cancelled_qty':cancelled_qty,'name':it.name_snapshot})
         if take >= qty:
+            full_order = await load_order_full(db, it.order_id)
+            full_order.items = [row for row in full_order.items if row.id != it.id]
             await db.delete(it)
         else:
             it.quantity = qty - take
+            it.prepared_quantity = min(it.prepared_quantity or 0, it.quantity)
             # Oshxonaga yuborilgan son ham kamayishi kerak, aks holda
             # qolgan qism keyin "yangi" bo'lib begunokdan qayta chiqadi.
             it.sent_quantity = min(it.sent_quantity or 0, it.quantity)
@@ -997,7 +920,7 @@ async def remove_bill_items(
 
     # Tegilgan buyurtmalarning summalarini qayta hisoblaymiz
     ord_res = await db.execute(
-        select(Order).options(selectinload(Order.items)).where(Order.id.in_(touched_orders))
+        select(Order).options(selectinload(Order.items)).where(Order.id.in_(touched_orders)).execution_options(populate_existing=True)
     )
     orders = ord_res.scalars().all()
     set_res = await db.execute(
@@ -1014,9 +937,18 @@ async def remove_bill_items(
         o.service_fee_percent = pct
         o.service_fee_amount = round(subtotal * (float(pct) / 100.0), 2)
         o.total = round(max(0.0, subtotal + o.service_fee_amount - (o.discount or 0.0)), 2)
+        if not o.items:
+            o.status = OrderStatus.CANCELLED
+
+    remaining = await db.scalar(select(func.count(Order.id)).where(Order.table_id == table_id,
+        Order.is_paid == False, Order.status.notin_([OrderStatus.PAID, OrderStatus.CANCELLED])))
+    if not remaining:
+        table.status = TableStatus.RESERVED if table.deposit_amount else TableStatus.AVAILABLE
+        table.is_occupied = False
 
     await db.flush()
     await db.commit()
+    wake_printer_worker()
 
     await manager.broadcast_to_restaurant(table.restaurant_id, {
         "type": "order_updated",
@@ -1056,6 +988,7 @@ async def set_table_service_fee(
     Restoranning umumiy sozlamasiga TEGILMAYDI: boshqa stollar
     avvalgidek ishlayveradi.
     """
+    await lock_rows(db, Table, [table_id])
     res = await db.execute(select(Table).where(Table.id == table_id))
     table = res.scalar_one_or_none()
     if not table:
@@ -1220,7 +1153,7 @@ async def print_table_bill(
         if ord.waiter:
             waiter_names.add(ord.waiter.full_name or ord.waiter.username)
         for it in ord.items:
-            dish_name = getattr(it.menu_item, "name_cyrillic", None) or (it.menu_item.name if it.menu_item else "Таом")
+            dish_name = it.name_snapshot or (it.menu_item.name if it.menu_item else "Таом")
             items_for_receipt.append({
                 "name": dish_name,
                 "quantity": it.quantity,
@@ -1336,6 +1269,7 @@ async def update_table(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_role("admin", "developer")),
 ):
+    await lock_rows(db, Table, [table_id])
     result = await db.execute(select(Table).where(Table.id == table_id))
     table = result.scalar_one_or_none()
     if not table:
@@ -1355,6 +1289,8 @@ async def update_table(
             exclude_id=table.id,
         )
 
+    if 'deposit_amount' in data:
+        await set_deposit(db, table, current_user, data.pop('deposit_amount'))
     for field, value in data.items():
         setattr(table, field, value)
 
@@ -1371,11 +1307,15 @@ async def reserve_table(
     current_user: User = Depends(require_role("waiter", "admin", "developer", "cashier")),
 ):
     """Stolni bron qilish va mijoz ma'lumotlari hamda zakalat summasini saqlash"""
+    await lock_rows(db, Table, [table_id])
     result = await db.execute(select(Table).where(Table.id == table_id))
     table = result.scalar_one_or_none()
     if not table:
         raise HTTPException(status_code=404, detail="Stol topilmadi")
 
+    if await open_orders_count(db, table.id):
+        raise HTTPException(409, "Ochiq hisob bor stolni bron qilib bo'lmaydi")
+    await set_deposit(db, table, current_user, float(payload.deposit_amount or 0))
     table.status = TableStatus.RESERVED
     c_name = payload.reserved_by_name or payload.name
     table.reserved_by_name = c_name.strip() if c_name else None
@@ -1384,7 +1324,6 @@ async def reserve_table(
     c_time = payload.reserved_time or payload.time
     table.reserved_time = c_time.strip() if c_time else None
     table.reserved_guests = payload.reserved_guests if payload.reserved_guests is not None else payload.guests
-    table.deposit_amount = float(payload.deposit_amount or 0.0)
     c_note = payload.reservation_note or payload.note
     table.reservation_note = c_note.strip() if c_note else None
 
@@ -1418,6 +1357,7 @@ async def update_table_status(
     current_user: User = Depends(require_role("waiter", "admin", "developer", "cashier")),
 ):
     """Ofitsiant yoki Admin stol holatini (available, occupied, reserved) o'zgartiradi"""
+    await lock_rows(db, Table, [table_id])
     result = await db.execute(select(Table).where(Table.id == table_id))
     table = result.scalar_one_or_none()
     if not table:
@@ -1469,6 +1409,8 @@ async def update_table_status(
     table.status = new_enum_status
 
     if new_enum_status == TableStatus.AVAILABLE:
+        if table.deposit_amount:
+            raise HTTPException(409, "Avansni hisobga o'tkazing yoki bron oynasida qaytaring")
         table.reserved_by_name = None
         table.reserved_by_phone = None
         table.reserved_time = None
@@ -1505,6 +1447,7 @@ async def transfer_table(
     current_user: User = Depends(require_role("waiter", "admin", "developer", "cashier")),
 ):
     """Buyurtmalarni boshqa stolga ko'chirish va stollar holatini sinxronlash"""
+    await lock_rows(db, Table, [from_table_id, to_table_id])
     if from_table_id == to_table_id:
         raise HTTPException(
             status_code=400,
@@ -1519,6 +1462,10 @@ async def transfer_table(
     if not from_table or not to_table:
         raise HTTPException(status_code=404, detail="Stol topilmadi")
 
+    if from_table.restaurant_id != to_table.restaurant_id:
+        raise HTTPException(403, "Boshqa restoranga ko'chirib bo'lmaydi")
+    if to_table.deposit_amount or to_table.status == TableStatus.RESERVED:
+        raise HTTPException(409, "Maqsad stol bron qilingan; bo'sh stol tanlang")
     to_open_count = await open_orders_count(db, to_table_id)
     if to_open_count > 0:
         raise HTTPException(
@@ -1546,6 +1493,9 @@ async def transfer_table(
 
     # Zakalat bo'lsa yangi stolga o'tkazish
     if (from_table.deposit_amount or 0.0) > 0:
+        amount = from_table.deposit_amount
+        await record_movement(db, from_table, current_user, -amount, 'transfer_out')
+        await record_movement(db, to_table, current_user, amount, 'transfer_in')
         to_table.deposit_amount = (to_table.deposit_amount or 0.0) + (from_table.deposit_amount or 0.0)
         to_table.reserved_by_name = to_table.reserved_by_name or from_table.reserved_by_name
         to_table.reserved_by_phone = to_table.reserved_by_phone or from_table.reserved_by_phone
@@ -1628,6 +1578,7 @@ async def clear_table(
     current_user: User = Depends(require_role("waiter", "admin", "developer", "cashier")),
 ):
     """Mijoz ketganidan keyin stolni bo'sh deb belgilash"""
+    await lock_rows(db, Table, [table_id])
     result = await db.execute(select(Table).where(Table.id == table_id))
     table = result.scalar_one_or_none()
     if not table:
@@ -1655,6 +1606,8 @@ async def clear_table(
         else:
             raise HTTPException(status_code=409, detail="Stolda ochiq hisob bor")
 
+    if table.deposit_amount:
+        raise HTTPException(409, "Avans bor: avval uni hisobga o'tkazing yoki bron oynasida qaytaring")
     table.status = TableStatus.AVAILABLE
     table.is_unlocked = False
     table.current_pin = None

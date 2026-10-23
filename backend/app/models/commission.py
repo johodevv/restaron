@@ -1,3 +1,4 @@
+from app.core.types import UTCDateTime
 """
 Developer komissiya hisoboti modeli
 """
@@ -16,8 +17,8 @@ class CommissionLog(Base):
     restaurant_id = Column(Integer, ForeignKey("restaurants.id"), nullable=False)
 
     # Hisobot davri
-    period_start = Column(DateTime(timezone=True), nullable=False)
-    period_end = Column(DateTime(timezone=True), nullable=False)
+    period_start = Column(UTCDateTime(), nullable=False)
+    period_end = Column(UTCDateTime(), nullable=False)
 
     # Moliyaviy
     total_revenue = Column(Float, nullable=False)           # Ushbu davrda daromad
@@ -27,10 +28,10 @@ class CommissionLog(Base):
 
     # To'lov holati
     is_paid = Column(Boolean, default=False)
-    paid_at = Column(DateTime(timezone=True), nullable=True)
+    paid_at = Column(UTCDateTime(), nullable=True)
     payment_note = Column(Text, nullable=True)
 
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    created_at = Column(UTCDateTime(), server_default=func.now())
 
     # Relationships
     restaurant = relationship("Restaurant", back_populates="commission_logs")

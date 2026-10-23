@@ -5,6 +5,7 @@ va Kassa smena hisoboti (X/Z Report) generatsiya qilish
 """
 import asyncio
 from datetime import datetime
+from app.core.timeutil import to_uz, uz_now
 from typing import List, Dict, Any, Optional
 
 
@@ -621,7 +622,7 @@ def format_kitchen_ticket(
     """
     col_width = receipt_columns(paper_width, font_size, char_spacing)
     sep = "-" * col_width
-    dt = order_time or datetime.now()
+    dt = to_uz(order_time) if order_time else uz_now()
     dt_str = dt.strftime("%d.%m.%Y | %H:%M")
 
     lines = []
@@ -737,6 +738,7 @@ def format_pre_check(
     paper_width: int = 80,
     font_size: str = DEFAULT_FONT_SIZE,
     char_spacing: Optional[int] = None,
+    advance_amount: float = 0.0,
 ) -> str:
     """
     Mijoz hisob cheki (Pre-check / Bill) — To'liq Kirill alifbosida
@@ -744,7 +746,7 @@ def format_pre_check(
     col_width = receipt_columns(paper_width, font_size, char_spacing)
     sep = "-" * col_width
     double_sep = "=" * col_width
-    dt = created_at or datetime.now()
+    dt = to_uz(created_at) if created_at else uz_now()
     dt_str = dt.strftime("%d.%m.%Y %H:%M")
 
     lines = []
@@ -896,6 +898,9 @@ def format_pre_check(
     lines.append(double_sep)
     total_str = f"{total:,.0f}".replace(",", " ")
     lines.append(_amount_line("ЖАМИ:" if narrow else "ЖАМИ ТЎЛОВ:", total_str, col_width))
+    if advance_amount:
+        lines.append(_amount_line('АВАНС:', f'{advance_amount:,.0f}'.replace(',', ' '), col_width))
+        lines.append(_amount_line('ҚОЛГАН ТЎЛОВ:', f'{max(0, total-advance_amount):,.0f}'.replace(',', ' '), col_width))
     lines.append(double_sep)
 
     if receipt_note:
@@ -956,9 +961,10 @@ def format_shift_report(
         lines.extend(_wrap_words(smena_s, col_width, indent="  "))
         lines.extend(_wrap_words(kassir_s, col_width, indent="  "))
     if opened_at:
+        opened_at = to_uz(opened_at)
         lines.extend(_wrap_words(f"Очилган: {opened_at.strftime('%d.%m.%Y %H:%M')}",
                                  col_width, indent="  "))
-    dt_close = closed_at or datetime.now()
+    dt_close = to_uz(closed_at) if closed_at else uz_now()
     lines.extend(_wrap_words(f"Ҳисобот: {dt_close.strftime('%d.%m.%Y %H:%M')}",
                              col_width, indent="  "))
     lines.append(sep)
@@ -1373,6 +1379,7 @@ def print_to_network_printer(
         }
 
     # 2. Chop etish
+    delivery_started = False
     try:
         payload = build_escpos_payload(raw_text, cut_paper=cut_paper,
                                        codepage=codepage, font_size=font_size,
@@ -1381,6 +1388,7 @@ def print_to_network_printer(
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         s.settimeout(2.5)
         s.connect((host, port))
+        delivery_started = True
         s.sendall(payload)
         s.close()
 
@@ -1394,6 +1402,7 @@ def print_to_network_printer(
         return {
             "success": False,
             "error": f"Printerga ulanib bo'lmadi ({host}:{port})",
+            "delivery_unknown": delivery_started,
         }
 
 
@@ -1428,6 +1437,7 @@ def print_to_windows_printer(
         logger.warning(f"USB printer '{target}' holat xatosi: {err_msg}")
         return {"success": False, "error": f"{err_msg}"}
 
+    delivery_started = False
     try:
         import win32print
 
@@ -1440,6 +1450,7 @@ def print_to_windows_printer(
             hJob = win32print.StartDocPrinter(hPrinter, 1, ("RestAron_Receipt", None, "RAW"))
             try:
                 win32print.StartPagePrinter(hPrinter)
+                delivery_started = True
                 win32print.WritePrinter(hPrinter, payload)
                 win32print.EndPagePrinter(hPrinter)
             finally:
@@ -1450,7 +1461,7 @@ def print_to_windows_printer(
         return {"success": True, "printer": target, "message": f"Chek '{target}' printeriga muvaffaqiyatli yuborildi"}
     except Exception as e:
         logger.error(f"Xprinter USB chop etishda xatolik: {e}")
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": str(e), "delivery_unknown": delivery_started}
 
 
 async def async_print_to_windows_printer(

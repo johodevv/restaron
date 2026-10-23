@@ -7,10 +7,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 from sqlalchemy.orm import selectinload
 from pydantic import BaseModel, Field
-from typing import Optional, List
+from typing import Optional, List, Literal
 
 from app.core.database import get_db
-from app.core.security import require_role
+from app.core.security import require_role, get_optional_current_user
 from app.models.restaurant import Restaurant, RestaurantSettings
 from app.models.commission import CommissionLog
 from app.models.order import Order, OrderStatus
@@ -39,24 +39,25 @@ class RestaurantUpdate(BaseModel):
 
 
 class SettingsUpdate(BaseModel):
+    active_themes: Optional[List[Literal['elegant-dark', 'fresh-green', 'warm-sunset', 'ocean-blue', 'royal-purple', 'minimalist-white']]] = Field(None, min_length=1, max_length=2)
     show_prices: Optional[bool] = None
     allow_orders: Optional[bool] = None
     allow_orders_from_qr: Optional[bool] = None
     allow_call_waiter: Optional[bool] = None
     allow_reviews: Optional[bool] = None
-    language: Optional[str] = None
-    service_fee_percent: Optional[float] = None
+    language: Optional[Literal['uz', 'oz', 'ru', 'en', 'uz_cyrillic']] = None
+    service_fee_percent: Optional[float] = Field(None, ge=0, le=100, allow_inf_nan=False)
     receipt_header: Optional[str] = None
     receipt_footer: Optional[str] = None
     receipt_address: Optional[str] = None
     receipt_phone: Optional[str] = None
     receipt_wifi_pass: Optional[str] = None
-    printer_paper_width: Optional[int] = None
-    printer_codepage: Optional[int] = None
-    printer_font_size: Optional[str] = None
-    printer_char_spacing: Optional[int] = None
-    printer_line_spacing: Optional[str] = None
-    archive_retention_years: Optional[int] = None
+    printer_paper_width: Optional[Literal[58, 80]] = None
+    printer_codepage: Optional[int] = Field(None, ge=0, le=255)
+    printer_font_size: Optional[Literal['normal', 'katta', 'juda_katta']] = None
+    printer_char_spacing: Optional[int] = Field(None, ge=0, le=10)
+    printer_line_spacing: Optional[Literal['zich', 'oddiy', 'keng', 'juda_keng']] = None
+    archive_retention_years: Optional[int] = Field(None, ge=1, le=20)
     allow_debt_payment: Optional[bool] = None
     enable_telegram_notifications: Optional[bool] = None
     telegram_bot_token: Optional[str] = None
@@ -127,6 +128,7 @@ async def list_restaurants(
 async def get_restaurant(
     restaurant_id: int,
     db: AsyncSession = Depends(get_db),
+    current_user = Depends(get_optional_current_user),
 ):
     result = await db.execute(
         select(Restaurant)
@@ -136,7 +138,23 @@ async def get_restaurant(
     r = result.scalar_one_or_none()
     if not r:
         raise HTTPException(status_code=404, detail="Restoran topilmadi")
-    return r
+    public_fields = ('id', 'name', 'slug', 'description', 'logo_url', 'address', 'phone', 'email', 'is_active')
+    result = {field: getattr(r, field) for field in public_fields}
+    public_settings = ('show_prices', 'allow_orders', 'allow_orders_from_qr', 'allow_call_waiter',
+                       'allow_reviews', 'language', 'service_fee_percent', 'direct_qr_access',
+                       'allow_debt_payment', 'enable_chef_kds')
+    private = current_user is not None and current_user.role in ('admin', 'developer')
+    if r.settings:
+        fields = [c.name for c in RestaurantSettings.__table__.columns] if private else public_settings
+        result['settings'] = {field: getattr(r.settings, field) for field in fields
+                              if field not in ('telegram_bot_token', 'sms_provider_api_key')}
+        result['settings']['active_themes'] = (r.settings.extra_settings or {}).get('active_themes', ['elegant-dark', 'fresh-green'])
+        if private:
+            for field in ('telegram_bot_token', 'sms_provider_api_key'):
+                result['settings'][field + '_configured'] = bool(getattr(r.settings, field))
+    else:
+        result['settings'] = None
+    return result
 
 
 @router.patch("/{restaurant_id}", summary="Restoran ma'lumotlarini yangilash")
@@ -170,6 +188,13 @@ async def update_settings(
     if not settings:
         raise HTTPException(status_code=404, detail="Sozlamalar topilmadi")
     for field, value in payload.model_dump(exclude_unset=True).items():
+        if value is None:
+            continue
+        if field in ('telegram_bot_token', 'sms_provider_api_key') and not value:
+            continue
+        if field == 'active_themes':
+            settings.extra_settings = {**(settings.extra_settings or {}), 'active_themes': list(dict.fromkeys(value))}
+            continue
         setattr(settings, field, value)
     await db.flush()
     return {"success": True}

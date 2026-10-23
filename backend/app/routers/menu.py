@@ -7,7 +7,7 @@ import aiofiles
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, delete
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import selectinload, with_loader_criteria
 from typing import List, Optional
 
 from app.core.database import get_db
@@ -194,7 +194,7 @@ async def get_category_with_items(
 ):
     result = await db.execute(
         select(Category)
-        .options(selectinload(Category.items))
+        .options(selectinload(Category.items), with_loader_criteria(MenuItem, MenuItem.is_deleted == False))
         .where(Category.id == category_id)
     )
     category = result.scalar_one_or_none()
@@ -209,7 +209,7 @@ async def get_full_menu(restaurant_id: int, db: AsyncSession = Depends(get_db)):
     """Mijoz QR orqali kirganida to'liq menyuni oladi (auth kerak emas)"""
     result = await db.execute(
         select(Category)
-        .options(selectinload(Category.items))
+        .options(selectinload(Category.items), with_loader_criteria(MenuItem, MenuItem.is_deleted == False))
         .where(Category.restaurant_id == restaurant_id, Category.is_active == True)
         .order_by(Category.sort_order)
     )
@@ -335,7 +335,12 @@ async def update_menu_item(
     item = result.scalar_one_or_none()
     if not item:
         raise HTTPException(status_code=404, detail="Taom topilmadi")
-    for field, value in payload.model_dump(exclude_unset=True).items():
+    data = payload.model_dump(exclude_unset=True)
+    if any(field in data and data[field] != getattr(item, field) for field in ('is_weighted', 'unit')):
+        used = await db.scalar(select(OrderItem.id).where(OrderItem.menu_item_id == item.id).limit(1))
+        if used:
+            raise HTTPException(409, "Buyurtmalarda ishlatilgan taomning o'lchov turini almashtirmang. Yangi taom oching")
+    for field, value in data.items():
         setattr(item, field, value)
     await db.flush()
     await db.refresh(item)
@@ -353,14 +358,11 @@ async def delete_menu_item(
     if not item:
         raise HTTPException(status_code=404, detail="Taom topilmadi")
 
-    # Agar taom eski buyurtmalarda qatnashgan bo'lsa ham, xato bermasdan toza o'chirish
-    await db.execute(delete(OrderItem).where(OrderItem.menu_item_id == item.id))
-
-    old_image_url = item.image_url
-    await db.delete(item)
-    await db.commit()
-    if old_image_url:
-        _remove_upload_file(old_image_url)
+    # Keep the item and its image for historical receipts and open orders.
+    item.is_deleted = True
+    item.is_available = False
+    item.is_stop_list = True
+    await db.flush()
 
 
 @router.patch("/items/{item_id}/toggle-stop-list", response_model=MenuItemResponse, summary="Stop-List (Tugadi / Mavjud) 1 bosishda")
@@ -377,6 +379,8 @@ async def toggle_stop_list(
     if not item:
         raise HTTPException(status_code=404, detail="Taom topilmadi")
 
+    if item.is_deleted:
+        raise HTTPException(409, "O'chirilgan taomni stop-list orqali tiklab bo'lmaydi")
     # Holatni teskarisiga o'zgartirish
     new_stop_state = not bool(item.is_stop_list)
     item.is_stop_list = new_stop_state

@@ -1,3 +1,4 @@
+from app.core.types import UTCDateTime
 """
 Cheklar Arxivi va Smena Hisobotlari (X/Z Report) modellari
 Xprinter uchun barcha ma'lumotlar 3 yilgacha saqlanadi
@@ -41,6 +42,7 @@ class ReceiptArchive(Base):
     card_amount = Column(Float, default=0.0)
     click_amount = Column(Float, default=0.0)
     debt_amount = Column(Float, default=0.0)
+    advance_amount = Column(Float, default=0.0, nullable=False)
 
     # Mahsulotlar (JSON formatida to'liq nusxasi)
     items_json = Column(JSON, nullable=True)
@@ -49,7 +51,7 @@ class ReceiptArchive(Base):
     # Xprinter uchun tayyorlangan matn (58mm/80mm format)
     raw_text = Column(Text, nullable=True)
 
-    created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
+    created_at = Column(UTCDateTime(), server_default=func.now(), index=True)
 
     # Relationships
     restaurant = relationship("Restaurant", back_populates="receipt_archives")
@@ -72,8 +74,8 @@ class ShiftReport(Base):
     shift_number = Column(Integer, default=1)
     report_type = Column(String(20), default="z_report")  # "x_report" yoki "z_report"
 
-    opened_at = Column(DateTime(timezone=True), nullable=True)
-    closed_at = Column(DateTime(timezone=True), nullable=True)
+    opened_at = Column(UTCDateTime(), nullable=True)
+    closed_at = Column(UTCDateTime(), nullable=True)
 
     total_orders = Column(Integer, default=0)
     total_sales = Column(Float, default=0.0)
@@ -89,7 +91,7 @@ class ShiftReport(Base):
     items_breakdown = Column(JSON, nullable=True)
 
     is_closed = Column(Boolean, default=False)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    created_at = Column(UTCDateTime(), server_default=func.now())
 
     # Relationships
     restaurant = relationship("Restaurant", back_populates="shift_reports")

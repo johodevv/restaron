@@ -77,6 +77,10 @@ async def setup_test_data_10b():
             t301.qr_token = "qr-token-301"
 
         # Open order for table 301
+        from app.models.menu import Category, MenuItem
+        from app.models.order import OrderItem
+        session.add(Category(id=91001, restaurant_id=1, name='Permission test dishes'))
+        session.add(MenuItem(id=91001, category_id=91001, name='Permission test dish', price=10000))
         ord1 = await session.get(Order, 2001)
         if not ord1:
             ord1 = Order(
@@ -93,6 +97,7 @@ async def setup_test_data_10b():
                 total=11000.0,
             )
             session.add(ord1)
+            session.add(OrderItem(order_id=2001, menu_item_id=91001, quantity=1, unit_price=10000, total_price=10000))
         else:
             ord1.restaurant_id = 1
             ord1.table_id = 301

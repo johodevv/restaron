@@ -124,16 +124,27 @@ async def _execute_print_job(job_id: int):
     3. Muvaffaqiyat (done) yoki xato (attempts += 1, backoff, alert)
     """
     from app.core.database import AsyncSessionLocal
+    from app.core.database import write_session
     from app.core.printer_service import async_print_to_windows_printer
     from app.websockets.manager import manager as ws_manager
 
     # 1. Bazadan ishni olish va status='printing' qilish
-    async with AsyncSessionLocal() as session:
-        job = await session.get(PrintJob, job_id)
-        if not job or job.status != "pending":
+    async with write_session() as session:
+        claimed = await session.execute(update(PrintJob).where(
+            PrintJob.id == job_id, PrintJob.status == 'pending').values(status='printing'))
+        if claimed.rowcount != 1:
+            await session.rollback()
             return
-        job.status = "printing"
         await session.commit()
+        job = await session.get(PrintJob, job_id)
+        if job.order_id is not None:
+            from app.models.order import Order
+            if await session.scalar(select(Order.id).where(Order.id == job.order_id, Order.restaurant_id == job.restaurant_id)) is None:
+                job.status = 'uncertain'
+                job.alerted = True
+                job.last_error = 'Eski printer vazifasining buyurtmasi topilmadi. Avtomatik chop etish to‘xtatildi.'
+                await session.commit()
+                return
 
         raw_text = job.raw_text
         printer_name = job.printer_name
@@ -149,9 +160,11 @@ async def _execute_print_job(job_id: int):
             **options,
         )
         success = bool(res.get("success"))
+        delivery_unknown = bool(res.get('delivery_unknown'))
         error_msg = res.get("error") if not success else None
     except Exception as e:
         success = False
+        delivery_unknown = True
         error_msg = str(e)
 
     # 3. Natijani qayd etish
@@ -160,7 +173,7 @@ async def _execute_print_job(job_id: int):
     should_send_ok = False
     pending_count = 0
 
-    async with AsyncSessionLocal() as session:
+    async with write_session() as session:
         job = await session.get(PrintJob, job_id)
         if not job:
             return
@@ -174,6 +187,11 @@ async def _execute_print_job(job_id: int):
                 logger.info(f"PrintJob #{job_id} muvaffaqiyatli chop etildi (alert holati yechildi)")
             else:
                 logger.info(f"PrintJob #{job_id} muvaffaqiyatli chop etildi")
+        elif delivery_unknown:
+            job.status = 'uncertain'
+            job.last_error = 'Printerga uzatish natijasi noaniq. Chek chiqqanini tekshiring: ' + (error_msg or '')
+            job.alerted = True
+            should_send_alert = True
         else:
             job.attempts += 1
             job.last_error = error_msg or "Chop etishda noma'lum xatolik"
@@ -248,11 +266,12 @@ async def _worker_loop():
     try:
         from app.core.database import AsyncSessionLocal
         async with AsyncSessionLocal() as session:
-            # Startda status='printing' bo'lib qolgan ishlarni pending ga qaytar
+            # Startda uzatish natijasi noma'lum ishlarni operator tekshiruviga o'tkaz
             await session.execute(
                 update(PrintJob)
                 .where(PrintJob.status == "printing")
-                .values(status="pending", next_attempt_at=datetime.now(timezone.utc))
+                .values(status="uncertain", alerted=True,
+                        last_error="Server chek uzatilayotganda to'xtagan. Chek chiqqanini tekshiring")
             )
             # done ishlarni 7 kundan keyin o'chir (startda)
             cutoff = datetime.now(timezone.utc) - timedelta(days=7)
@@ -261,7 +280,7 @@ async def _worker_loop():
                 .where(PrintJob.status == "done", PrintJob.created_at < cutoff)
             )
             await session.commit()
-            logger.info("Printer worker: start tozalash yakunlandi (printing->pending tiklandi, 7+ kunlik done o'chirildi)")
+            logger.info("Printer worker: start tozalash yakunlandi (printing->uncertain belgilandi, 7+ kunlik done o'chirildi)")
     except Exception as e:
         logger.error(f"Printer worker start tozalashda xatolik: {e}")
 
@@ -342,9 +361,10 @@ async def stop_printer_worker():
         _worker_task = None
 
     if _running_tasks:
-        for t in list(_running_tasks):
+        _, pending = await asyncio.wait(list(_running_tasks), timeout=5)
+        for t in pending:
             t.cancel()
-        await asyncio.gather(*_running_tasks, return_exceptions=True)
+        await asyncio.gather(*pending, return_exceptions=True)
         _running_tasks.clear()
 
     logger.info("Printer persistent worker to'xtatildi")

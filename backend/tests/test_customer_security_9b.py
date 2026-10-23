@@ -300,16 +300,16 @@ async def test_call_waiter_rate_limiting():
     rate_limiter_storage._records.clear()
 
     # Birinchi chaqiruv stol 601 uchun -> 200 OK
-    r1 = client.post("/api/v1/orders/call-waiter", json={"table_id": 601})
+    r1 = client.post("/api/v1/orders/call-waiter", json={"table_id": 601, "qr_token": "qr-token-601"})
     assert r1.status_code == 200
 
     # 20 soniya ichida takroriy chaqiruv -> 429
-    r2 = client.post("/api/v1/orders/call-waiter", json={"table_id": 601})
+    r2 = client.post("/api/v1/orders/call-waiter", json={"table_id": 601, "qr_token": "qr-token-601"})
     assert r2.status_code == 429
     assert "Ofitsiant chaqirildi, biroz kuting." in r2.json()["detail"]
 
     # Boshqa stol 602 uchun chaqiruv bloklanmasligi kerak -> 200 OK
-    r3 = client.post("/api/v1/orders/call-waiter", json={"table_id": 602})
+    r3 = client.post("/api/v1/orders/call-waiter", json={"table_id": 602, "qr_token": "qr-token-602"})
     assert r3.status_code == 200
 
 

@@ -10,7 +10,9 @@ from typing import List, Optional
 
 from app.core.database import get_db
 from app.core.security import require_role
-from app.models.debt import Debt
+from app.models.debt import Debt, DebtPaymentRecord
+from app.core.transactions import lock_rows
+from app.core.idempotency import IdempotencyHandler, get_idempotency_handler
 from app.models.restaurant import Restaurant, RestaurantSettings
 from app.models.user import User
 from app.schemas.debt import (
@@ -57,7 +59,7 @@ async def list_debts(
 async def get_debt_stats(
     restaurant_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role("admin", "developer")),
+    current_user: User = Depends(require_role("admin", "cashier", "developer")),
 ):
     """Umumiy qarz summasi, yig'ilgan summa va qarzdorlar soni"""
     res = await db.execute(
@@ -145,8 +147,13 @@ async def pay_debt(
     payload: DebtPayment,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_role("admin", "cashier", "developer")),
+    idempotency: IdempotencyHandler = Depends(get_idempotency_handler),
 ):
     """Qarzga to'lov kiritish (faqat admin, cashier, developer)"""
+    cached = await idempotency.get_cached_response(current_user.id)
+    if cached is not None:
+        return cached
+    await lock_rows(db, Debt, [debt_id])
     result = await db.execute(select(Debt).where(Debt.id == debt_id))
     debt = result.scalar_one_or_none()
     if not debt:
@@ -169,6 +176,8 @@ async def pay_debt(
 
     debt.paid_amount = round(min(debt.amount or 0.0, (debt.paid_amount or 0.0) + payload.payment_amount), 2)
     debt.remaining_amount = round(max(0.0, (debt.amount or 0.0) - debt.paid_amount), 2)
+    db.add(DebtPaymentRecord(debt_id=debt.id, restaurant_id=debt.restaurant_id,
+                            user_id=current_user.id, amount=payload.payment_amount, note=payload.note))
 
     if debt.remaining_amount <= 0:
         debt.status = "paid"
@@ -199,7 +208,9 @@ async def pay_debt(
         },
     )
 
-    return debt
+    response = DebtResponse.model_validate(debt)
+    await idempotency.save_response(current_user.id, response)
+    return response
 
 
 @router.post("/{debt_id}/send-sms", summary="Qarzdorga SMS eslatma yuborish")

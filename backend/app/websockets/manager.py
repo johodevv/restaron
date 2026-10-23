@@ -6,6 +6,7 @@ import time
 from datetime import datetime, timezone
 from typing import Dict, Set, Optional, List, Any
 from fastapi import WebSocket
+from fastapi.encoders import jsonable_encoder
 
 
 class ConnectionManager:
@@ -75,12 +76,12 @@ class ConnectionManager:
                     if not self._restaurant_connections[restaurant_id]:
                         del self._restaurant_connections[restaurant_id]
 
-    async def _send_with_timeout(self, websocket: WebSocket, message: dict, timeout: float = 2.0) -> bool:
+    async def _send_with_timeout(self, websocket: WebSocket, message: dict, timeout: float = 2.0, encoded: bool = False) -> bool:
         """Bitta mijozga timeout (2.0s) bilan xabar yuborish.
         Timeout yoki xatolik bo'lsa ulanishni uzib, ro'yxatdan olib tashlaydi.
         """
         try:
-            await asyncio.wait_for(websocket.send_json(message), timeout=timeout)
+            await asyncio.wait_for(websocket.send_json(message if encoded else jsonable_encoder(message)), timeout=timeout)
             return True
         except Exception:
             try:
@@ -98,7 +99,8 @@ class ConnectionManager:
         """Ulanishlarga ketma-ket emas, asyncio.gather bilan parallel yuborish (timeout=2.0)"""
         if not target_sockets:
             return
-        tasks = [self._send_with_timeout(ws, message, timeout=2.0) for ws in target_sockets]
+        encoded = jsonable_encoder(message)
+        tasks = [self._send_with_timeout(ws, encoded, timeout=2.0, encoded=True) for ws in target_sockets]
         await asyncio.gather(*tasks, return_exceptions=True)
 
     async def send_to_user(self, restaurant_id: int, user_id: int, message: dict):

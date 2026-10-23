@@ -39,20 +39,24 @@ class OrderItemResponse(BaseModel):
     # quantity > sent_quantity bo'lsa — farqi hali yuborilmagan.
     sent_quantity: int = 0
     is_prepared: bool = False
+    prepared_quantity: int = 0
+    kitchen_pending_quantity: int = 0
     prepared_at: Optional[datetime] = None
 
     # Nested menu item info
     menu_item_name: Optional[str] = None
     menu_item_image: Optional[str] = None
+    kitchen_station: str = 'hot_kitchen'
 
     model_config = {"from_attributes": True}
 
 
 # ─── Order ────────────────────────────────────────────────
 class OrderCreate(BaseModel):
+    qr_token: Optional[str] = Field(default=None, max_length=200)
     restaurant_id: Optional[int] = None     # Stolsiz buyurtmalarda (takeaway / delivery) talab qilinadi
     table_id: Optional[int] = None
-    order_type: str = "dine_in"             # "dine_in", "takeaway", "delivery"
+    order_type: Literal['dine_in', 'takeaway', 'delivery', 'table'] = "dine_in"
     customer_name: Optional[str] = Field(default=None, max_length=100)
     customer_phone: Optional[str] = Field(default=None, max_length=30)
     delivery_address: Optional[str] = Field(default=None, max_length=500)
@@ -64,20 +68,25 @@ class WaiterOrderCreate(BaseModel):
     """Ofitsiant yoki kassir yangi zakaz yaratishi (dine_in, takeaway, delivery)"""
     restaurant_id: int
     table_id: Optional[int] = None
-    order_type: str = "dine_in"             # "dine_in", "takeaway", "delivery", "table"
+    order_type: Literal['dine_in', 'takeaway', 'delivery', 'table'] = "dine_in"
     hall_name: Optional[str] = Field(default=None, max_length=100)         # "Балкон", "Хона", "Тераса"
     customer_name: Optional[str] = Field(default=None, max_length=100)
     customer_phone: Optional[str] = Field(default=None, max_length=30)      # Delivery / Takeaway uchun
     delivery_address: Optional[str] = Field(default=None, max_length=500)   # Delivery manzili
     kitchen_note: Optional[str] = Field(default=None, max_length=500)      # Комент. к кухне
     receipt_note: Optional[str] = Field(default=None, max_length=500)      # Комент. к чеку
-    items: List[OrderItemCreate] = []
+    items: List[OrderItemCreate] = Field(default_factory=list, max_length=100)
+    draft: bool = False
 
 
 class WaiterAddItemsRequest(BaseModel):
     """Ochiq stolga qo'shimcha taomlar qo'shish (Dozakaz)"""
-    items: List[OrderItemCreate] = Field(..., min_length=1)
+    items: List[OrderItemCreate] = Field(..., min_length=1, max_length=100)
     send_to_kitchen_immediately: bool = False
+
+
+class PrepareItemRequest(BaseModel):
+    expected_sent_quantity: Optional[int] = Field(default=None, ge=0)
 
 
 class UpdateItemQtyRequest(BaseModel):
@@ -125,6 +134,7 @@ class OrderNoteUpdate(BaseModel):
 class OrderCheckoutRequest(BaseModel):
     """Kassada to'lovni qabul qilish va hisobni yopish"""
     payment_method: Literal["cash", "card", "click", "debt", "mixed"] = "cash"
+    expected_version: Optional[int] = Field(None, ge=1)
     cash_amount: float = Field(default=0.0, ge=0, le=10_000_000_000)
     card_amount: float = Field(default=0.0, ge=0, le=10_000_000_000)
     click_amount: float = Field(default=0.0, ge=0, le=10_000_000_000)
@@ -141,6 +151,7 @@ class OrderCheckoutRequest(BaseModel):
 
 class CallWaiterRequest(BaseModel):
     table_id: int = Field(..., gt=0)
+    qr_token: Optional[str] = Field(default=None, max_length=100)
     note: Optional[str] = Field(default=None, max_length=255)
 
 
@@ -155,7 +166,9 @@ class OrderDeliverRequest(BaseModel):
 
 
 class OrderResponse(BaseModel):
+    integrity_warning: Optional[str] = None
     id: int
+    version: int = 1
     order_number: str
     restaurant_id: int
     table_id: Optional[int] = None
@@ -183,6 +196,8 @@ class OrderResponse(BaseModel):
     card_amount: float = 0.0
     click_amount: float = 0.0
     debt_amount: float = 0.0
+    advance_amount: float = 0.0
+    amount_due: float = 0.0
     waiter_share_amount: float = 0.0
     call_waiter: bool = False
     call_status: Optional[CallStatus] = None
@@ -266,6 +281,8 @@ class TableBillResponse(BaseModel):
     service_fee_amount: float
     discount: float = 0.0
     grand_total: float
+    advance_amount: float = 0
+    amount_due: float = 0
     has_active_orders: bool
     is_paid: bool
     created_at: Optional[datetime] = None

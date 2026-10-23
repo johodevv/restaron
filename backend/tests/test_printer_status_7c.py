@@ -124,10 +124,16 @@ def test_receipt_columns_80mm_constant():
     assert PRINT_DOTS_80 // FONT_A_W == 48
 
 
-def test_api_printers_health_and_test_print():
+@pytest.mark.anyio
+async def test_api_printers_health_and_test_print():
     """3 va 4: GET /receipts/printers/health va POST /receipts/printers/test-print endpointlari"""
     from app.core.security import get_current_user
     from app.models.user import User, UserRole
+    from app.models.restaurant import Restaurant
+    from app.core.database import AsyncSessionLocal
+    async with AsyncSessionLocal() as db:
+        db.add(Restaurant(id=1, name='Printer API test', slug='printer-api-test'))
+        await db.commit()
 
     mock_admin = User(
         id=1,

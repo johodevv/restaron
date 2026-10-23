@@ -317,7 +317,7 @@ async def get_payments_report(
     end_date: Optional[str] = Query(None, description="YYYY-MM-DD"),
     waiter_id: Optional[int] = Query(None),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role("admin", "developer", "waiter")),
+    current_user: User = Depends(require_role("admin", "cashier", "developer", "waiter")),
 ):
     """
     Kassa to'lovlar hisoboti (Ali Poster 'Отчет по оплатам' oynasining to'liq analogi):
@@ -399,6 +399,7 @@ async def get_payments_report(
             Order.card_amount,
             Order.click_amount,
             Order.debt_amount,
+            Order.advance_amount,
             Order.created_at,
             Order.closed_at,
             Order.total,
@@ -446,6 +447,7 @@ async def get_payments_report(
             "card_amount": c_card,
             "click_amount": c_click,
             "debt_amount": c_debt,
+            "advance_amount": float(r.advance_amount or 0),
             "created_at": format_uz(r.created_at, "%d.%m.%Y %H:%M"),
             "closed_at": format_uz(r.closed_at, "%d.%m.%Y %H:%M") if r.closed_at else "Hali yopilmagan",
             "total": tot,
@@ -456,7 +458,12 @@ async def get_payments_report(
             "is_paid": bool(r.is_paid),
         })
 
+    from app.core.deposits import extra_cash_in_range
+    deposit_cash, debt_collections = await extra_cash_in_range(db, restaurant_id, start_utc, end_utc) if not waiter_id else (0, 0)
     return {
+        "deposit_cash": deposit_cash,
+        "debt_collections": debt_collections,
+        "total_cash_in_drawer": round(float(agg_row.total_cash or 0) + deposit_cash + debt_collections, 2),
         "start_date": (s_date or to_uz(start_utc).date()).strftime("%Y-%m-%d"),
         "end_date": (e_date or (to_uz(end_utc) - timedelta(seconds=1)).date()).strftime("%Y-%m-%d"),
         "orders_count": int(agg_row.orders_count or 0),

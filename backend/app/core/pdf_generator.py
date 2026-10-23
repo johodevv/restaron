@@ -8,6 +8,7 @@ import os
 import re
 import asyncio
 import logging
+from io import BytesIO
 from datetime import datetime
 from typing import Optional, List, Dict, Any
 
@@ -87,13 +88,15 @@ def generate_checkout_receipt_pdf_sync(data: Dict[str, Any]) -> str:
     _init_fonts()
     from reportlab.pdfgen import canvas
 
-    now_dt = data.get("created_at") or datetime.now()
+    from app.core.timeutil import to_uz, uz_now
+    now_dt = data.get("created_at") or uz_now()
     if isinstance(now_dt, str):
         try:
             now_dt = datetime.fromisoformat(now_dt)
         except Exception:
-            now_dt = datetime.now()
+            now_dt = uz_now()
 
+    now_dt = to_uz(now_dt)
     date_str = now_dt.strftime("%Y-%m-%d")
     time_str = now_dt.strftime("%H:%M:%S")
 
@@ -117,244 +120,277 @@ def generate_checkout_receipt_pdf_sync(data: Dict[str, Any]) -> str:
 
     items: List[Dict[str, Any]] = data.get("items") or []
 
-    # Dinamik balandlikni hisoblash (chek qog'ozi behuda cho'zilib ketmasligi uchun)
-    base_height = 240.0  # Sarlavha, jadvallar, yakuniy qism va footer
-    item_height = len(items) * 22.0
-    notes_height = 25.0 if data.get("receipt_note") else 0.0
-    deliv_extra = 25.0 if (data.get("delivery_address") or data.get("customer_phone")) else 0.0
-    page_height = max(280.0, base_height + item_height + notes_height + deliv_extra)
+    def render(target, page_height):
+        c = canvas.Canvas(target, pagesize=(page_width, page_height))
+        c.setTitle(f"Chek #{clean_num}")
+        # Chizish koordinatalari (yuqoridan pastga)
+        y = page_height - 20.0
 
-    c = canvas.Canvas(pdf_path, pagesize=(page_width, page_height))
-    c.setTitle(f"Chek #{clean_num}")
+        def wrapped(text, width, font=None, size=None):
+            from reportlab.pdfbase.pdfmetrics import stringWidth
+            font, size = font or c._fontname, size or c._fontsize
+            lines, line = [], ''
+            for word in str(text).split():
+                candidate = f'{line} {word}'.strip()
+                if stringWidth(candidate, font, size) <= width:
+                    line = candidate
+                    continue
+                if line:
+                    lines.append(line)
+                line = ''
+                for char in word:
+                    if line and stringWidth(line + char, font, size) > width:
+                        lines.append(line)
+                        line = ''
+                    line += char
+            return lines + ([line] if line else [])
 
-    # Chizish koordinatalari (yuqoridan pastga)
-    y = page_height - 20.0
+        def text_lines(text, leading=10, centered=False):
+            nonlocal y
+            for line in wrapped(text, usable_width):
+                if centered:
+                    c.drawCentredString(page_width / 2, y, line)
+                else:
+                    c.drawString(margin, y, line)
+                y -= leading
 
-    def draw_dashed_line(cur_y: float):
-        c.setDash(2, 2)
-        c.setStrokeColorRGB(0.5, 0.5, 0.5)
-        c.line(margin, cur_y, page_width - margin, cur_y)
-        c.setDash([])
-        c.setStrokeColorRGB(0, 0, 0)
+        def draw_dashed_line(cur_y: float):
+            c.setDash(2, 2)
+            c.setStrokeColorRGB(0.5, 0.5, 0.5)
+            c.line(margin, cur_y, page_width - margin, cur_y)
+            c.setDash([])
+            c.setStrokeColorRGB(0, 0, 0)
 
-    def draw_solid_line(cur_y: float):
-        c.setStrokeColorRGB(0.2, 0.2, 0.2)
-        c.setLineWidth(0.8)
-        c.line(margin, cur_y, page_width - margin, cur_y)
+        def draw_solid_line(cur_y: float):
+            c.setStrokeColorRGB(0.2, 0.2, 0.2)
+            c.setLineWidth(0.8)
+            c.line(margin, cur_y, page_width - margin, cur_y)
 
-    # 1. Restoran nomi va rekvizitlari
-    rest_name = _clean_str(data.get("restaurant_name") or "Dunyo Choyxonasi")
-    c.setFont(_font_bold, 12)
-    c.drawCentredString(page_width / 2.0, y, rest_name[:30])
-    y -= 14.0
+        # 1. Restoran nomi va rekvizitlari
+        rest_name = _clean_str(data.get("restaurant_name") or "Choyxona")
+        c.setFont(_font_bold, 12)
+        text_lines(rest_name, 14, centered=True)
 
-    c.setFont(_font_regular, 8)
-    address = _clean_str(data.get("address") or "Xorazm viloyati, Xiva tumani")
-    if address:
-        c.drawCentredString(page_width / 2.0, y, address[:45])
-        y -= 11.0
+        c.setFont(_font_regular, 8)
+        address = _clean_str(data.get("address"))
+        if address:
+            text_lines(address, 11, centered=True)
 
-    phone = _clean_str(data.get("phone") or "+998884593400")
-    if phone:
-        c.drawCentredString(page_width / 2.0, y, f"Tel: {phone[:25]}")
-        y -= 11.0
+        phone = _clean_str(data.get("phone"))
+        if phone:
+            c.drawCentredString(page_width / 2.0, y, f"Tel: {phone[:25]}")
+            y -= 11.0
 
-    c.setFont(_font_bold, 9)
-    c.drawCentredString(page_width / 2.0, y, "★ KASSA TO'LOV CHEKI ★")
-    y -= 8.0
-
-    draw_dashed_line(y)
-    y -= 12.0
-
-    # 2. Buyurtma va stol ma'lumotlari
-    c.setFont(_font_regular, 7.5)
-    c.drawString(margin, y, f"Chek: {order_num}")
-    c.drawRightString(page_width - margin, y, f"Sana: {date_str} {time_str}")
-    y -= 10.0
-
-    order_type = _clean_str(data.get("order_type") or "dine_in").lower()
-    table_disp = _clean_str(data.get("table_name") or data.get("table_disp"))
-    if not table_disp:
-        if order_type == "delivery":
-            table_disp = "Yetkazib berish (Dostavka)"
-        elif order_type == "takeaway":
-            table_disp = "Olib ketish (Takeaway)"
-        else:
-            table_disp = "Kassa"
-
-    waiter_disp = _clean_str(data.get("waiter_name") or data.get("waiter_disp") or "Kassa")
-
-    if order_type in ("delivery", "takeaway"):
-        c.drawString(margin, y, f"Turi: {table_disp[:24]}")
-        c.drawRightString(page_width - margin, y, f"Kassir: {waiter_disp[:16]}")
-    else:
-        c.drawString(margin, y, f"Stol: {table_disp[:24]}")
-        c.drawRightString(page_width - margin, y, f"Ofitsiant: {waiter_disp[:16]}")
-    y -= 10.0
-
-    cust_name = _clean_str(data.get("customer_name"))
-    cust_phone = _clean_str(data.get("customer_phone"))
-    if cust_name or cust_phone:
-        disp_cust = cust_name
-        if cust_phone:
-            disp_cust = f"{cust_name} ({cust_phone})" if cust_name else f"Tel: {cust_phone}"
-        c.drawString(margin, y, f"Mijoz: {disp_cust[:38]}")
-        y -= 10.0
-
-    deliv_addr = _clean_str(data.get("delivery_address"))
-    if deliv_addr:
-        c.drawString(margin, y, f"Manzil: {deliv_addr[:40]}")
-        y -= 10.0
-
-    draw_solid_line(y)
-    y -= 11.0
-
-    # 3. Taomlar ro'yxati (Jadval sarlavhasi)
-    c.setFont(_font_bold, 7.5)
-    c.drawString(margin, y, "Taom nomi")
-    c.drawString(margin + 105, y, "Soni")
-    c.drawRightString(page_width - margin, y, "Jami")
-    y -= 4.0
-
-    draw_dashed_line(y)
-    y -= 10.0
-
-    # 4. Taomlar qatorlari
-    c.setFont(_font_regular, 7.5)
-    for it in items:
-        name = _clean_str(it.get("name") or "Taom")
-        qty = it.get("quantity") or 1
-        unit_price = it.get("unit_price") or 0.0
-        total_p = it.get("total_price") or (qty * unit_price)
-        weight = it.get("weight")
-
-        qty_str = f"{weight}kg" if weight else f"{qty} dona"
-
-        # 1-qator: Taom nomi
-        c.drawString(margin, y, name[:24])
-        # Soni va narxi
-        c.drawString(margin + 105, y, str(qty_str)[:8])
-        # Qator summasi
-        c.drawRightString(page_width - margin, y, _fmt_money(total_p))
-        y -= 9.0
-
-        # Agar narx yoki qo'shimcha ma'lumot bo'lsa
-        if weight:
-            c.setFont(_font_regular, 6.5)
-            c.setFillColorRGB(0.3, 0.3, 0.3)
-            c.drawString(margin + 6, y, f"(1 kg = {_fmt_money(unit_price)})")
-            c.setFillColorRGB(0, 0, 0)
-            c.setFont(_font_regular, 7.5)
-            y -= 8.0
-
-        spec_note = _clean_str(it.get("special_note"))
-        if spec_note:
-            c.setFont(_font_regular, 6.5)
-            c.setFillColorRGB(0.4, 0.4, 0.4)
-            c.drawString(margin + 6, y, f"• {spec_note[:32]}")
-            c.setFillColorRGB(0, 0, 0)
-            c.setFont(_font_regular, 7.5)
-            y -= 8.0
-
-        y -= 2.0
-
-    draw_solid_line(y)
-    y -= 11.0
-
-    # 5. Moliyaviy jami hisob-kitob
-    subtotal = float(data.get("subtotal") or 0.0)
-    fee_pct = float(data.get("service_fee_percent") or 0.0)
-    fee_amt = float(data.get("service_fee_amount") or (subtotal * fee_pct / 100.0))
-    discount = float(data.get("discount") or 0.0)
-    grand_total = float(data.get("total") or (subtotal + fee_amt - discount))
-
-    c.setFont(_font_regular, 7.5)
-    c.drawString(margin, y, "Oraliq jami:")
-    c.drawRightString(page_width - margin, y, _fmt_money(subtotal))
-    y -= 10.0
-
-    if fee_pct > 0:
-        c.drawString(margin, y, f"Xizmat haqi ({fee_pct:.0f}%):")
-        c.drawRightString(page_width - margin, y, _fmt_money(fee_amt))
-        y -= 10.0
-
-    if discount > 0:
-        c.drawString(margin, y, "Chegirma:")
-        c.drawRightString(page_width - margin, y, f"-{_fmt_money(discount)}")
-        y -= 10.0
-
-    draw_dashed_line(y)
-    y -= 12.0
-
-    # JAMI SUMMA (Katta va qalin)
-    c.setFont(_font_bold, 10.5)
-    c.drawString(margin, y, "JAMI TO'LOV:")
-    c.drawRightString(page_width - margin, y, _fmt_money(grand_total))
-    y -= 13.0
-
-    # To'lov turi
-    pay_method = _clean_str(data.get("payment_method") or "cash").upper()
-    pay_uz = {
-        "CASH": "Naqd pul",
-        "CARD": "Plastik karta (Terminal)",
-        "CLICK": "Click / Payme",
-        "DEBT": "Nasiya (Qarz)",
-        "MIXED": "Aralash to'lov",
-    }.get(pay_method, pay_method)
-
-    c.setFont(_font_bold, 7.5)
-    c.drawString(margin, y, "To'lov turi:")
-    c.drawRightString(page_width - margin, y, pay_uz)
-    y -= 10.0
-
-    # Aralash to'lov tafsiloti bo'lsa
-    cash_a = float(data.get("cash_amount") or 0.0)
-    card_a = float(data.get("card_amount") or 0.0)
-    click_a = float(data.get("click_amount") or 0.0)
-    debt_a = float(data.get("debt_amount") or 0.0)
-    if pay_method == "MIXED":
-        c.setFont(_font_regular, 6.5)
-        if cash_a > 0:
-            c.drawString(margin + 10, y, f"Naqd: {_fmt_money(cash_a)}")
-            y -= 8.0
-        if card_a > 0:
-            c.drawString(margin + 10, y, f"Karta: {_fmt_money(card_a)}")
-            y -= 8.0
-        if click_a > 0:
-            c.drawString(margin + 10, y, f"Click: {_fmt_money(click_a)}")
-            y -= 8.0
-        if debt_a > 0:
-            c.drawString(margin + 10, y, f"Nasiya: {_fmt_money(debt_a)}")
-            y -= 8.0
-
-    # Chek izohi (agar bo'lsa)
-    receipt_note = _clean_str(data.get("receipt_note"))
-    if receipt_note:
-        y -= 2.0
-        c.setFont(_font_regular, 6.5)
-        c.drawString(margin, y, f"Izoh: {receipt_note[:45]}")
-        y -= 9.0
-
-    draw_dashed_line(y)
-    y -= 11.0
-
-    # 6. Chek oxiri (Footer)
-    footer = _clean_str(data.get("footer_text") or "Tashrifingiz uchun rahmat! Dunyo Choyxonasi (+998884593400)")
-    c.setFont(_font_regular, 7.5)
-    c.drawCentredString(page_width / 2.0, y, footer[:40])
-    y -= 9.0
-
-    wifi_pass = _clean_str(data.get("wifi_pass"))
-    if wifi_pass:
-        c.setFont(_font_regular, 6.5)
-        c.drawCentredString(page_width / 2.0, y, f"Wi-Fi parol: {wifi_pass[:30]}")
+        c.setFont(_font_bold, 9)
+        c.drawCentredString(page_width / 2.0, y, "KASSA TO'LOV CHEKI")
         y -= 8.0
 
-    c.setFont(_font_regular, 5.5)
-    c.setFillColorRGB(0.5, 0.5, 0.5)
-    c.drawCentredString(page_width / 2.0, y, "Dunyo Choyxonasi POS | Avtomatlashtirilgan PDF Arxiv")
+        draw_dashed_line(y)
+        y -= 12.0
 
-    c.save()
+        # 2. Buyurtma va stol ma'lumotlari
+        c.setFont(_font_regular, 7.5)
+        c.drawString(margin, y, f"Chek: {order_num}")
+        c.drawRightString(page_width - margin, y, f"Sana: {date_str} {time_str}")
+        y -= 10.0
+
+        order_type = _clean_str(data.get("order_type") or "dine_in").lower()
+        table_disp = _clean_str(data.get("table_name") or data.get("table_disp"))
+        if not table_disp:
+            if order_type == "delivery":
+                table_disp = "Yetkazib berish (Dostavka)"
+            elif order_type == "takeaway":
+                table_disp = "Olib ketish (Takeaway)"
+            else:
+                table_disp = "Kassa"
+
+        waiter_disp = _clean_str(data.get("waiter_name") or data.get("waiter_disp") or "Kassa")
+
+        if order_type in ("delivery", "takeaway"):
+            text_lines(f"Turi: {table_disp}")
+            text_lines(f"Kassir: {waiter_disp}")
+        else:
+            text_lines(f"Stol: {table_disp}")
+            text_lines(f"Ofitsiant: {waiter_disp}")
+
+        cust_name = _clean_str(data.get("customer_name"))
+        cust_phone = _clean_str(data.get("customer_phone"))
+        if cust_name or cust_phone:
+            disp_cust = cust_name
+            if cust_phone:
+                disp_cust = f"{cust_name} ({cust_phone})" if cust_name else f"Tel: {cust_phone}"
+            text_lines(f"Mijoz: {disp_cust}")
+
+        deliv_addr = _clean_str(data.get("delivery_address"))
+        if deliv_addr:
+            text_lines(f"Manzil: {deliv_addr}")
+
+        draw_solid_line(y)
+        y -= 11.0
+
+        # 3. Taomlar ro'yxati (Jadval sarlavhasi)
+        c.setFont(_font_bold, 7.5)
+        c.drawString(margin, y, "Taom nomi")
+        c.drawString(margin + 105, y, "Soni")
+        c.drawRightString(page_width - margin, y, "Jami")
+        y -= 4.0
+
+        draw_dashed_line(y)
+        y -= 10.0
+
+        # 4. Taomlar qatorlari
+        c.setFont(_font_regular, 7.5)
+        for it in items:
+            name = _clean_str(it.get("name") or "Taom")
+            qty = it.get("quantity") or 1
+            unit_price = it.get("unit_price") or 0.0
+            total_p = it.get("total_price") if it.get("total_price") is not None else (qty * unit_price)
+            weight = it.get("weight")
+
+            qty_str = f"{weight}{it.get('unit') or 'kg'}" if weight else f"{qty} dona"
+
+            # 1-qator: Taom nomi
+            name_lines = wrapped(name, 96) or ['Taom']
+            c.drawString(margin, y, name_lines[0])
+            # Soni va narxi
+            c.drawString(margin + 105, y, str(qty_str)[:8])
+            # Qator summasi
+            c.drawRightString(page_width - margin, y, _fmt_money(total_p))
+            y -= 9.0
+            for name_line in name_lines[1:]:
+                c.drawString(margin, y, name_line)
+                y -= 9.0
+
+            # Agar narx yoki qo'shimcha ma'lumot bo'lsa
+            if weight:
+                c.setFont(_font_regular, 6.5)
+                c.setFillColorRGB(0.3, 0.3, 0.3)
+                c.drawString(margin + 6, y, f"(1 kg = {_fmt_money(unit_price)})")
+                c.setFillColorRGB(0, 0, 0)
+                c.setFont(_font_regular, 7.5)
+                y -= 8.0
+
+            spec_note = _clean_str(it.get("special_note"))
+            if spec_note:
+                c.setFont(_font_regular, 6.5)
+                c.setFillColorRGB(0.4, 0.4, 0.4)
+                text_lines(f"Izoh: {spec_note}", 8)
+                c.setFillColorRGB(0, 0, 0)
+                c.setFont(_font_regular, 7.5)
+
+            y -= 2.0
+
+        draw_solid_line(y)
+        y -= 11.0
+
+        # 5. Moliyaviy jami hisob-kitob
+        subtotal = float(data.get("subtotal") or 0.0)
+        fee_pct = float(data.get("service_fee_percent") or 0.0)
+        fee_amt = float(data["service_fee_amount"] if data.get("service_fee_amount") is not None else (subtotal * fee_pct / 100.0))
+        discount = float(data.get("discount") or 0.0)
+        grand_total = float(data["total"] if data.get("total") is not None else (subtotal + fee_amt - discount))
+
+        c.setFont(_font_regular, 7.5)
+        c.drawString(margin, y, "Oraliq jami:")
+        c.drawRightString(page_width - margin, y, _fmt_money(subtotal))
+        y -= 10.0
+
+        if fee_pct > 0:
+            c.drawString(margin, y, f"Xizmat haqi ({fee_pct:.0f}%):")
+            c.drawRightString(page_width - margin, y, _fmt_money(fee_amt))
+            y -= 10.0
+
+        if discount > 0:
+            c.drawString(margin, y, "Chegirma:")
+            c.drawRightString(page_width - margin, y, f"-{_fmt_money(discount)}")
+            y -= 10.0
+
+        draw_dashed_line(y)
+        y -= 12.0
+
+        # JAMI SUMMA (Katta va qalin)
+        c.setFont(_font_bold, 10.5)
+        c.drawString(margin, y, "JAMI TO'LOV:")
+        c.drawRightString(page_width - margin, y, _fmt_money(grand_total))
+        y -= 13.0
+        advance = float(data.get('advance_amount') or 0)
+        if advance:
+            c.setFont(_font_regular, 7.5)
+            c.drawString(margin, y, 'Avans:')
+            c.drawRightString(page_width - margin, y, _fmt_money(advance))
+            y -= 10.0
+            c.drawString(margin, y, "Qolgan to'lov:")
+            c.drawRightString(page_width - margin, y, _fmt_money(max(0, grand_total-advance)))
+            y -= 10.0
+
+        # To'lov turi
+        pay_method = _clean_str(data.get("payment_method") or "cash").upper()
+        pay_uz = {
+            "CASH": "Naqd pul",
+            "CARD": "Plastik karta (Terminal)",
+            "CLICK": "Click / Payme",
+            "DEBT": "Nasiya (Qarz)",
+            "MIXED": "Aralash to'lov",
+        }.get(pay_method, pay_method)
+
+        c.setFont(_font_bold, 7.5)
+        c.drawString(margin, y, "To'lov turi:")
+        c.drawRightString(page_width - margin, y, pay_uz)
+        y -= 10.0
+
+        # Aralash to'lov tafsiloti bo'lsa
+        cash_a = float(data.get("cash_amount") or 0.0)
+        card_a = float(data.get("card_amount") or 0.0)
+        click_a = float(data.get("click_amount") or 0.0)
+        debt_a = float(data.get("debt_amount") or 0.0)
+        if pay_method == "MIXED":
+            c.setFont(_font_regular, 6.5)
+            if cash_a > 0:
+                c.drawString(margin + 10, y, f"Naqd: {_fmt_money(cash_a)}")
+                y -= 8.0
+            if card_a > 0:
+                c.drawString(margin + 10, y, f"Karta: {_fmt_money(card_a)}")
+                y -= 8.0
+            if click_a > 0:
+                c.drawString(margin + 10, y, f"Click: {_fmt_money(click_a)}")
+                y -= 8.0
+            if debt_a > 0:
+                c.drawString(margin + 10, y, f"Nasiya: {_fmt_money(debt_a)}")
+                y -= 8.0
+
+        # Chek izohi (agar bo'lsa)
+        receipt_note = _clean_str(data.get("receipt_note"))
+        if receipt_note:
+            y -= 2.0
+            c.setFont(_font_regular, 6.5)
+            text_lines(f"Izoh: {receipt_note}", 9)
+
+        draw_dashed_line(y)
+        y -= 11.0
+
+        # 6. Chek oxiri (Footer)
+        footer = _clean_str(data.get("footer_text") or "Tashrifingiz uchun rahmat!")
+        c.setFont(_font_regular, 7.5)
+        text_lines(footer, 9, centered=True)
+
+        wifi_pass = _clean_str(data.get("wifi_pass"))
+        if wifi_pass:
+            c.setFont(_font_regular, 6.5)
+            c.drawCentredString(page_width / 2.0, y, f"Wi-Fi parol: {wifi_pass[:30]}")
+            y -= 8.0
+
+        c.setFont(_font_regular, 5.5)
+        c.setFillColorRGB(0.5, 0.5, 0.5)
+        c.drawCentredString(page_width / 2.0, y, "RestAron POS | PDF arxiv")
+
+        c.save()
+        return y
+
+    # Measure the same drawing before choosing the receipt length. Optional
+    # advance, split tender and notes must never push the footer off the page.
+    measuring_height = 2000.0
+    bottom = render(BytesIO(), measuring_height)
+    render(pdf_path, max(240.0, measuring_height - bottom + 14.0))
     logger.info(f"Kassa PDF cheki muvaffaqiyatli saqlandi: {pdf_path}")
     return pdf_path
 

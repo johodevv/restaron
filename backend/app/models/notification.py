@@ -1,3 +1,4 @@
+from app.core.types import UTCDateTime
 """
 Bildirishnomalar modeli — Barcha xabarlar logi
 """
@@ -54,9 +55,9 @@ class Notification(Base):
     data = Column(JSON, nullable=True)  # order_id, table_id, etc.
 
     is_read = Column(Boolean, default=False)
-    read_at = Column(DateTime(timezone=True), nullable=True)
+    read_at = Column(UTCDateTime(), nullable=True)
 
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    created_at = Column(UTCDateTime(), server_default=func.now())
 
     # Relationships
     user = relationship("User", back_populates="notifications")

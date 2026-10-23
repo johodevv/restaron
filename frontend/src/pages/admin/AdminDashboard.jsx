@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import api from '../../utils/api';
+import api, { BASE_URL } from '../../utils/api';
 import { useAuth } from '../../context/AuthContext';
 import { useTheme } from '../../context/ThemeContext';
 import { useWebSocket } from '../../context/WebSocketContext';
@@ -168,15 +168,15 @@ export const AdminDashboard = () => {
   const loadAll = async () => {
     try {
       const [statsData, menuData, tablesData, staffData, callsData, reviewsData, lanData, zonesData, ordersData] = await Promise.all([
-        api.get(`/stats/dashboard?restaurant_id=${restaurantId}`).catch(() => null),
+        (user?.role === 'cashier' ? Promise.resolve(null) : api.get(`/stats/dashboard?restaurant_id=${restaurantId}`)).catch(() => null),
         api.get(`/menu/full/${restaurantId}`).catch(() => []),
         api.get(`/tables/?restaurant_id=${restaurantId}`).catch(() => []),
-        api.get(`/users/?restaurant_id=${restaurantId}`).catch(() => []),
+        (user?.role === 'cashier' ? Promise.resolve([]) : api.get(`/users/?restaurant_id=${restaurantId}`)).catch(() => []),
         api.get(`/orders/calls?restaurant_id=${restaurantId}`).catch(() => []),
-        api.get(`/reviews/?restaurant_id=${restaurantId}`).catch(() => []),
-        api.get('/stats/lan-info').catch(() => null),
+        (user?.role === 'cashier' ? Promise.resolve([]) : api.get(`/reviews/?restaurant_id=${restaurantId}`)).catch(() => []),
+        (user?.role === 'cashier' ? Promise.resolve(null) : api.get('/stats/lan-info')).catch(() => null),
         api.get(`/tables/zones?restaurant_id=${restaurantId}`).catch(() => []),
-        api.get(`/orders/?restaurant_id=${restaurantId}&limit=12`).catch(() => []),
+        api.get(`/orders/?restaurant_id=${restaurantId}&active_only=true&limit=300`).catch(() => []),
       ]);
 
       setStats(statsData);
@@ -218,8 +218,8 @@ export const AdminDashboard = () => {
       try {
         const [tablesData, ordersData, statsData] = await Promise.all([
           api.get(`/tables/?restaurant_id=${restaurantId}`).catch(() => null),
-          api.get(`/orders/?restaurant_id=${restaurantId}&limit=12`).catch(() => null),
-          api.get(`/stats/dashboard?restaurant_id=${restaurantId}`).catch(() => null),
+          api.get(`/orders/?restaurant_id=${restaurantId}&active_only=true&limit=300`).catch(() => null),
+          (user?.role === 'cashier' ? Promise.resolve(null) : api.get(`/stats/dashboard?restaurant_id=${restaurantId}`)).catch(() => null),
         ]);
         if (tablesData) setTables(tablesData);
         if (ordersData) setRecentOrders(ordersData);
@@ -784,20 +784,13 @@ export const AdminDashboard = () => {
   };
 
   // Toggle theme selection
-  const handleToggleThemeSelection = (slug) => {
-    if (activeThemes.includes(slug)) {
-      if (activeThemes.length <= 1) {
-        alert("Kamida bitta tema faol bo'lishi shart!");
-        return;
-      }
-      setActiveThemes(activeThemes.filter((s) => s !== slug));
-    } else {
-      if (activeThemes.length >= 2) {
-        setActiveThemes([activeThemes[0], slug]);
-      } else {
-        setActiveThemes([...activeThemes, slug]);
-      }
-    }
+  const handleToggleThemeSelection = async (slug) => {
+    const next = activeThemes.includes(slug)
+      ? activeThemes.filter(value => value !== slug)
+      : [...activeThemes.slice(0, 1), slug];
+    if (!next.length) return;
+    try { await api.patch(`/restaurants/${restaurantId}/settings`, { active_themes: next }); setActiveThemes(next); }
+    catch (err) { alert(err.message); }
   };
 
   // ─── Stollar: zona va holat bo'yicha filtr ──────────────────────
@@ -864,9 +857,9 @@ export const AdminDashboard = () => {
   })();
 
   return (
-    <div className={`mx-auto px-2 sm:px-4 animate-fade-in ${tab === 'pos' ? 'w-full py-1 pb-1 space-y-2' : 'max-w-7xl py-6 pb-24 space-y-4'}`}>
+    <div className={`mx-auto px-2 sm:px-4 animate-fade-in ${tab === 'pos' ? 'w-full h-full min-h-0 flex flex-col overflow-hidden gap-1 py-1' : 'max-w-7xl py-6 pb-24 space-y-4'}`}>
       {/* Printer statusi (navbat to'lib qolsa yoki printer ishlamasa ogohlantirish) */}
-      <PrinterStatusBanner />
+      {tab !== 'pos' && <PrinterStatusBanner />}
 
       {/* Top Header — Faqat POS bo'lmagan sahifalarda chiqadi */}
       {tab !== 'pos' && (
@@ -941,7 +934,7 @@ export const AdminDashboard = () => {
       )}
 
 
-      {activePrintAlert && (
+      {activePrintAlert && tab !== 'pos' && (
         <div className="p-4 rounded-3xl bg-gradient-to-r from-amber-500/20 via-orange-500/20 to-amber-500/20 border-2 border-amber-500/50 shadow-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 animate-fade-in">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-2xl bg-amber-500 text-slate-950 flex items-center justify-center font-black shrink-0 shadow-lg text-lg">
@@ -949,7 +942,7 @@ export const AdminDashboard = () => {
             </div>
             <div>
               <div className="text-sm font-extrabold text-white flex items-center gap-2">
-                <span>Yangi buyurtma! Oshxona printerlariga chiqarildi</span>
+                <span>Yangi buyurtma! Oshxona navbatiga qabul qilindi</span>
                 <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-black/40 text-amber-300">
                   {activePrintAlert.time}
                 </span>
@@ -990,7 +983,7 @@ export const AdminDashboard = () => {
       )}
 
       {/* Tabs — Full Navigation Bar */}
-      <div className="flex items-center gap-2 overflow-x-auto pb-2 scrollbar-none no-scrollbar">
+      <div className="flex items-center gap-2 overflow-x-auto pb-2 scrollbar-none no-scrollbar shrink-0">
         {[
           { key: 'pos', label: 'Zakas olish (POS)', icon: ShoppingCart },
           { key: 'tables', label: 'Stollar & QR', icon: TableIcon },
@@ -1004,7 +997,7 @@ export const AdminDashboard = () => {
           { key: 'themes', label: 'Dizayn & Temalar', icon: Palette },
           { key: 'settings', label: 'Sozlamalar', icon: Settings },
           { key: 'reviews', label: 'Baholar', icon: Star },
-        ].map((t) => {
+        ].filter((t) => user?.role !== 'cashier' || ['pos', 'receipts', 'debts', 'payments'].includes(t.key)).map((t) => {
           const Icon = t.icon;
           const isActive = tab === t.key;
           return (
@@ -1257,12 +1250,13 @@ export const AdminDashboard = () => {
           barcha imkoniyatlar (zonalar, baliq narxi, begunok) bir xil
           ishlaydi. */}
       {tab === 'pos' && (
-        <div className="w-full">
+        <div className="w-full flex-1 min-h-0 overflow-hidden">
           <React.Suspense fallback={<div className="p-12 text-center text-theme-muted"><div className="w-8 h-8 border-3 border-amber-500 border-t-transparent rounded-full animate-spin mx-auto mb-2" />POS yuklanmoqda...</div>}>
             <POSView showModeSwitch={true} canCheckout={true} restaurantId={restaurantId} />
           </React.Suspense>
         </div>
       )}
+
 
       {tab === 'menu' && (
         <div className="space-y-6">
@@ -1862,7 +1856,7 @@ export const AdminDashboard = () => {
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5 sm:gap-5 w-full overflow-x-hidden">
             {group.items.map((t) => {
               const qrLink = `${qrBaseUrl}/?table=${t.qr_token}`;
-              const qrImageSrc = `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(qrLink)}`;
+              const qrImageSrc = `${BASE_URL}/tables/qr-image/${t.qr_token}?base_url=${encodeURIComponent(qrBaseUrl)}`;
 
               const statusStr = (t.status || '').toLowerCase();
               const isOccupied = statusStr === 'occupied';
@@ -2735,9 +2729,7 @@ export const AdminDashboard = () => {
 
               <div className="flex justify-center p-2 bg-white rounded-xl border border-zinc-200">
                 <img
-                  src={`https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(
-                    selectedTableQR.qrLink || `${qrBaseUrl}/?table=${selectedTableQR.qr_token}`
-                  )}`}
+                  src={`${BASE_URL}/tables/qr-image/${selectedTableQR.qr_token}?base_url=${encodeURIComponent(qrBaseUrl)}`}
                   alt={`Stol #${selectedTableQR.number} QR`}
                   className="w-48 h-48 object-contain"
                 />
@@ -2760,9 +2752,7 @@ export const AdminDashboard = () => {
                 </button>
 
                 <a
-                  href={`https://api.qrserver.com/v1/create-qr-code/?size=500x500&data=${encodeURIComponent(
-                    selectedTableQR.qrLink || `${qrBaseUrl}/?table=${selectedTableQR.qr_token}`
-                  )}`}
+                  href={`${BASE_URL}/tables/qr-image/${selectedTableQR.qr_token}?base_url=${encodeURIComponent(qrBaseUrl)}`}
                   download={`Stol_${selectedTableQR.number}_QR.png`}
                   target="_blank"
                   rel="noreferrer"

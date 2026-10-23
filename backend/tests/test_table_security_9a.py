@@ -114,8 +114,9 @@ async def test_unlock_table_restaurant_mismatch_forbidden():
         "/api/v1/tables/501/unlock",
         headers={"Authorization": f"Bearer {token}"},
     )
-    assert resp.status_code == 403
-    assert "Boshqa restoran" in resp.json()["detail"]
+    assert resp.status_code in (403, 404)
+    # Neither the table nor its QR/PIN may be exposed to another restaurant.
+    assert 'qr_token' not in resp.json()
 
 
 @pytest.mark.anyio

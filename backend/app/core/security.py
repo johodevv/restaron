@@ -69,7 +69,7 @@ def is_token_revoked(payload: dict) -> bool:
         try:
             uid = int(user_id)
             revoked_at = _user_revocation_timestamps.get(uid)
-            if revoked_at is not None and (iat is None or iat <= revoked_at + 1):
+            if revoked_at is not None and (iat is None or iat <= revoked_at):
                 return True
         except (ValueError, TypeError):
             pass
@@ -101,7 +101,7 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
         )
     to_encode.update({
         "exp": expire,
-        "iat": int(now_dt.timestamp()),
+        "iat": now_dt.timestamp(),
         "jti": str(uuid.uuid4()),
         "boot_nonce": SERVER_BOOT_NONCE,
     })
@@ -126,6 +126,17 @@ def decode_token(token: str) -> dict:
             detail="Token yaroqsiz yoki muddati o'tgan",
             headers={"WWW-Authenticate": "Bearer"},
         )
+
+
+async def session_is_valid(db, payload, user):
+    from app.models.token_revocation import TokenRevocation
+    if 'auth_version' in payload and payload['auth_version'] != (user.tokens_valid_after or 0):
+        return False
+    if (user.tokens_valid_after or 0) > 0 and float(payload.get('iat') or 0) <= user.tokens_valid_after:
+        return False
+    if payload.get('jti') and await db.get(TokenRevocation, payload['jti']) is not None:
+        return False
+    return True
 
 
 async def get_current_user(
@@ -160,6 +171,8 @@ async def get_current_user(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Foydalanuvchi topilmadi",
         )
+    if not await session_is_valid(db, payload, user):
+        raise HTTPException(401, 'Sessiya bekor qilingan. Qaytadan kiring.')
     if not user.is_active:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -181,6 +194,8 @@ async def get_current_user(
             detail="Akkauntingiz Admin tomonidan tasdiqlanmagan!",
         )
 
+    from app.core.tenant import apply_tenant_scope
+    await apply_tenant_scope(db, user)
     return user
 
 
@@ -194,9 +209,7 @@ async def get_optional_current_user(
     try:
         from app.models.user import User
 
-        payload = jwt.decode(
-            credentials.credentials, settings.SECRET_KEY, algorithms=[settings.ALGORITHM]
-        )
+        payload = decode_token(credentials.credentials)
         user_id = payload.get("sub")
         token_role = payload.get("role")
         if not user_id:
@@ -206,11 +219,17 @@ async def get_optional_current_user(
         user = result.scalar_one_or_none()
         if not user or not user.is_active:
             return None
+        if not await session_is_valid(db, payload, user):
+            return None
 
         user_role_str = user.role.value if hasattr(user.role, "value") else str(user.role)
         if token_role and token_role != user_role_str:
             return None
 
+        if user_role_str in ('waiter', 'chef', 'cashier') and not user.is_approved:
+            return None
+        from app.core.tenant import apply_tenant_scope
+        await apply_tenant_scope(db, user)
         return user
     except Exception:
         return None

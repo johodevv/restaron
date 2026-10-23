@@ -36,14 +36,17 @@ export const CheckoutModal = ({ isOpen, onClose, order, tableLabel, onPaid }) =>
   
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [quote, setQuote] = useState(null);
 
-  const originalTotal = order?.total || 0;
+  const originalTotal = quote?.total ?? order?.total ?? 0;
+  const advance = quote?.advance_amount ?? order?.advance_amount ?? 0;
   const discount = Math.max(0, Math.min(originalTotal, parseFloat(String(discountAmount).replace(/\s/g, '')) || 0));
-  const finalTotal = Math.max(0, originalTotal - discount);
+  const finalTotal = Math.max(0, originalTotal - discount - advance);
 
   // Oyna ochilganda tozalash
   useEffect(() => {
     if (isOpen) {
+      setQuote(order);
       setPaymentMethod('cash');
       setCashReceived('');
       setDiscountAmount('');
@@ -55,7 +58,7 @@ export const CheckoutModal = ({ isOpen, onClose, order, tableLabel, onPaid }) =>
       setDebtDueDate('');
       setError('');
     }
-  }, [isOpen]);
+  }, [isOpen, order?.id]);
 
   if (!isOpen || !order) return null;
 
@@ -102,6 +105,7 @@ export const CheckoutModal = ({ isOpen, onClose, order, tableLabel, onPaid }) =>
     try {
       const payload = {
         payment_method: paymentMethod,
+        expected_version: quote?.version ?? order.version,
         discount: discount,
         print_receipt: true,
       };
@@ -164,7 +168,8 @@ export const CheckoutModal = ({ isOpen, onClose, order, tableLabel, onPaid }) =>
         {/* Summa kartochkasi */}
         <div className="p-3.5 rounded-2xl bg-slate-950 border border-slate-800 mb-4 flex items-center justify-between">
           <div>
-            <span className="text-[11px] uppercase tracking-wider font-bold text-slate-400 block">Jami to'lov:</span>
+            <span className="text-[11px] uppercase tracking-wider font-bold text-slate-400 block">Qolgan to'lov:</span>
+            {advance > 0 && <p className="text-xs text-emerald-400">Avans ayrildi: {advance.toLocaleString('uz-UZ')} so'm</p>}
             {discount > 0 ? (
               <div className="flex items-center gap-2">
                 <span className="text-xs line-through text-slate-500 font-mono">

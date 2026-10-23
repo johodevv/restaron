@@ -63,16 +63,27 @@ export const AuthProvider = ({ children }) => {
     return data.user;
   };
 
-  const logout = () => {
+  const clearCredentials = () => {
     localStorage.removeItem('restaron_token');
     localStorage.removeItem(CACHE_KEY);
     setToken(null);
     setUser(null);
   };
 
+  const logout = async () => {
+    try {
+      await api.post('/auth/logout');
+    } catch (err) {
+      // Offline logout still removes this device's credentials.
+      console.warn('Server sessiyasini bekor qilish amalga oshmadi:', err.message);
+    } finally {
+      clearCredentials();
+    }
+  };
+
   useEffect(() => {
     const handleUnauthorized = () => {
-      logout();
+      clearCredentials();
     };
     window.addEventListener('restaron:unauthorized', handleUnauthorized);
     return () => {

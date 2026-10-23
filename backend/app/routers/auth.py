@@ -2,6 +2,7 @@
 Auth API — Login, token olish
 """
 from datetime import timedelta
+import asyncio
 from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
@@ -52,11 +53,17 @@ async def login(payload: LoginRequest, db: AsyncSession = Depends(get_db)):
     )
     user = result.scalar_one_or_none()
 
-    if not user or not verify_password(payload.password, user.hashed_password):
+    if not user or not await asyncio.to_thread(verify_password, payload.password, user.hashed_password):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Username yoki parol noto'g'ri",
         )
+
+    user_id, verified_hash = user.id, user.hashed_password
+    await db.rollback()
+    user = await db.scalar(select(User).where(User.id == user_id))
+    if user is None or user.hashed_password != verified_hash:
+        raise HTTPException(401, 'Akkaunt o‘zgargan. Qaytadan kiring.')
 
     if not user.is_active:
         raise HTTPException(
@@ -87,7 +94,7 @@ async def login(payload: LoginRequest, db: AsyncSession = Depends(get_db)):
         )
 
     access_token = create_access_token(
-        data={"sub": str(user.id), "role": role_val},
+        data={"sub": str(user.id), "role": role_val, 'auth_version': user.tokens_valid_after or 0},
         expires_delta=timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES),
     )
 
@@ -113,6 +120,13 @@ async def logout(
     token = credentials.credentials
     from app.core.security import revoke_token
     revoke_token(token)
+    from app.core.security import decode_token
+    from app.models.token_revocation import TokenRevocation
+    from jose import jwt
+    from app.core.config import settings
+    payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+    if payload.get('jti') and await db.get(TokenRevocation, payload['jti']) is None:
+        db.add(TokenRevocation(jti=payload['jti'], expires_at=float(payload.get('exp') or 0)))
 
     from app.core.audit import log_audit_event
     await log_audit_event(

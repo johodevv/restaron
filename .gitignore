@@ -45,6 +45,8 @@ uvicorn.log
 *.log
 backend/receipts_archive/
 scratch/
+backups/
+*.server.lock
 
 # Generated patch exports (git format-patch natijasi — tarixga kirmasligi kerak)
 *.patch

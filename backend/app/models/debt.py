@@ -1,3 +1,5 @@
+from datetime import datetime, timezone
+from app.core.types import UTCDateTime
 """
 Qarzlar va Nasiya Daftari modeli
 """
@@ -29,15 +31,15 @@ class Debt(Base):
     status = Column(String(30), default="unpaid", index=True)
 
     # Muddat va izoh
-    due_date = Column(DateTime(timezone=True), nullable=True)
+    due_date = Column(UTCDateTime(), nullable=True)
     note = Column(Text, nullable=True)
 
     # SMS eslatmalar
-    last_sms_sent_at = Column(DateTime(timezone=True), nullable=True)
+    last_sms_sent_at = Column(UTCDateTime(), nullable=True)
     sms_count = Column(Integer, default=0)
 
-    created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
-    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    created_at = Column(UTCDateTime(), server_default=func.now(), index=True)
+    updated_at = Column(UTCDateTime(), onupdate=func.now())
 
     # Relationships
     restaurant = relationship("Restaurant", back_populates="debts")
@@ -45,3 +47,15 @@ class Debt(Base):
 
     def __repr__(self):
         return f"<Debt {self.customer_name}: {self.remaining_amount} so'm ({self.status})>"
+
+
+class DebtPaymentRecord(Base):
+    """Append-only evidence of each accepted debt repayment."""
+    __tablename__ = 'debt_payments'
+    id = Column(Integer, primary_key=True)
+    debt_id = Column(Integer, ForeignKey('debts.id'), nullable=False, index=True)
+    restaurant_id = Column(Integer, ForeignKey('restaurants.id'), nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey('users.id'), nullable=False)
+    amount = Column(Float, nullable=False)
+    note = Column(Text, nullable=True)
+    created_at = Column(UTCDateTime(), default=lambda: datetime.now(timezone.utc), server_default=func.now(), nullable=False)

@@ -1,3 +1,4 @@
+from app.core.types import UTCDateTime
 """
 Baholash va Izohlar modeli
 """
@@ -34,7 +35,7 @@ class Review(Base):
 
     is_published = Column(Boolean, default=True)          # Admin moderatsiyasi
 
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    created_at = Column(UTCDateTime(), server_default=func.now())
 
     # Relationships
     order = relationship("Order", back_populates="reviews")

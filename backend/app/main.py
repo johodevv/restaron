@@ -2,6 +2,7 @@
 RestAron — Asosiy FastAPI ilovasi
 """
 import os
+import asyncio
 import re
 from datetime import datetime, timezone
 import sys
@@ -32,8 +33,10 @@ os.makedirs(os.path.join(settings.UPLOAD_DIR, "logos"), exist_ok=True)
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def _lifespan_unlocked(app: FastAPI):
     """Startup va shutdown hodisalari"""
+    from app.core.logging import install_token_redaction
+    install_token_redaction()
     # Jadvallarni yaratish
     await create_tables()
     if os.getenv("AUTO_SEED", "false").lower() in ("1", "true", "yes"):
@@ -52,11 +55,28 @@ async def lifespan(app: FastAPI):
     ws_manager.start_heartbeat(interval_seconds=25, timeout_seconds=60)
 
     print(f"[OK] {settings.APP_NAME} ishga tushdi!")
-    yield
-    await ws_manager.stop_heartbeat()
-    await stop_printer_worker()
-    print("[STOP] Server to'xtatildi.")
+    try:
+        yield
+    finally:
+        await ws_manager.stop_heartbeat()
+        await stop_printer_worker()
+        from app.routers.orders import _bg_tasks
+        tasks = [task for task in _bg_tasks if task.get_loop() is asyncio.get_running_loop()]
+        if tasks:
+            _, pending = await asyncio.wait(tasks, timeout=10)
+            for task in pending:
+                task.cancel()
+            await asyncio.gather(*pending, return_exceptions=True)
+        print("[STOP] Server to'xtatildi.")
 
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    from app.core.instance_guard import application_instance_lock
+    async with application_instance_lock():
+        async with _lifespan_unlocked(app):
+            yield
 
 
 docs_enabled = bool(settings.DEBUG or getattr(settings, "ENABLE_DOCS", False))
@@ -171,6 +191,8 @@ app.include_router(ws, prefix="/api/v1")
 app.include_router(debts, prefix="/api/v1")
 app.include_router(receipts, prefix="/api/v1")
 app.include_router(audit, prefix="/api/v1")
+from app.routers.kitchen import router as kitchen_router
+app.include_router(kitchen_router, prefix="/api/v1")
 
 
 # ─── Health Check ─────────────────────────────────────────

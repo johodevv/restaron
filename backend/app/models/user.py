@@ -1,3 +1,4 @@
+from app.core.types import UTCDateTime
 """
 Foydalanuvchilar modeli
 Rollar: developer, admin, waiter, chef
@@ -22,6 +23,7 @@ class UserRole(str, enum.Enum):
 
 class User(Base):
     __tablename__ = "users"
+    tokens_valid_after = Column(Float, nullable=False, default=0)
 
     id = Column(Integer, primary_key=True, index=True)
     username = Column(String(50), unique=True, nullable=False, index=True)
@@ -38,8 +40,8 @@ class User(Base):
     # Admin va xodimlar bitta restoranga tegishli
     restaurant_id = Column(Integer, ForeignKey("restaurants.id"), nullable=True)
 
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    created_at = Column(UTCDateTime(), server_default=func.now())
+    updated_at = Column(UTCDateTime(), onupdate=func.now())
 
     # Relationships
     restaurant = relationship("Restaurant", back_populates="users", foreign_keys=[restaurant_id])

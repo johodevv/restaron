@@ -24,6 +24,7 @@ _test_db_path = os.path.join(_temp_dir, _test_db_filename).replace("\\", "/")
 os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{_test_db_path}"
 os.environ["SYNC_DATABASE_URL"] = f"sqlite:///{_test_db_path}"
 os.environ["SQLITE_DB_PATH"] = _test_db_path
+os.environ['UPLOAD_DIR'] = os.path.join(_temp_dir, f'restaron_uploads_{uuid.uuid4().hex[:10]}')
 
 # Agar config allaqachon yuklangan bo'lsa, settings obyektini ham yangilaymiz
 try:
@@ -58,3 +59,22 @@ def manage_test_db():
                 os.remove(fpath)
             except Exception:
                 pass
+
+
+@pytest.fixture(autouse=True)
+async def isolate_test_schema(manage_test_db, monkeypatch, tmp_path):
+    """Each test owns an empty schema; fixtures cannot leak roles, settings or orders."""
+    from app.core.database import engine, Base
+    import app.core.pdf_generator as pdf
+    monkeypatch.setattr(pdf, 'PDF_ARCHIVE_BASE', str(tmp_path / 'receipt_pdfs'))
+    assert os.path.normcase(os.path.abspath(engine.url.database)) == os.path.normcase(os.path.abspath(_test_db_path))
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)
+        await conn.run_sync(Base.metadata.create_all)
+    yield
+    import asyncio
+    from app.routers.orders import _bg_tasks
+    tasks = [task for task in _bg_tasks if task.get_loop() is asyncio.get_running_loop()]
+    if tasks:
+        await asyncio.gather(*tasks, return_exceptions=True)
+    await engine.dispose()

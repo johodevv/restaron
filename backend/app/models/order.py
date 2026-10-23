@@ -1,3 +1,4 @@
+from app.core.types import UTCDateTime
 """
 Buyurtmalar va Buyurtma Elementlari modellari
 """
@@ -37,6 +38,8 @@ class CallStatus(str, enum.Enum):
 
 class Order(Base):
     __tablename__ = "orders"
+    version = Column(Integer, nullable=False, default=1)
+    __mapper_args__ = {'version_id_col': version}
 
     id = Column(Integer, primary_key=True, index=True)
     order_number = Column(String(20), unique=True, nullable=False, index=True)  # #0001
@@ -73,6 +76,7 @@ class Order(Base):
     card_amount = Column(Float, default=0.0)            # Карта
     click_amount = Column(Float, default=0.0)           # Click/Payme
     debt_amount = Column(Float, default=0.0)            # Nasiya / Qarz
+    advance_amount = Column(Float, default=0.0, nullable=False)
 
     # Ofitsiant ulushi (KPI / Заработок)
     waiter_share_percent = Column(Float, default=0.0)
@@ -84,13 +88,13 @@ class Order(Base):
     call_note = Column(String(300), nullable=True)  # Chaqiruv sababi
 
     # Vaqtlar
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    confirmed_at = Column(DateTime(timezone=True), nullable=True)
-    preparing_at = Column(DateTime(timezone=True), nullable=True)
-    ready_at = Column(DateTime(timezone=True), nullable=True)
-    served_at = Column(DateTime(timezone=True), nullable=True)
-    closed_at = Column(DateTime(timezone=True), nullable=True)   # Smena/Stol yopilgan vaqt
-    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    created_at = Column(UTCDateTime(), server_default=func.now())
+    confirmed_at = Column(UTCDateTime(), nullable=True)
+    preparing_at = Column(UTCDateTime(), nullable=True)
+    ready_at = Column(UTCDateTime(), nullable=True)
+    served_at = Column(UTCDateTime(), nullable=True)
+    closed_at = Column(UTCDateTime(), nullable=True)   # Smena/Stol yopilgan vaqt
+    updated_at = Column(UTCDateTime(), onupdate=func.now())
 
     # Relationships
     restaurant = relationship("Restaurant", back_populates="orders")
@@ -109,6 +113,7 @@ class OrderItem(Base):
     id = Column(Integer, primary_key=True, index=True)
     order_id = Column(Integer, ForeignKey("orders.id", ondelete="CASCADE"), nullable=False)
     menu_item_id = Column(Integer, ForeignKey("menu_items.id"), nullable=False)
+    name_snapshot = Column(String(200), nullable=True)
 
     quantity = Column(Integer, nullable=False, default=1)
     unit_price = Column(Float, nullable=False)          # Buyurtma vaqtidagi narx
@@ -135,7 +140,7 @@ class OrderItem(Base):
 
     # Oshxona yuborilganlik holati (Oshxona begunogi)
     sent_to_kitchen = Column(Boolean, default=False)
-    sent_to_kitchen_at = Column(DateTime(timezone=True), nullable=True)
+    sent_to_kitchen_at = Column(UTCDateTime(), nullable=True)
     # Shu qatordan oshxonaga ALLAQACHON nechta yuborilgan.
     # Ofitsiant 1 somsa yuborgandan keyin yana 1 somsa qo'shsa, oshxonaga
     # faqat YANGI 1 ta chiqishi kerak ("2 somsa" emas). Shuning uchun
@@ -144,9 +149,10 @@ class OrderItem(Base):
 
     # Oshpaz paneli uchun
     is_prepared = Column(Boolean, default=False)        # Tayyorlandimi
-    prepared_at = Column(DateTime(timezone=True), nullable=True)
+    prepared_quantity = Column(Integer, default=0, nullable=False)
+    prepared_at = Column(UTCDateTime(), nullable=True)
 
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    created_at = Column(UTCDateTime(), server_default=func.now())
 
     # Relationships
     order = relationship("Order", back_populates="items")

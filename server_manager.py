@@ -167,6 +167,8 @@ def wait_for_backend(timeout=60) -> bool:
 
 
 def start_server():
+    if not prepare_frontend():
+        return
     pids = load_pids()
     if pids.get("uvicorn_pid") and is_pid_running(pids["uvicorn_pid"]):
         log("Server allaqachon ishlamoqda!")
@@ -531,6 +533,16 @@ def _tunnel_supervisor(stop_event):
         time.sleep(10)
 
 
+def prepare_frontend():
+    from frontend_build import ensure_frontend_build
+    try:
+        ensure_frontend_build(BASE_DIR, log)
+        return True
+    except Exception as exc:
+        log(f'XATO: {exc}')
+        return False
+
+
 def serve_forever():
     """
     Nazoratchi rejim (Windows Scheduled Task shu rejimda ishga tushiradi).
@@ -545,6 +557,9 @@ def serve_forever():
     log("RestAron nazoratchi rejimi ishga tushdi (serve)")
     log(f"  Python: {VENV_PYTHON}")
     log(f"  Papka:  {BACKEND_DIR}")
+
+    if not prepare_frontend():
+        return
 
     env = os.environ.copy()
     env["PYTHONIOENCODING"] = "utf-8"

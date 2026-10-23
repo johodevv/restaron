@@ -24,6 +24,7 @@ class ReceiptArchiveResponse(BaseModel):
     card_amount: float
     click_amount: float
     debt_amount: float
+    advance_amount: float = 0
     items_json: Optional[Any] = None
     notes: Optional[str] = None
     raw_text: Optional[str] = None

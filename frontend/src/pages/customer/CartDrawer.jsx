@@ -20,6 +20,7 @@ export const CartDrawer = ({ isOpen, onClose, tableId, onOrderCreated }) => {
     try {
       const payload = {
         table_id: tableId,
+        qr_token: new URLSearchParams(window.location.search).get('table') || undefined,
         customer_name: customerName.trim() || undefined,
         customer_note: customerNote.trim() || undefined,
         items: items.map((i) => ({

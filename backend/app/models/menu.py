@@ -1,3 +1,4 @@
+from app.core.types import UTCDateTime
 """
 Menyu: Kategoriyalar va Taomlar modellari
 """
@@ -31,8 +32,8 @@ class Category(Base):
     # QR orqali ochilgan mijoz menyusida barcha kategoriyalar chiqaveradi.
     show_on_landing = Column(Boolean, default=False, nullable=False)
 
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    created_at = Column(UTCDateTime(), server_default=func.now())
+    updated_at = Column(UTCDateTime(), onupdate=func.now())
 
     # Relationships
     restaurant = relationship("Restaurant", back_populates="categories")
@@ -69,6 +70,7 @@ class MenuItem(Base):
     # Sozlamalar
     is_available = Column(Boolean, default=True)      # Mavjudmi
     is_stop_list = Column(Boolean, default=False)     # Stop-List (1 bosish bilan to'xtatish)
+    is_deleted = Column(Boolean, default=False, nullable=False)
     is_featured = Column(Boolean, default=False)      # Eng mashhur
     show_price = Column(Boolean, default=True)        # Narxni ko'rsatish (admin sozlamasi)
 
@@ -89,8 +91,8 @@ class MenuItem(Base):
 
     sort_order = Column(Integer, default=0)
 
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    created_at = Column(UTCDateTime(), server_default=func.now())
+    updated_at = Column(UTCDateTime(), onupdate=func.now())
 
     # Relationships
     category = relationship("Category", back_populates="items")

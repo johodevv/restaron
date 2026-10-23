@@ -1,5 +1,9 @@
 import logging
-from sqlalchemy import event, text
+import asyncio
+import weakref
+from contextlib import asynccontextmanager
+from fastapi import Request
+from sqlalchemy import event, text, inspect
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase
 from app.core.config import settings
@@ -37,7 +41,8 @@ if is_sqlite:
         """SQLite WAL (Write-Ahead Logging) rejimi: bir vaqtda bir nechta o'qish va yozish imkoni"""
         cursor = dbapi_connection.cursor()
         cursor.execute("PRAGMA journal_mode=WAL")
-        cursor.execute("PRAGMA synchronous=NORMAL")
+        cursor.execute("PRAGMA synchronous=FULL")
+        cursor.execute("PRAGMA foreign_keys=ON")
         cursor.execute("PRAGMA busy_timeout=30000")
         cursor.close()
 
@@ -57,23 +62,53 @@ class Base(DeclarativeBase):
     pass
 
 
-async def get_db() -> AsyncSession:
+_sqlite_write_gates = weakref.WeakKeyDictionary()
+
+
+async def get_db(request: Request = None) -> AsyncSession:
     """FastAPI Dependency — DB session olish"""
-    async with AsyncSessionLocal() as session:
-        try:
-            yield session
-            await session.commit()
-        except Exception:
-            await session.rollback()
-            raise
-        finally:
-            await session.close()
+    # Queue SQLite writers before opening a connection or reading auth data.
+    # BEGIN IMMEDIATE also serializes writers in other processes. Reads use WAL.
+    writes = request is not None and (
+        request.method not in ('GET', 'HEAD', 'OPTIONS')
+        or '/tables/scan/' in request.url.path
+        or request.url.path.rstrip('/').endswith('/tables/zones')
+    ) and not request.url.path.rstrip('/').endswith('/auth/login')
+    gate = None
+    if is_sqlite and writes:
+        loop = asyncio.get_running_loop()
+        gate = _sqlite_write_gates.setdefault(loop, asyncio.Lock())
+        await gate.acquire()
+    try:
+        async with AsyncSessionLocal() as session:
+            session.info['write_request'] = writes
+            try:
+                if is_sqlite and writes:
+                    await session.execute(text('BEGIN IMMEDIATE'))
+                yield session
+                await session.commit()
+            except Exception:
+                await session.rollback()
+                raise
+            finally:
+                await session.close()
+    finally:
+        if gate is not None:
+            gate.release()
 
 
-def _sync_sqlite_migrations(sync_conn):
+def write_session():
+    """Background writers use the same SQLite queue as authenticated requests."""
+    request = Request({'type': 'http', 'method': 'POST', 'path': '/background',
+                       'scheme': 'http', 'server': ('localhost', 80), 'headers': [], 'query_string': b''})
+    return asynccontextmanager(get_db)(request)
+
+
+def _sync_schema_migrations(sync_conn):
     """SQLite jadvallariga yangi ustunlarni avtomatik qo'shish"""
     from sqlalchemy import text
     migrations = {
+        "idempotency_keys": [("request_hash", "VARCHAR(64)")],
         "restaurant_settings": [
             ("service_fee_percent", "FLOAT DEFAULT 12.0"),
             # Sukut bo'yicha BO'SH — shunda chek tepasida restoran nomi
@@ -115,6 +150,8 @@ def _sync_sqlite_migrations(sync_conn):
             ("show_on_landing", "BOOLEAN DEFAULT 1"),
         ],
         "orders": [
+            ("version", "INTEGER NOT NULL DEFAULT 1"),
+            ("advance_amount", "FLOAT NOT NULL DEFAULT 0"),
             ("order_type", "VARCHAR(50) DEFAULT 'table'"),
             ("hall_name", "VARCHAR(100)"),
             ("kitchen_note", "TEXT"),
@@ -140,6 +177,8 @@ def _sync_sqlite_migrations(sync_conn):
             ("reservation_note", "TEXT"),
         ],
         "order_items": [
+            ("name_snapshot", "VARCHAR(200)"),
+            ("prepared_quantity", "INTEGER NOT NULL DEFAULT 0"),
             ("item_time", "VARCHAR(20)"),
             ("portion_size", "VARCHAR(50)"),
             ("weight", "FLOAT"),
@@ -149,6 +188,7 @@ def _sync_sqlite_migrations(sync_conn):
             ("manual_price", "FLOAT"),
         ],
         "menu_items": [
+            ("is_deleted", "BOOLEAN NOT NULL DEFAULT 0"),
             ("is_stop_list", "BOOLEAN DEFAULT 0"),
             ("name_cyrillic", "VARCHAR(200)"),
             ("description_cyrillic", "TEXT"),
@@ -157,29 +197,39 @@ def _sync_sqlite_migrations(sync_conn):
             ("unit", "VARCHAR(10) DEFAULT 'dona'"),
         ],
         "users": [
+            ("tokens_valid_after", "FLOAT NOT NULL DEFAULT 0"),
             ("commission_percent", "FLOAT DEFAULT 0.0"),
             ("is_approved", "BOOLEAN DEFAULT 0"),
         ],
+        "receipt_archives": [("advance_amount", "FLOAT NOT NULL DEFAULT 0")],
     }
 
     added = set()
 
     for table_name, cols in migrations.items():
         try:
-            res = sync_conn.execute(text(f"PRAGMA table_info({table_name})"))
-            existing_cols = {row[1] for row in res.fetchall()}
+            inspector = inspect(sync_conn)
+            existing_cols = {c['name'] for c in inspector.get_columns(table_name)} if inspector.has_table(table_name) else set()
             if not existing_cols:
                 continue
             for col_name, col_def in cols:
                 if col_name not in existing_cols:
+                    if sync_conn.dialect.name == 'postgresql':
+                        col_def = col_def.replace('BOOLEAN DEFAULT 1', 'BOOLEAN DEFAULT TRUE').replace('BOOLEAN DEFAULT 0', 'BOOLEAN DEFAULT FALSE').replace('BOOLEAN NOT NULL DEFAULT 0', 'BOOLEAN NOT NULL DEFAULT FALSE')
                     sync_conn.execute(text(f"ALTER TABLE {table_name} ADD COLUMN {col_name} {col_def}"))
                     added.add((table_name, col_name))
-        except Exception as e:
-            pass
+        except Exception as exc:
+            raise RuntimeError(f'Schema migration failed for {table_name}') from exc
+
+    if ('order_items', 'name_snapshot') in added:
+        sync_conn.execute(text('UPDATE order_items SET name_snapshot = (SELECT name FROM menu_items WHERE menu_items.id = order_items.menu_item_id) WHERE name_snapshot IS NULL'))
+
+    if ('order_items', 'prepared_quantity') in added:
+        sync_conn.execute(text('UPDATE order_items SET prepared_quantity = COALESCE(sent_quantity, 0) WHERE is_prepared = TRUE'))
 
     # Mavjud xodimlar is_approved holati bo'sh bo'lsa tasdiqlangan (1) deb belgilaymiz
     try:
-        sync_conn.execute(text("UPDATE users SET is_approved = 1 WHERE is_approved IS NULL"))
+        sync_conn.execute(text("UPDATE users SET is_approved = TRUE WHERE is_approved IS NULL"))
     except Exception:
         pass
 
@@ -204,7 +254,7 @@ def _sync_sqlite_migrations(sync_conn):
         try:
             sync_conn.execute(text(
                 "UPDATE order_items SET sent_quantity = quantity "
-                "WHERE sent_to_kitchen = 1"
+                "WHERE sent_to_kitchen = TRUE"
             ))
             sync_conn.execute(text(
                 "UPDATE order_items SET sent_quantity = 0 "
@@ -214,7 +264,7 @@ def _sync_sqlite_migrations(sync_conn):
             pass
 
 
-def _sync_sqlite_indexes(sync_conn):
+def _sync_database_indexes(sync_conn):
     """SQLite jadvallari uchun zarur indekslar va unikal qisman indeksni yaratish"""
     indexes = [
         ("ix_orders_table_id", "orders", ["table_id"], "CREATE INDEX IF NOT EXISTS ix_orders_table_id ON orders(table_id)"),
@@ -234,8 +284,8 @@ def _sync_sqlite_indexes(sync_conn):
 
     for idx_name, table_name, cols, create_sql in indexes:
         try:
-            res = sync_conn.execute(text(f"PRAGMA table_info({table_name})"))
-            existing_cols = {row[1] for row in res.fetchall()}
+            inspector = inspect(sync_conn)
+            existing_cols = {c['name'] for c in inspector.get_columns(table_name)} if inspector.has_table(table_name) else set()
             if not existing_cols:
                 logger.warning("Indeks yaratilmadi: '%s' jadvali mavjud emas", table_name)
                 continue
@@ -249,13 +299,12 @@ def _sync_sqlite_indexes(sync_conn):
 
     # Unikal qisman indeks: bitta stolda faqat bitta ochiq buyurtma bo'lishi mumkin
     try:
-        res = sync_conn.execute(text("PRAGMA table_info(orders)"))
-        orders_cols = {row[1] for row in res.fetchall()}
+        orders_cols = {c['name'] for c in inspect(sync_conn).get_columns('orders')}
         if all(col in orders_cols for col in ("table_id", "is_paid", "status")):
             dup_res = sync_conn.execute(text(
                 "SELECT table_id, COUNT(*) as cnt FROM orders "
-                "WHERE table_id IS NOT NULL AND is_paid = 0 AND status NOT IN ('CANCELLED', 'PAID') "
-                "GROUP BY table_id HAVING cnt > 1"
+                "WHERE table_id IS NOT NULL AND is_paid = FALSE AND status NOT IN ('CANCELLED', 'PAID') "
+                "GROUP BY table_id HAVING COUNT(*) > 1"
             ))
             dup_tables = [row[0] for row in dup_res.fetchall()]
             if dup_tables:
@@ -267,7 +316,7 @@ def _sync_sqlite_indexes(sync_conn):
             else:
                 sync_conn.execute(text(
                     "CREATE UNIQUE INDEX IF NOT EXISTS ux_orders_one_open_per_table "
-                    "ON orders(table_id) WHERE table_id IS NOT NULL AND is_paid = 0 "
+                    "ON orders(table_id) WHERE table_id IS NOT NULL AND is_paid = FALSE "
                     "AND status NOT IN ('CANCELLED','PAID')"
                 ))
         else:
@@ -281,12 +330,11 @@ async def create_tables():
     import app.models  # noqa: F401
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-        if is_sqlite:
-            await conn.run_sync(_sync_sqlite_migrations)
-            await conn.run_sync(_sync_sqlite_indexes)
+        await conn.run_sync(_sync_schema_migrations)
+        await conn.run_sync(_sync_database_indexes)
         # Har safar server ishga tushganda bo'sh bo'lgan tasdiqlarni tiklash
         try:
-            await conn.execute(text("UPDATE users SET is_approved = 1 WHERE is_approved IS NULL"))
+            await conn.execute(text("UPDATE users SET is_approved = TRUE WHERE is_approved IS NULL"))
         except Exception:
             pass
         # 24 soatdan eski idempotency yozuvlarini startda tozalash

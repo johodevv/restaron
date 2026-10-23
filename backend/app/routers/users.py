@@ -1,3 +1,4 @@
+import time
 """
 Foydalanuvchilar API — Admin va Developer tomonidan boshqarish
 VAZIFA 10A: foydalanuvchilar boshqaruvi va xavfsizlik cheklovlari
@@ -187,6 +188,7 @@ async def update_user(
     # Agar foydalanuvchi faolsizlantirilsa, uning barcha tokenlarini bekor qilish
     if update_data.get("is_active") is False:
         revoke_user_tokens(user.id)
+        user.tokens_valid_after = time.time()
 
     await db.flush()
     await db.commit()
@@ -232,6 +234,7 @@ async def reset_user_password(
 
     # Tokenlarni bekor qilish
     revoke_user_tokens(user.id)
+    user.tokens_valid_after = time.time()
 
     await db.flush()
     await db.commit()
@@ -299,6 +302,7 @@ async def delete_user(
     # is_active=False va tokenlarni bekor qilish
     user.is_active = False
     revoke_user_tokens(user.id)
+    user.tokens_valid_after = time.time()
 
     await db.flush()
     await db.commit()
@@ -335,6 +339,7 @@ async def approve_user(
     user.is_approved = is_approved
     if not is_approved:
         revoke_user_tokens(user.id)
+        user.tokens_valid_after = time.time()
 
     await db.flush()
     await db.commit()

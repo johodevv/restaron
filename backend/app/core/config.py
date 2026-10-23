@@ -90,7 +90,7 @@ DEFAULT_INSECURE_SECRET = "your-super-secret-key-change-in-production-min-32-cha
 
 def _ensure_secret_key(secret: str) -> str:
     """Xavfsiz JWT SECRET_KEY kafolati. Agar bo'sh yoki default bo'lsa, avtomatik generatsiya qilinadi."""
-    if secret and secret != DEFAULT_INSECURE_SECRET and len(secret) >= 32:
+    if secret and secret not in (DEFAULT_INSECURE_SECRET, 'super-secret-production-key-change-this-value') and len(secret) >= 32:
         return secret
 
     env_path = os.path.join(BACKEND_DIR, ".env")

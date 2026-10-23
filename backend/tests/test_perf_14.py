@@ -182,7 +182,9 @@ async def test_gzip_middleware_compresses_large_responses():
 async def test_payments_report_sql_aggregation():
     """payments-report SQL agregatsiyasi bilan hisoblanadi va to'liq shaklni saqlaydi"""
     headers = get_auth_header(7001, "admin", 1)
-    res = client.get("/api/v1/stats/payments-report?restaurant_id=1", headers=headers)
+    end = datetime.now(timezone.utc).date() + timedelta(days=1)
+    start = end - timedelta(days=3)
+    res = client.get(f"/api/v1/stats/payments-report?restaurant_id=1&start_date={start}&end_date={end}", headers=headers)
     assert res.status_code == 200
     payload = res.json()
 

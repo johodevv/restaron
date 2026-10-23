@@ -275,7 +275,7 @@ export const PaymentsReportTab = ({ restaurantId }) => {
             <Coins className="w-4 h-4" />
           </div>
           <div className="mt-2 text-lg sm:text-xl font-black text-emerald-300 font-mono">
-            {reportData ? `${reportData.total_cash?.toLocaleString()} so'm` : '0'}
+            {reportData ? `${(reportData.total_cash_in_drawer ?? reportData.total_cash)?.toLocaleString()} so'm` : '0'}
           </div>
           <div className="text-[10px] text-theme-muted mt-1">Kassadagi naqd pul</div>
         </div>

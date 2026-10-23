@@ -71,6 +71,7 @@ async def setup_test_data():
                 role=UserRole.WAITER,
                 restaurant_id=1,
                 is_active=True,
+                is_approved=True,
             )
             session.add(u_waiter)
 

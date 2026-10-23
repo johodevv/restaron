@@ -38,9 +38,9 @@ async def setup_hygiene_db():
 
         # Users
         users_to_add = [
-            (3001, "admin_h12", UserRole.ADMIN, 1),
-            (3002, "cashier_h12", UserRole.CASHIER, 1),
-            (3003, "waiter_h12", UserRole.WAITER, 1),
+            (123001, "admin_h12", UserRole.ADMIN, 1),
+            (123002, "cashier_h12", UserRole.CASHIER, 1),
+            (123003, "waiter_h12", UserRole.WAITER, 1),
         ]
         for uid, uname, urole, urid in users_to_add:
             u = await session.get(User, uid)
@@ -83,7 +83,7 @@ async def setup_hygiene_db():
                     id=3101,
                     restaurant_id=1,
                     table_id=777,
-                    waiter_id=3003,
+                    waiter_id=123003,
                     order_number="#STALE-3101",
                     status=OrderStatus.PENDING,
                     total=125000.0,
@@ -100,7 +100,7 @@ async def setup_hygiene_db():
                     id=3102,
                     restaurant_id=1,
                     table_id=777,
-                    waiter_id=3003,
+                    waiter_id=123003,
                     order_number="#FRESH-3102",
                     status=OrderStatus.PENDING,
                     total=50000.0,
@@ -117,7 +117,7 @@ async def setup_hygiene_db():
                     id=3103,
                     restaurant_id=1,
                     table_id=777,
-                    waiter_id=3003,
+                    waiter_id=123003,
                     order_number="#PAID-3103",
                     status=OrderStatus.SERVED,
                     total=90000.0,
@@ -134,7 +134,7 @@ async def setup_hygiene_db():
                     id=3104,
                     restaurant_id=1,
                     table_id=777,
-                    waiter_id=3003,
+                    waiter_id=123003,
                     order_number="#CANC-3104",
                     status=OrderStatus.CANCELLED,
                     total=40000.0,
@@ -274,9 +274,9 @@ async def test_4_cleanup_test_data_script():
 @pytest.mark.anyio
 async def test_5_stale_orders_endpoint():
     """5. GET /api/v1/orders/stale endpointi, ruxsatlar va yosh hisoblash"""
-    admin_token = create_access_token({"sub": "3001", "role": "admin", "restaurant_id": 1})
-    cashier_token = create_access_token({"sub": "3002", "role": "cashier", "restaurant_id": 1})
-    waiter_token = create_access_token({"sub": "3003", "role": "waiter", "restaurant_id": 1})
+    admin_token = create_access_token({"sub": "123001", "role": "admin", "restaurant_id": 1})
+    cashier_token = create_access_token({"sub": "123002", "role": "cashier", "restaurant_id": 1})
+    waiter_token = create_access_token({"sub": "123003", "role": "waiter", "restaurant_id": 1})
 
     with TestClient(app) as client:
         # 1. Waiter -> 403

@@ -1,3 +1,4 @@
+from app.core.types import UTCDateTime
 """
 RestAron — Audit Log modeli (Audit trail)
 Kassir va xodimlar harakatlari, to'lovlar, buyurtma o'zgarishlari va tizim
@@ -31,7 +32,7 @@ class AuditLog(Base):
     # IP manzil
     ip_address = Column(String(50), nullable=True)
 
-    created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
+    created_at = Column(UTCDateTime(), server_default=func.now(), index=True)
 
     def __repr__(self):
         return f"<AuditLog #{self.id} {self.action} by {self.user_name}>"

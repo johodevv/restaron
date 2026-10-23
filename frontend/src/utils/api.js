@@ -121,16 +121,35 @@ async function request(endpoint, options = {}) {
       endpoint.includes('/waiter-create') ||
       endpoint.includes('/add-items') ||
       endpoint.includes('/send-to-kitchen') ||
-      endpoint.includes('/checkout')
-    ))
+      endpoint.includes('/checkout') || endpoint === '/orders/'
+    )) || (method === 'PATCH' && (endpoint.endsWith('/delta') || /^\/debts\/\d+\/pay$/.test(endpoint))) ||
+    (method === 'POST' && /^\/orders\/\d+\/print-bill$/.test(endpoint))
   );
 
+  // A new login changes jti/iat, but an unresolved operation still belongs to
+  // the same user. This value only namespaces retries; the server authenticates.
+  let operationUser = 'guest';
+  try {
+    const payload = token?.split('.')[1];
+    if (payload) operationUser = String(JSON.parse(atob(payload.replace(/-/g, '+').replace(/_/g, '/'))).sub);
+  } catch (_) {}
+  const operationIdentity = JSON.stringify([BASE_URL, operationUser, method, endpoint, options.body || null]);
+  let pendingOperations = {};
+  try { pendingOperations = JSON.parse(sessionStorage.getItem('restaron_pending_operations') || '{}'); } catch (_) {}
+  const saveOperation = (key) => {
+    try {
+      const latest = JSON.parse(sessionStorage.getItem('restaron_pending_operations') || '{}');
+      if (key) latest[operationIdentity] = key; else delete latest[operationIdentity];
+      sessionStorage.setItem('restaron_pending_operations', JSON.stringify(latest));
+    } catch (_) {}
+  };
   if (isIdempotent && !headers['Idempotency-Key']) {
     headers['Idempotency-Key'] =
-      typeof crypto !== 'undefined' && crypto.randomUUID
+      pendingOperations[operationIdentity] || (typeof crypto !== 'undefined' && crypto.randomUUID
         ? crypto.randomUUID()
-        : `idemp_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`;
+        : `idemp_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`);
   }
+  if (isIdempotent) saveOperation(headers['Idempotency-Key']);
 
   const config = {
     ...options,
@@ -149,11 +168,11 @@ async function request(endpoint, options = {}) {
   try {
     response = await executeFetch(url, config, timeoutMs);
   } catch (netErr) {
-    if (netErr.isTimeout) {
+    if (netErr.isTimeout && !isIdempotent) {
       throw netErr;
     }
 
-    if (!isGet) {
+    if (!isGet && !isIdempotent) {
       // POST, PATCH, DELETE tarmoq xatosida avtomatik qayta yuborilmaydi (dublikat xavfi)
       throw new Error("Aloqa uzildi. Natija noma'lum — ro'yxatni yangilab tekshiring.");
     }
@@ -201,6 +220,7 @@ async function request(endpoint, options = {}) {
   }
 
   if (!response.ok) {
+    if (isIdempotent && response.status < 500) saveOperation(null);
     // 401 javobida (login so'rovidan tashqari) tokenni o'chir va restaron:unauthorized hodisasi yubor
     const isLogin = endpoint.includes('/auth/login') || endpoint.endsWith('/login');
     if (response.status === 401 && !isLogin) {
@@ -231,10 +251,13 @@ async function request(endpoint, options = {}) {
   }
 
   if (response.status === 204) {
+    if (isIdempotent) saveOperation(null);
     return null;
   }
 
-  return await response.json();
+  const result = await response.json();
+  if (isIdempotent) saveOperation(null);
+  return result;
 }
 
 export const api = {

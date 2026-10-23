@@ -11,7 +11,7 @@ from sqlalchemy import select, func, and_, or_
 from app.core.timeutil import UZ_TZ, uz_day_bounds_utc, to_uz, format_uz
 from sqlalchemy.orm import selectinload
 from pydantic import BaseModel
-from typing import List, Optional
+from typing import List, Optional, Literal
 
 from app.core.database import get_db
 from app.core.security import require_role
@@ -66,7 +66,7 @@ async def list_receipts(
     limit: int = Query(50, le=200),
     offset: int = 0,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role("admin", "waiter", "developer")),
+    current_user: User = Depends(require_role("admin", "cashier", "waiter", "developer")),
 ):
     """Arxivdagi cheklarni qidirish va filtrlash"""
     query = select(ReceiptArchive).where(ReceiptArchive.restaurant_id == restaurant_id)
@@ -122,7 +122,7 @@ async def get_print_jobs_summary(
     # 1. Hozirda kutayotgan yoki chop etilayotgan barcha ishlar
     stmt = (
         select(PrintJob)
-        .where(*base_filter, PrintJob.status.in_(["pending", "printing"]))
+        .where(*base_filter, PrintJob.status.in_(["pending", "printing", "uncertain"]))
         .order_by(PrintJob.created_at.asc())
     )
     res = await db.execute(stmt)
@@ -145,9 +145,12 @@ async def get_print_jobs_summary(
                 "pending_count": 0,
                 "oldest_age_seconds": max(0.0, round(age, 1)),
                 "last_error": None,
+                "uncertain_ids": [],
             }
 
         summary_map[p_name]["pending_count"] += 1
+        if job.status == 'uncertain':
+            summary_map[p_name]['uncertain_ids'].append(job.id)
         if job.last_error and not summary_map[p_name]["last_error"]:
             summary_map[p_name]["last_error"] = job.last_error
 
@@ -190,6 +193,33 @@ async def get_print_jobs_summary(
                     }
 
     return list(summary_map.values())
+
+
+@router.post('/print-jobs/{job_id}/resolve')
+async def resolve_print_job(job_id: int, action: Literal['printed', 'retry'],
+                            db=Depends(get_db), user=Depends(require_role('admin', 'cashier', 'developer'))):
+    from app.core.transactions import lock_rows
+    from app.core.audit import log_audit_event
+    await lock_rows(db, PrintJob, [job_id])
+    job = await db.scalar(select(PrintJob).where(PrintJob.id == job_id))
+    if not job:
+        raise HTTPException(404, 'Chop etish vazifasi topilmadi')
+    if job.status != 'uncertain':
+        raise HTTPException(409, 'Bu vazifa uchun tasdiq talab qilinmaydi')
+    job.status = 'done' if action == 'printed' else 'pending'
+    job.printed_at = datetime.now(timezone.utc) if action == 'printed' else None
+    if action == 'retry':
+        if job.order_id is not None and await db.scalar(select(Order.id).where(Order.id == job.order_id, Order.restaurant_id == job.restaurant_id)) is None:
+            raise HTTPException(409, 'Buyurtmasi topilmagan eski vazifani qayta yuborib bo‘lmaydi')
+        job.raw_text = '*** TAKROR / QAYTA YUBORILDI ***\n' + job.raw_text
+        job.next_attempt_at = datetime.now(timezone.utc)
+    job.alerted = False
+    job.last_error = None
+    await log_audit_event(db=db, restaurant_id=job.restaurant_id, action='print_delivery_resolved',
+                          user=user, entity_type='print_job', entity_id=job.id, details={'resolution': action})
+    await db.commit()
+    wake_printer_worker()
+    return {'success': True, 'id': job.id, 'status': job.status}
 
 
 @router.get("/print-jobs", summary="Chop etish ishlari holati (status va attempts)")
@@ -241,7 +271,7 @@ async def get_print_jobs_by_ids(
 async def get_receipt(
     receipt_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role("admin", "waiter", "developer")),
+    current_user: User = Depends(require_role("admin", "cashier", "waiter", "developer")),
 ):
     result = await db.execute(select(ReceiptArchive).where(ReceiptArchive.id == receipt_id))
     r = result.scalar_one_or_none()
@@ -255,7 +285,7 @@ async def reprint_receipt(
     receipt_id: int,
     paper_width: Optional[int] = Query(None, description="58 yoki 80 mm"),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role("admin", "waiter", "developer")),
+    current_user: User = Depends(require_role("admin", "cashier", "waiter", "developer")),
 ):
     """Xprinter uchun chek matnini qayta yuklab berish"""
     result = await db.execute(select(ReceiptArchive).where(ReceiptArchive.id == receipt_id))
@@ -276,7 +306,7 @@ async def reprint_receipt(
 
 @router.get("/printers/installed", summary="Kompyuterga ulangan Xprinter/USB printerlar ro'yxati")
 async def list_installed_printers(
-    current_user: User = Depends(require_role("admin", "waiter", "developer")),
+    current_user: User = Depends(require_role("admin", "cashier", "waiter", "developer")),
 ):
     """Kompyuterdagi barcha drayveri o'rnatilgan printerlar"""
     printers = get_installed_printers()
@@ -502,7 +532,7 @@ async def print_receipt_usb(
     receipt_id: int,
     printer_name: Optional[str] = Query(None, description="Printer nomi (masalan: Xprinter)"),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role("admin", "waiter", "developer")),
+    current_user: User = Depends(require_role("admin", "cashier", "waiter", "developer")),
 ):
     result = await db.execute(select(ReceiptArchive).where(ReceiptArchive.id == receipt_id))
     r = result.scalar_one_or_none()
@@ -608,7 +638,7 @@ async def get_receipt_pdf(
 async def print_raw_usb(
     payload: DirectPrintRequest,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role("admin", "waiter", "developer")),
+    current_user: User = Depends(require_role("admin", "cashier", "waiter", "developer")),
 ):
     # Shrift va kod sahifasi sozlamalardan olinadi (so'rovda berilmasa)
     set_res = await db.execute(
@@ -702,6 +732,9 @@ async def create_shift_report(
     """
     restaurant_id = payload.restaurant_id
 
+    from app.core.transactions import lock_rows
+    await lock_rows(db, Restaurant, [restaurant_id])
+
     # Hisobot turini normallashtirish ("X" / "x" / "x_report" -> "x_report")
     rt = (payload.report_type or "z_report").strip().lower()
     report_type = "x_report" if rt in ("x", "x_report") else "z_report"
@@ -715,6 +748,8 @@ async def create_shift_report(
     # Restoran ma'lumotlarini olish
     rest_res = await db.execute(select(Restaurant).where(Restaurant.id == restaurant_id))
     restaurant = rest_res.scalar_one_or_none()
+    if restaurant is None:
+        raise HTTPException(404, 'Restoran topilmadi')
     rest_name = restaurant.name if restaurant else "Dunyo Choyxonasi"
 
     set_res = await db.execute(select(RestaurantSettings).where(RestaurantSettings.restaurant_id == restaurant_id))
@@ -746,6 +781,7 @@ async def create_shift_report(
     if close_shift:
         open_statuses = [
             OrderStatus.PENDING,
+            OrderStatus.CONFIRMED,
             OrderStatus.PREPARING,
             OrderStatus.READY,
             OrderStatus.SERVED,
@@ -815,8 +851,12 @@ async def create_shift_report(
     orders = orders_res.scalars().all()
 
     total_orders = len(orders)
+    from app.core.deposits import extra_cash_in_range
+    deposit_cash, debt_collections = await extra_cash_in_range(db, restaurant_id, opened_at, now_dt)
+    if close_shift and prev_shift and not orders and not deposit_cash and not debt_collections:
+        raise HTTPException(409, "Oxirgi Z-hisobotdan keyin yangi pul harakati yo'q")
     total_sales = 0.0
-    total_cash = 0.0
+    total_cash = deposit_cash + debt_collections
     total_card = 0.0
     total_click = 0.0
     total_debt = 0.0
@@ -1041,8 +1081,10 @@ async def get_current_shift_preview(
     orders = orders_res.scalars().all()
 
     total_orders = len(orders)
+    from app.core.deposits import extra_cash_in_range
+    deposit_cash, debt_collections = await extra_cash_in_range(db, restaurant_id, opened_at, now_dt)
     total_sales = 0.0
-    total_cash = 0.0
+    total_cash = deposit_cash + debt_collections
     total_card = 0.0
     total_click = 0.0
     total_debt = 0.0

@@ -1,3 +1,4 @@
+from app.core.types import UTCDateTime
 """
 RestAron — Idempotency kalitlari modeli
 Takroriy so'rovlardan (duplicate order, duplicate payment) himoya
@@ -16,7 +17,8 @@ class IdempotencyKey(Base):
     endpoint = Column(String(255), nullable=False, index=True)
     status_code = Column(Integer, nullable=False, default=200)
     response_json = Column(Text, nullable=False)
-    created_at = Column(DateTime(timezone=True), default=func.now(), server_default=func.now(), index=True)
+    request_hash = Column(String(64), nullable=True)
+    created_at = Column(UTCDateTime(), default=func.now(), server_default=func.now(), index=True)
 
     def __repr__(self):
         return f"<IdempotencyKey {self.key} user={self.user_id} endpoint={self.endpoint}>"

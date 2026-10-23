@@ -1,3 +1,4 @@
+from app.core.types import UTCDateTime
 """
 Restoran, Sozlamalar va Dizayn Temalari modellari
 """
@@ -28,8 +29,8 @@ class Restaurant(Base):
     total_revenue = Column(Float, default=0.0)       # Umumiy daromad
     total_commission = Column(Float, default=0.0)    # To'langan komissiya
 
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    created_at = Column(UTCDateTime(), server_default=func.now())
+    updated_at = Column(UTCDateTime(), onupdate=func.now())
 
     # Relationships
     users = relationship("User", back_populates="restaurant", foreign_keys="User.restaurant_id")
@@ -127,7 +128,7 @@ class RestaurantSettings(Base):
     # Qo'shimcha sozlamalar (JSON)
     extra_settings = Column(JSON, nullable=True)
 
-    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    updated_at = Column(UTCDateTime(), onupdate=func.now())
 
     # Relationships
     restaurant = relationship("Restaurant", back_populates="settings")

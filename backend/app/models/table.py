@@ -1,3 +1,4 @@
+from app.core.types import UTCDateTime
 """
 Stollar modeli — QR kod bilan birga
 """
@@ -32,8 +33,8 @@ class TableZone(Base):
     sort_order = Column(Integer, default=0)
     is_active = Column(Boolean, default=True)
 
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    created_at = Column(UTCDateTime(), server_default=func.now())
+    updated_at = Column(UTCDateTime(), onupdate=func.now())
 
     def __repr__(self):
         return f"<TableZone {self.name} ({self.restaurant_id})>"
@@ -70,8 +71,8 @@ class Table(Base):
     deposit_amount = Column(Float, default=0.0)
     reservation_note = Column(Text, nullable=True)
 
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    created_at = Column(UTCDateTime(), server_default=func.now())
+    updated_at = Column(UTCDateTime(), onupdate=func.now())
 
     # Relationships
     restaurant = relationship("Restaurant", back_populates="tables")

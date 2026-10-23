@@ -32,6 +32,11 @@ from app.main import app
 async def setup_db():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+    async with AsyncSessionLocal() as db:
+        db.add(Restaurant(id=1, name='Printer test', slug='printer-test-7a'))
+        from app.models import Order
+        db.add(Order(id=42, restaurant_id=1, order_number='PRINT-42'))
+        await db.commit()
     yield
 
 
@@ -225,7 +230,7 @@ async def test_startup_cleanup():
 
     async with AsyncSessionLocal() as session:
         j_stuck = await session.get(PrintJob, stuck_id)
-        assert j_stuck.status == "pending"  # printing -> pending tiklangan
+        assert j_stuck.status == "uncertain"  # Physical output must be checked before repeating.
 
         j_old = await session.get(PrintJob, old_id)
         assert j_old is None  # 8 kunlik ish o'chirilgan

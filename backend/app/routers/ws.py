@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
 from app.core.database import get_db, async_session_factory
-from app.core.security import decode_token
+from app.core.security import decode_token, session_is_valid
 from app.models.user import User
 from app.models.table import Table
 from app.websockets.manager import manager
@@ -30,8 +30,12 @@ async def authenticate_ws_token(token: str) -> Optional[User]:
             result = await session.execute(select(User).where(User.id == int(user_id)))
             user = result.scalar_one_or_none()
             if user and user.is_active:
+                if not await session_is_valid(session, payload, user):
+                    return None
                 user_role_str = user.role.value if hasattr(user.role, "value") else str(user.role)
                 if token_role and token_role != user_role_str:
+                    return None
+                if user_role_str in ('waiter', 'chef', 'cashier') and not user.is_approved:
                     return None
                 return user
     except Exception:
@@ -113,6 +117,9 @@ async def websocket_endpoint(
         while True:
             # Mijozdan xabar kutish (keepalive ping/pong yoki buyruqlar)
             message_text = await websocket.receive_text()
+            if has_token and not await authenticate_ws_token(token):
+                await websocket.close(code=4401)
+                raise WebSocketDisconnect(4401)
             manager.update_heartbeat(websocket)
             try:
                 data = json.loads(message_text)
