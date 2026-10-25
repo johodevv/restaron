@@ -44,6 +44,7 @@ class Settings(BaseSettings):
 
     # Upload
     UPLOAD_DIR: str = "uploads"
+    PDF_ARCHIVE_DIR: Optional[str] = None
 
     # Developer commission (%)
     COMMISSION_PERCENT: float = 5.0

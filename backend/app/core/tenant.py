@@ -1,6 +1,6 @@
 """Apply restaurant ownership to authenticated ORM reads and writes."""
 from fastapi import HTTPException
-from sqlalchemy import event, select, text
+from sqlalchemy import event, select, text, inspect
 from sqlalchemy.orm import Session, with_loader_criteria
 from functools import lru_cache
 
@@ -46,18 +46,34 @@ def _check_ownership(session, flush_context, instances):
     rid = session.info.get('restaurant_id')
     if rid is None:
         return
-    from app.models import MenuItem, Category, Order, Table, OrderItem
+    from app.models import MenuItem, Category, Order, Table, OrderItem, Debt, Review
+    from app.models.user import User
     models = _models()
     for obj in session.new.union(session.dirty):
         if isinstance(obj, models) and obj.restaurant_id != rid:
             raise HTTPException(403, 'Boshqa restoran maʼlumotini o‘zgartirish mumkin emas')
         references = []
+        state = inspect(obj)
+        def changed(name):
+            return obj in session.new or state.attrs[name].history.has_changes()
         if isinstance(obj, MenuItem):
-            references.append((Category, obj.category_id))
-        if isinstance(obj, Order) and obj.table_id is not None:
+            if changed('category_id'):
+                references.append((Category, obj.category_id))
+        if isinstance(obj, Order) and obj.table_id is not None and changed('table_id'):
             references.append((Table, obj.table_id))
         if isinstance(obj, OrderItem):
-            references.append((MenuItem, obj.menu_item_id))
+            if changed('menu_item_id'):
+                references.append((MenuItem, obj.menu_item_id))
+            if changed('order_id'):
+                references.append((Order, obj.order_id))
+        if isinstance(obj, (Debt, Review)) and obj.order_id is not None and changed('order_id'):
+            references.append((Order, obj.order_id))
+        if isinstance(obj, Review):
+            if obj.menu_item_id is not None:
+                references.append((MenuItem, obj.menu_item_id))
+            if obj.waiter_id is not None and session.scalar(select(User.id).where(
+                    User.id == obj.waiter_id, User.restaurant_id == rid)) is None:
+                raise HTTPException(403, 'Ofitsiant ushbu restoranga tegishli emas')
         for model, identity in references:
             if session.scalar(select(model.id).where(model.id == identity)) is None:
                 raise HTTPException(403, 'Maʼlumot ushbu restoranga tegishli emas')

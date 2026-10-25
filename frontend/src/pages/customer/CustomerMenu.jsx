@@ -29,11 +29,13 @@ export const CustomerMenu = ({
   const [selectedCatId, setSelectedCatId] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
   const [activeItemDetail, setActiveItemDetail] = useState(null);
   const { addEventListener } = useWebSocket();
 
   const fetchMenu = async () => {
     try {
+      setLoadError('');
       const data = await api.get(`/menu/full/${restaurantId}`);
       // Mijozga faqat admin yoqib qo'ygan taomlar ko'rsatiladi.
       // O'chirilgan (is_available=false) taom umuman chiqmaydi.
@@ -48,12 +50,12 @@ export const CustomerMenu = ({
       setCategories(withItems);
       // Barcha kategoriyalarning rasmlarini fonda oldindan yuklaymiz —
       // bo'limni almashtirganda rasm kutilmaydi, darhol chiqadi.
-      preloadImages(collectImageUrls(withItems));
+      preloadImages(collectImageUrls(withItems.slice(0, 1)).slice(0, 8));
       if (withItems.length > 0 && !selectedCatId) {
         setSelectedCatId(withItems[0].id);
       }
     } catch (err) {
-      console.error('Menu load error:', err);
+      setLoadError(err.message || 'Menyuni yuklab bo‘lmadi');
     } finally {
       setLoading(false);
     }
@@ -65,18 +67,7 @@ export const CustomerMenu = ({
 
   // Real-time stop-list yangilanishi
   useEffect(() => {
-    const unsub = addEventListener('stop_list_updated', (event) => {
-      setCategories((prevCats) =>
-        prevCats.map((cat) => ({
-          ...cat,
-          items: (cat.items || []).map((item) =>
-            item.id === event.item_id
-              ? { ...item, is_stop_list: event.is_stop_list, is_available: event.is_available }
-              : item
-          ),
-        }))
-      );
-    });
+    const unsub = addEventListener('stop_list_updated', () => { fetchMenu(); });
     return () => unsub();
   }, [addEventListener]);
 
@@ -93,6 +84,7 @@ export const CustomerMenu = ({
 
   return (
     <div className="min-h-screen pb-36 bg-slate-950 text-slate-100">
+      {loadError && <div role="alert" className="m-4 p-4 bg-amber-950 border border-amber-600 rounded-xl">{loadError} <button onClick={fetchMenu} className="ml-3 underline min-h-[44px]">Qayta urinish</button></div>}
       {/* Hero Header */}
       <div className="max-w-7xl mx-auto px-4 pt-4 sm:pt-6">
         <div className="p-5 sm:p-7 rounded-3xl border border-slate-800 bg-gradient-to-r from-slate-900 via-slate-950 to-slate-900 shadow-2xl relative overflow-hidden">

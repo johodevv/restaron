@@ -6,6 +6,7 @@ from fastapi import Request
 from sqlalchemy import event, text, inspect
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase
+from sqlalchemy.pool import AsyncAdaptedQueuePool
 from app.core.config import settings
 
 logger = logging.getLogger("database")
@@ -17,6 +18,13 @@ engine_kwargs = {
 if is_sqlite:
     # SQLite uchun bloklanishlarni oldini oluvchi 30 soniyalik kutish va multi-threading sozlamalari
     engine_kwargs.update({
+        # SQLAlchemy 2.0.30 defaults to NullPool for file-based aiosqlite.
+        # Reuse a bounded set of connections/worker threads instead of creating
+        # and tearing down one for every request and printer status update.
+        "poolclass": AsyncAdaptedQueuePool,
+        "pool_size": 10,
+        "max_overflow": 10,
+        "pool_timeout": 30,
         "connect_args": {
             "timeout": 30.0,
             "check_same_thread": False,

@@ -156,7 +156,8 @@ def sync_extra_directory(
     new_backup_path: str,
     backend_dir: str,
     extra_dir: str,
-) -> None:
+    *, uploads_dir: Optional[str] = None, receipts_dir: Optional[str] = None,
+) -> bool:
     """
     BACKUP_EXTRA_DIR ko'rsatilgan bo'lsa:
     - Yangi zaxira faylini nusxalash.
@@ -165,7 +166,7 @@ def sync_extra_directory(
     """
     try:
         if not extra_dir or not extra_dir.strip():
-            return
+            return True
 
         extra_dir = os.path.expanduser(os.path.expandvars(extra_dir.strip()))
         os.makedirs(extra_dir, exist_ok=True)
@@ -178,7 +179,8 @@ def sync_extra_directory(
 
         # 2. receipts_archive va uploads papkalarini sinxronlash
         for folder_name in ("receipts_archive", "uploads"):
-            src_folder = os.path.join(backend_dir, folder_name)
+            src_folder = ((uploads_dir if folder_name == 'uploads' else receipts_dir)
+                          or os.path.join(backend_dir, folder_name))
             if not os.path.exists(src_folder):
                 continue
 
@@ -211,8 +213,10 @@ def sync_extra_directory(
             if copied_count > 0:
                 logger.info(f"BACKUP_EXTRA_DIR: {folder_name} ichidan {copied_count} ta o'zgargan fayl nusxalandi.")
 
+        return True
     except Exception as e:
         logger.warning(f"BACKUP_EXTRA_DIR nusxalashda xatolik (asosiy zaxira ta'sirlanmadi): {e}")
+        return False
 
 
 def main() -> int:
@@ -220,12 +224,22 @@ def main() -> int:
     tools_dir = os.path.dirname(os.path.abspath(__file__))
     backend_dir = os.path.abspath(os.path.join(tools_dir, ".."))
     db_path = os.path.join(backend_dir, "restaron.db")
-    backup_dir = os.path.join(backend_dir, "zaxira")
+    backup_dir = os.getenv('BACKUP_DIR') or os.path.join(backend_dir, "zaxira")
 
     # Muhit o'zgaruvchisidan DB yo'li o'zgargan bo'lsa tekshirish
     custom_db = os.getenv("SQLITE_DB_PATH")
-    if custom_db and os.path.exists(custom_db):
+    if custom_db:
         db_path = custom_db
+    else:
+        from sqlalchemy.engine import make_url
+        if backend_dir not in sys.path:
+            sys.path.insert(0, backend_dir)
+        from app.core.config import settings
+        url = make_url(settings.DATABASE_URL)
+        if url.get_backend_name() != 'sqlite':
+            logger.error('PostgreSQL uchun pg_dump asosidagi zaxira talab qilinadi')
+            return 1
+        db_path = url.database
 
     if not os.path.exists(db_path):
         logger.error(f"Asosiy ma'lumotlar bazasi topilmadi: {db_path}")
@@ -287,7 +301,11 @@ def main() -> int:
     # BACKUP_EXTRA_DIR qo'shimcha nusxa olish
     extra_dir = os.getenv("BACKUP_EXTRA_DIR")
     if extra_dir and extra_dir.strip():
-        sync_extra_directory(backup_path, backend_dir, extra_dir.strip())
+        pdf_directory = os.getenv('PDF_ARCHIVE_DIR')
+        if not sync_extra_directory(backup_path, backend_dir, extra_dir.strip(),
+                uploads_dir=os.getenv('UPLOAD_DIR'),
+                receipts_dir=os.path.dirname(pdf_directory.rstrip('/\\')) if pdf_directory else None):
+            return 2
 
     return 0
 

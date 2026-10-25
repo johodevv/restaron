@@ -26,6 +26,7 @@ import threading
 import argparse
 from pathlib import Path
 from datetime import datetime
+from contextlib import contextmanager
 
 # Yollar
 BASE_DIR = Path(__file__).parent.resolve()
@@ -48,6 +49,37 @@ UVICORN_LOG = BASE_DIR / "uvicorn.log"
 STATUS_FILE = BASE_DIR / "server_status.json"
 
 PORT = 8000
+
+
+@contextmanager
+def supervisor_lock(path=None):
+    """One supervisor per checkout, including launches from different sessions."""
+    path = Path(path) if path is not None else BASE_DIR / "restaron.server.lock"
+    with path.open("a+b") as handle:
+        if path.stat().st_size == 0:
+            handle.write(b"0")
+            handle.flush()
+        handle.seek(0)
+        acquired = False
+        try:
+            if os.name == "nt":
+                import msvcrt
+                msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            acquired = True
+        except OSError:
+            pass
+        try:
+            yield acquired
+        finally:
+            if acquired:
+                handle.seek(0)
+                if os.name == "nt":
+                    msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+                else:
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
 MAX_LOG_BYTES = 2 * 1024 * 1024   # 2 MB
@@ -233,12 +265,14 @@ def start_server():
         log("Cloudflare Tunnel ishga tushmoqda...")
 
         cf_token, cf_fixed_url = read_tunnel_config()
+        cf_env = os.environ.copy()
         if cf_token:
             log("  Doimiy tunnel rejimi (manzil o'zgarmaydi)")
             cf_cmd = [
                 str(CLOUDFLARED_EXE), "tunnel", "--no-autoupdate",
-                "run", "--token", cf_token,
+                "run",
             ]
+            cf_env["TUNNEL_TOKEN"] = cf_token
         else:
             cf_cmd = [
                 str(CLOUDFLARED_EXE),
@@ -252,6 +286,7 @@ def start_server():
         # cloudflared will keep running independently; it doesn't die when we close PIPE.
         cf_proc = subprocess.Popen(
             cf_cmd,
+            env=cf_env,
             cwd=str(BASE_DIR),
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -424,7 +459,7 @@ def read_tunnel_config():
         return None, None
     token = url = ""
     try:
-        for raw in TUNNEL_CONFIG.read_text(encoding="utf-8", errors="replace").splitlines():
+        for raw in TUNNEL_CONFIG.read_text(encoding="utf-8-sig", errors="replace").splitlines():
             line = raw.strip()
             if not line or line.startswith("#"):
                 continue
@@ -465,10 +500,12 @@ def _tunnel_supervisor(stop_event):
 
     token, fixed_url = read_tunnel_config()
     named = bool(token)
+    cf_env = os.environ.copy()
 
     if named:
         cf_cmd = [str(CLOUDFLARED_EXE), "tunnel", "--no-autoupdate",
-                  "run", "--token", token]
+                  "run"]
+        cf_env["TUNNEL_TOKEN"] = token
         log("  Doimiy tunnel rejimi (manzil o'zgarmaydi)")
         if fixed_url:
             # Doimiy manzil oldindan ma'lum — stollardagi QR kodlar
@@ -493,6 +530,7 @@ def _tunnel_supervisor(stop_event):
         try:
             cf = subprocess.Popen(
                 cf_cmd,
+                env=cf_env,
                 cwd=str(BASE_DIR),
                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                 stdin=subprocess.DEVNULL, text=True,
@@ -544,6 +582,31 @@ def prepare_frontend():
 
 
 def serve_forever():
+    with supervisor_lock() as acquired:
+        if not acquired:
+            log("RestAron nazoratchisi allaqachon ishlamoqda; ikkinchi nusxa ochilmadi.")
+            return
+        # Keep the handle alive until process exit. Windows then also closes its
+        # backend/tunnel descendants, so a scheduler retry cannot leave orphans.
+        child_job = attach_windows_child_job()
+        _serve_forever_locked()
+
+
+def attach_windows_child_job():
+    if os.name != "nt":
+        return None
+    import win32api
+    import win32job
+    import uuid
+    job = win32job.CreateJobObject(None, "RestAron-" + uuid.uuid4().hex)
+    info = win32job.QueryInformationJobObject(job, win32job.JobObjectExtendedLimitInformation)
+    info["BasicLimitInformation"]["LimitFlags"] |= win32job.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+    win32job.SetInformationJobObject(job, win32job.JobObjectExtendedLimitInformation, info)
+    win32job.AssignProcessToJobObject(job, win32api.GetCurrentProcess())
+    return job
+
+
+def _serve_forever_locked():
     """
     Nazoratchi rejim (Windows Scheduled Task shu rejimda ishga tushiradi).
 
@@ -559,7 +622,7 @@ def serve_forever():
     log(f"  Papka:  {BACKEND_DIR}")
 
     if not prepare_frontend():
-        return
+        raise SystemExit(1)
 
     env = os.environ.copy()
     env["PYTHONIOENCODING"] = "utf-8"

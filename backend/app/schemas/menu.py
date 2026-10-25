@@ -57,7 +57,7 @@ class MenuItemBase(BaseModel):
     description_ru: Optional[str] = None
     description_en: Optional[str] = None
     description_cyrillic: Optional[str] = None
-    price: float = Field(..., gt=0)
+    price: float = Field(..., gt=0, le=10_000_000_000, allow_inf_nan=False)
     image_url: Optional[str] = None
     is_available: bool = True
     is_stop_list: bool = False
@@ -86,7 +86,7 @@ class MenuItemUpdate(BaseModel):
     description_ru: Optional[str] = None
     description_en: Optional[str] = None
     description_cyrillic: Optional[str] = None
-    price: Optional[float] = None
+    price: Optional[float] = Field(None, gt=0, le=10_000_000_000, allow_inf_nan=False)
     image_url: Optional[str] = None
     is_available: Optional[bool] = None
     is_stop_list: Optional[bool] = None

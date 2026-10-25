@@ -12,6 +12,9 @@ from app.core.security import require_role
 from app.models.review import Review
 from app.models.menu import MenuItem
 from app.models.order import Order
+from app.models import RestaurantSettings, Category, Table
+from app.models.user import User, UserRole
+from app.core.rate_limit import RateLimiter
 
 router = APIRouter(prefix="/reviews", tags=["⭐ Baholash"])
 
@@ -27,11 +30,36 @@ class ReviewCreate(BaseModel):
     service_rating: Optional[int] = Field(None, ge=1, le=5)
     service_comment: Optional[str] = None
     customer_name: Optional[str] = None
+    qr_token: Optional[str] = Field(None, max_length=100)
 
 
-@router.post("/", status_code=201, summary="Baho qo'yish (mijoz)")
+@router.post("/", status_code=201, summary="Baho qo'yish (mijoz)", dependencies=[Depends(RateLimiter(times=20, seconds=60))])
 async def create_review(payload: ReviewCreate, db: AsyncSession = Depends(get_db)):
     """Mijoz taom va/yoki ofitsiantga baho beradi (auth kerak emas)"""
+    settings = await db.scalar(select(RestaurantSettings).where(
+        RestaurantSettings.restaurant_id == payload.restaurant_id))
+    if not settings or not settings.allow_reviews:
+        raise HTTPException(403, "Baholash o'chirilgan")
+    order = await db.scalar(select(Order).where(Order.id == payload.order_id,
+        Order.restaurant_id == payload.restaurant_id))
+    if not order:
+        raise HTTPException(404, "Baholanadigan buyurtma topilmadi")
+    table = await db.scalar(select(Table).where(Table.id == order.table_id,
+        Table.restaurant_id == payload.restaurant_id, Table.qr_token == payload.qr_token)) if payload.qr_token else None
+    if not table:
+        raise HTTPException(403, "Baholash uchun stolning QR kodi talab qilinadi")
+    if payload.waiter_id is not None and payload.waiter_id != order.waiter_id:
+        raise HTTPException(400, "Ofitsiant ushbu buyurtmaga mos emas")
+    if payload.menu_item_id is not None:
+        from app.models.order import OrderItem
+        item_id = await db.scalar(select(MenuItem.id).join(Category).where(
+            MenuItem.id == payload.menu_item_id, Category.restaurant_id == payload.restaurant_id,
+            MenuItem.id.in_(select(OrderItem.menu_item_id).where(OrderItem.order_id == order.id))))
+        if item_id is None:
+            raise HTTPException(404, "Taom ushbu buyurtmada topilmadi")
+    if await db.scalar(select(Review.id).where(Review.order_id == order.id,
+            Review.menu_item_id == payload.menu_item_id).limit(1)):
+        raise HTTPException(409, "Bu buyurtmaga baho allaqachon berilgan")
     overall = None
     ratings = [r for r in [payload.food_rating, payload.service_rating] if r]
     if ratings:

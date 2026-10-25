@@ -11,7 +11,8 @@ async def lock_rows(db, model, ids):
         values = {'id': model.id}
         if hasattr(model, 'updated_at'):
             values['updated_at'] = model.updated_at
-        await db.execute(update(model).where(model.id.in_(ids)).values(**values))
+        if not db.info.get('write_request'):
+            await db.execute(update(model).where(model.id.in_(ids)).values(**values))
     else:
         await db.execute(select(model.id).where(model.id.in_(ids)).order_by(model.id).with_for_update())
     # Preserve unexplained legacy amounts. A normal edit must not silently

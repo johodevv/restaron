@@ -6,6 +6,7 @@ __pycache__/
 .Python
 env/
 .venv/
+.venv_*/
 venv/
 ENV/
 *.env
@@ -65,4 +66,6 @@ _saytni_ochish.cmd
 
 # Doimiy tunnel sozlamasi (TOKEN maxfiy - gitga tushmasin!)
 tunnel_sozlama.txt
+RESTARON_TEKSHIRUV.txt
+RESTARON_YANGILASH_PAKETI.zip
 cloudflared.exe

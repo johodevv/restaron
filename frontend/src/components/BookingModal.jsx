@@ -12,6 +12,12 @@ import {
   Sparkles
 } from 'lucide-react';
 import api from '../utils/api';
+import { useDialogFocus } from '../hooks/useDialogFocus';
+
+const localBookingDate = () => {
+  const date = new Date();
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+};
 
 /**
  * BookingModal — Stolni bron qilish / rezervatsiya modali.
@@ -26,11 +32,12 @@ export const BookingModal = ({
   table,
   tables = [],
   onBookingConfirmed,
+  appearance = 'default',
 }) => {
   const [selectedTableId, setSelectedTableId] = useState('');
   const [customerName, setCustomerName] = useState('');
   const [customerPhone, setCustomerPhone] = useState('');
-  const [bookingDate, setBookingDate] = useState(() => new Date().toISOString().split('T')[0]);
+  const [bookingDate, setBookingDate] = useState(localBookingDate);
   const [bookingTime, setBookingTime] = useState('18:00');
   const [guestCount, setGuestCount] = useState(4);
   const [depositAmount, setDepositAmount] = useState('');
@@ -38,13 +45,14 @@ export const BookingModal = ({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState(false);
+  const dialogRef = useDialogFocus(isOpen, () => { if (!loading) onClose(); });
 
   useEffect(() => {
     if (isOpen) {
       setSelectedTableId(table ? String(table.id) : (tables[0] ? String(tables[0].id) : ''));
       setCustomerName('');
       setCustomerPhone('+998 ');
-      setBookingDate(new Date().toISOString().split('T')[0]);
+      setBookingDate(localBookingDate());
       setBookingTime('18:00');
       setGuestCount(table?.capacity || 4);
       setDepositAmount('');
@@ -71,11 +79,19 @@ export const BookingModal = ({
       return;
     }
 
+    const advance = Number(String(depositAmount || '0').replace(/\s/g, ''));
+    if (!Number.isFinite(advance) || advance < 0 || advance > 10_000_000_000) {
+      setError('Avans summasini to‘g‘ri kiriting (masalan: 100 000).');
+      return;
+    }
+
     setLoading(true);
     try {
-      // Stol holatini 'reserved' ga o'zgartirish
-      await api.patch(`/tables/${selectedTableId}/status`, {
-        status: 'reserved'
+      // Save the reservation identity and advance in the existing atomic ledger endpoint.
+      await api.post(`/tables/${selectedTableId}/reserve`, {
+        name: customerName.trim(), phone: customerPhone.trim(),
+        time: `${bookingDate} ${bookingTime}`, guests: Number(guestCount),
+        deposit_amount: advance, note: note.trim(),
       });
 
       setSuccess(true);
@@ -103,8 +119,8 @@ export const BookingModal = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/80 backdrop-blur-md animate-fade-in overflow-y-auto">
-      <div className="relative w-full max-w-lg rounded-2xl sm:rounded-3xl glass-card border border-theme-border bg-theme-surface p-4 sm:p-7 shadow-2xl my-6 max-h-[92vh] flex flex-col justify-between overflow-hidden">
+    <div style={{ margin: 0 }} className={`fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/80 backdrop-blur-md animate-fade-in overflow-y-auto ${appearance === 'tables' ? 'tables-workspace table-booking' : ''}`}>
+      <div ref={dialogRef} role="dialog" aria-modal="true" aria-label="Stolni bron qilish" className="relative w-full max-w-lg rounded-2xl sm:rounded-3xl glass-card border border-theme-border bg-theme-surface p-4 sm:p-7 shadow-2xl my-6 max-h-[92vh] flex flex-col justify-between overflow-hidden">
         {/* Header */}
         <div className="flex items-center justify-between pb-3 sm:pb-4 border-b border-theme-border/60 shrink-0">
           <div className="flex items-center gap-2.5">
@@ -123,6 +139,8 @@ export const BookingModal = ({
 
           <button
             type="button"
+            aria-label="Bron oynasini yopish"
+            disabled={loading}
             onClick={onClose}
             className="p-2 rounded-xl text-theme-muted hover:text-white hover:bg-white/10 transition-colors"
           >
@@ -146,7 +164,7 @@ export const BookingModal = ({
           )}
 
           {/* Stolni tanlash (agar bir nechta bo'lsa) */}
-          <div>
+          {!table && <div>
             <label className="block text-[11px] font-bold text-slate-300 mb-1">
               Qaysi stol: *
             </label>
@@ -162,7 +180,7 @@ export const BookingModal = ({
                 </option>
               ))}
             </select>
-          </div>
+          </div>}
 
           {/* Mijoz ismi va telefoni */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">

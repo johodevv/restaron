@@ -35,7 +35,7 @@ export const Navbar = ({
 
   return (
     <>
-      <header className="sticky top-0 z-40 w-full backdrop-blur-xl bg-theme-surface/80 border-b border-theme-border/60 transition-colors">
+      <header className="app-navbar sticky top-0 z-40 w-full backdrop-blur-xl bg-theme-surface/80 border-b border-theme-border/60 transition-colors">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between gap-4">
           {/* Logo & Brand */}
           <div
@@ -51,7 +51,7 @@ export const Navbar = ({
             <div className="min-w-0">
               {/* Telefonda nom bitta qatorda qoladi — ilgari ikkiga bo'linib,
                   yuqori panel siqilib ketardi. */}
-              <span className="block truncate font-extrabold text-sm sm:text-lg tracking-tight bg-gradient-to-r from-white via-white/95 to-amber-400 bg-clip-text text-transparent">
+              <span className="app-navbar-brand block truncate font-extrabold text-sm sm:text-lg tracking-tight bg-gradient-to-r from-white via-white/95 to-amber-400 bg-clip-text text-transparent">
                 Dunyo Choyxonasi
               </span>
               {tableInfo ? (
@@ -105,7 +105,7 @@ export const Navbar = ({
             )}
 
             {/* 4 Languages Switcher (UZ | ЎЗ | RU | EN) */}
-            <div className="relative flex items-center bg-black/40 rounded-xl p-0.5 border border-theme-border/60">
+            <div className="app-navbar-languages relative flex items-center bg-black/40 rounded-xl p-0.5 border border-theme-border/60">
               {[
                 { code: 'uz', label: 'UZ' },
                 { code: 'oz', label: 'ЎЗ' },

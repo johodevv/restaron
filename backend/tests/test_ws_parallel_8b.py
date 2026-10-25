@@ -4,6 +4,7 @@ Test suite for VAZIFA 8B: Parallel WebSocket broadcast and commit ordering
 import pytest
 import asyncio
 import time
+import json
 from unittest.mock import AsyncMock, MagicMock
 
 from app.websockets.manager import ConnectionManager
@@ -21,6 +22,9 @@ async def test_slow_connection_does_not_block_fast_connection():
     fast_ws = MagicMock()
     fast_ws.accept = AsyncMock()
     fast_ws.send_json = AsyncMock()
+    async def fast_text(message):
+        await fast_ws.send_json(json.loads(message))
+    fast_ws.send_text = AsyncMock(side_effect=fast_text)
 
     # Slow client: send_json 5 soniya uxlaydi
     slow_ws = MagicMock()
@@ -28,6 +32,7 @@ async def test_slow_connection_does_not_block_fast_connection():
     async def slow_send_json(msg):
         await asyncio.sleep(5.0)
     slow_ws.send_json = AsyncMock(side_effect=slow_send_json)
+    slow_ws.send_text = AsyncMock(side_effect=slow_send_json)
     slow_ws.close = AsyncMock()
 
     # Ikkala soketni restaurant 1 ga ulaymiz
@@ -40,6 +45,7 @@ async def test_slow_connection_does_not_block_fast_connection():
     start_time = time.time()
     # Broadcast yuboramiz
     await mgr.broadcast_to_restaurant(1, {"type": "test_broadcast"})
+    await mgr.drain()
     elapsed = time.time() - start_time
 
     # 1. Umumiy vaqt 5 soniya bo'lmasligi kerak (2.0s timeout atrofida tugaydi)
@@ -64,6 +70,9 @@ async def test_errored_connection_is_disconnected():
     error_ws = MagicMock()
     error_ws.accept = AsyncMock()
     error_ws.send_json = AsyncMock()
+    async def error_text(message):
+        await error_ws.send_json(json.loads(message))
+    error_ws.send_text = AsyncMock(side_effect=error_text)
     error_ws.close = AsyncMock()
 
     await mgr.connect(error_ws, restaurant_id=1, role="admin")
@@ -73,6 +82,7 @@ async def test_errored_connection_is_disconnected():
     error_ws.send_json.side_effect = RuntimeError("Broken pipe")
 
     await mgr.broadcast_to_restaurant(1, {"type": "test_error"})
+    await mgr.drain()
     assert error_ws not in mgr._connection_meta
     assert error_ws not in mgr._restaurant_connections.get(1, set())
 

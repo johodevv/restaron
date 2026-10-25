@@ -12,13 +12,13 @@ from io import BytesIO
 from datetime import datetime
 from typing import Optional, List, Dict, Any
 
-from app.core.config import BACKEND_DIR
+from app.core.config import BACKEND_DIR, settings
 from app.core.disk_utils import ensure_disk_space
 
 logger = logging.getLogger("pdf_generator")
 
 # PDF Saqlash asosiy papkasi
-PDF_ARCHIVE_BASE = os.path.join(BACKEND_DIR, "receipts_archive", "PDFs")
+PDF_ARCHIVE_BASE = settings.PDF_ARCHIVE_DIR or os.path.join(BACKEND_DIR, "receipts_archive", "PDFs")
 
 # ─── Shriftlarni yuklash (Unicode / Kirill va Lotin harflari uchun) ────────────
 _font_registered = False

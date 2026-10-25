@@ -208,10 +208,15 @@ export const WebSocketProvider = ({ children, restaurantId = 1, tableId = null }
               // 6. call_waiter uchun avtomatik yo'qolish o'chirilgan
               addNotification({
                 eventType: 'call_waiter',
+                callId: data.id,
                 type: 'urgent',
                 title: `🙋 Ofitsiant chaqirildi — Stol #${data.table_number}`,
                 message: data.note || "Mijoz ofitsiant yordamini kutmoqda",
               });
+            } else if (data.type === 'call_completed') {
+              const resolvedIds = new Set(data.resolved_call_ids || [data.call_id]);
+              setNotifications((prev) => prev.filter((n) =>
+                n.eventType !== 'call_waiter' || !resolvedIds.has(n.callId)));
             } else if (data.type === 'order_ready') {
               playChime('success');
               addNotification({

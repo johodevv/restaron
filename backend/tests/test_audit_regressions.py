@@ -71,7 +71,7 @@ async def test_parallel_retries_apply_once(env, operation):
     assert result['items'][0]['quantity']==(1 if operation=='checkout' else 2)
     async with AsyncSessionLocal() as db:
         if operation=='checkout':
-            assert await db.scalar(select(func.count(ReceiptArchive.id)).where(ReceiptArchive.order_id==order['id']))==1
+            assert await db.scalar(select(func.count(ReceiptArchive.id)).where(ReceiptArchive.order_id==order['id'], ReceiptArchive.receipt_type=='final_bill'))==1
     if operation!='checkout':
         body = {'delta':2} if operation=='delta' else {'items':[{'menu_item_id':rid,'quantity':2}]}
         assert (await req(method,path,body,key='same-operation')).status_code==409
@@ -136,7 +136,7 @@ async def test_advance_ledger_and_legacy_checkout(env):
         movements=(await db.scalars(select(DepositMovement).where(DepositMovement.table_id==rid))).all()
         assert sum(m.amount for m in movements)==0
         assert sum(m.cash_amount for m in movements)==5000
-        assert await db.scalar(select(func.count(ReceiptArchive.id)).where(ReceiptArchive.order_id==o['id']))==1
+        assert await db.scalar(select(func.count(ReceiptArchive.id)).where(ReceiptArchive.order_id==o['id'], ReceiptArchive.receipt_type=='final_bill'))==1
     report=(await req('GET',f'/stats/payments-report?restaurant_id={rid}')).json()
     assert report['total_cash_in_drawer']==11000
     assert report['rows'][0]['advance_amount']==5000

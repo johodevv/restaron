@@ -8,14 +8,16 @@ from datetime import datetime, timezone, timedelta
 from fastapi import APIRouter, Depends, HTTPException, status, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, and_, or_, update, text
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import selectinload, joinedload
 from sqlalchemy.exc import IntegrityError
 from typing import List, Optional, Any, Set
+from app.core.money import money, money_sum, percent, decimal
 
 from app.core.database import get_db
 from app.core.transactions import lock_rows
 from app.core.rate_limit import RateLimiter, get_client_ip
 from app.core.security import get_current_user, get_optional_current_user, require_role
+from app.core.kitchen_permissions import kitchen_sent_quantity, require_kitchen_admin
 from app.models.order import Order, OrderItem, OrderStatus, CallStatus
 from app.models.menu import MenuItem, Category
 from app.models.table import Table, TableStatus
@@ -231,19 +233,19 @@ async def load_order_full(db: AsyncSession, order_id: int) -> Optional[Order]:
     MUHIM: `db.refresh(order)` bog'liqliklarni (items -> menu_item, table, waiter)
     "expired" holatga o'tkazadi. Keyin ularga murojaat qilish async kontekstda
     lazy-load'ni ishga tushiradi va SQLAlchemy `MissingGreenlet` xatosi bilan
-    500 qaytaradi. Shuning uchun refresh o'rniga doim selectinload bilan
+    500 qaytaradi. Shuning uchun refresh o'rniga bog'lanishlarni joinedload bilan
     qaytadan yuklaymiz.
     """
     res = await db.execute(
         select(Order)
         .options(
-            selectinload(Order.items).selectinload(OrderItem.menu_item),
-            selectinload(Order.table),
-            selectinload(Order.waiter),
+            joinedload(Order.items).joinedload(OrderItem.menu_item),
+            joinedload(Order.table),
+            joinedload(Order.waiter),
         )
         .where(Order.id == order_id)
     )
-    return res.scalar_one_or_none()
+    return res.unique().scalar_one_or_none()
 
 
 DEFAULT_SERVICE_FEE = 12.0
@@ -297,15 +299,15 @@ def line_total(menu_item: MenuItem, quantity: int, weight: Optional[float],
     mijoz bilan nizoga olib keladi.
     """
     if manual_price is not None and manual_price >= 0:
-        return round(float(manual_price), 2)
+        return money(manual_price)
 
     price = menu_item.price if unit_price is None else unit_price
     price = price or 0.0
     if getattr(menu_item, "is_weighted", False):
         if not weight or weight <= 0:
             return 0.0
-        return round(price * float(weight) * max(1, quantity), 2)
-    return round(price * quantity, 2)
+        return money(decimal(price) * decimal(weight) * max(1, quantity))
+    return money(decimal(price) * quantity)
 
 
 def item_is_priced(it: OrderItem) -> bool:
@@ -339,9 +341,9 @@ async def recalc_order_totals(db: AsyncSession, order: Order) -> None:
         res = await db.execute(select(OrderItem).where(OrderItem.order_id == order.id))
         subtotal = sum((i.total_price or 0.0) for i in res.scalars().all())
     fee_pct = order_fee_percent(order)
-    order.subtotal = round(subtotal, 2)
-    order.service_fee_amount = round(subtotal * (fee_pct / 100.0), 2)
-    order.total = round(subtotal + order.service_fee_amount - (order.discount or 0.0), 2)
+    order.subtotal = money(subtotal)
+    order.service_fee_amount = percent(order.subtotal, fee_pct)
+    order.total = money_sum([order.subtotal, order.service_fee_amount, -(order.discount or 0)])
     if order.waiter_share_percent and order.waiter_share_percent > 0:
         order.waiter_share_amount = round(order.subtotal * (order.waiter_share_percent / 100.0), 2)
 
@@ -1054,10 +1056,11 @@ async def waiter_create_order(
             "item_time": now_time_str,
         })
 
-    fee_amount = subtotal * (service_fee_pct / 100.0)
+    subtotal = money(subtotal)
+    fee_amount = percent(subtotal, service_fee_pct)
     order.subtotal = subtotal
     order.service_fee_amount = fee_amount
-    order.total = subtotal + fee_amount
+    order.total = money_sum([subtotal, fee_amount])
 
     if current_user.commission_percent and current_user.commission_percent > 0:
         order.waiter_share_percent = current_user.commission_percent
@@ -1113,20 +1116,11 @@ async def waiter_add_items(
     # 1. Buyurtma qatorini qulflash (race condition oldini olish)
     await lock_rows(db, Order, [order_id])
 
-    res = await db.execute(
-        select(Order)
-        .options(
-            selectinload(Order.items).selectinload(OrderItem.menu_item),
-            selectinload(Order.table),
-            selectinload(Order.waiter),
-        )
-        .where(Order.id == order_id)
-    )
-    order = res.scalar_one_or_none()
+    order = await load_order_full(db, order_id)
     if not order:
         raise HTTPException(status_code=404, detail="Buyurtma topilmadi")
 
-    if order.status in [OrderStatus.PAID, OrderStatus.CANCELLED]:
+    if order.is_paid or order.status in [OrderStatus.PAID, OrderStatus.CANCELLED]:
         raise HTTPException(status_code=400, detail="Ushbu buyurtma yopilgan yoki bekor qilingan")
 
     # Barcha taomlarni bitta SQL so'rovda olish (1.5.1)
@@ -1248,16 +1242,7 @@ async def update_item_quantity(
     # 1. Buyurtma qatorini qulflash (race condition oldini olish)
     await lock_rows(db, Order, [order_id])
 
-    order_res = await db.execute(
-        select(Order)
-        .options(
-            selectinload(Order.items).selectinload(OrderItem.menu_item),
-            selectinload(Order.table),
-            selectinload(Order.waiter),
-        )
-        .where(Order.id == order_id)
-    )
-    order = order_res.scalar_one_or_none()
+    order = await load_order_full(db, order_id)
     if not order:
         raise HTTPException(status_code=404, detail="Buyurtma topilmadi")
 
@@ -1268,13 +1253,16 @@ async def update_item_quantity(
     if not order_item:
         raise HTTPException(status_code=404, detail="Taom topilmadi")
 
-    # Oshxonaga ketgan taom tekshiruvi:
-    sent_qty = order_item.sent_quantity or 0
-    if order_item.sent_to_kitchen and payload.quantity < sent_qty:
-        if current_user.role == UserRole.WAITER or current_user.role == "waiter":
-            raise HTTPException(status_code=403, detail="Oshxonaga yuborilgan taomni faqat Admin/Kassir bekor qila oladi!")
+    if payload.quantity > order_item.quantity and (not order_item.menu_item or
+            order_item.menu_item.is_deleted or not order_item.menu_item.is_available or order_item.menu_item.is_stop_list):
+        raise HTTPException(400, "Bu taom hozir mavjud emas yoki stop-listda")
 
-        # Admin yoki Kassir oshxonaga ketgan taom sonini kamaytirsa
+    # Oshxonaga ketgan taom tekshiruvi:
+    sent_qty = kitchen_sent_quantity(order_item)
+    if payload.quantity < sent_qty:
+        require_kitchen_admin(current_user)
+
+        # Admin oshxonaga ketgan taom sonini kamaytirsa
         cancelled_qty = sent_qty - payload.quantity
         from app.core.audit import log_audit_event
         await log_audit_event(
@@ -1368,16 +1356,7 @@ async def update_item_delta(
     # 1. Buyurtma qatorini qulflash
     await lock_rows(db, Order, [order_id])
 
-    order_res = await db.execute(
-        select(Order)
-        .options(
-            selectinload(Order.items).selectinload(OrderItem.menu_item),
-            selectinload(Order.table),
-            selectinload(Order.waiter),
-        )
-        .where(Order.id == order_id)
-    )
-    order = order_res.scalar_one_or_none()
+    order = await load_order_full(db, order_id)
     if not order:
         raise HTTPException(status_code=404, detail="Buyurtma topilmadi")
 
@@ -1389,15 +1368,16 @@ async def update_item_delta(
         raise HTTPException(status_code=404, detail="Taom topilmadi")
 
     new_quantity = order_item.quantity + payload.delta
+    if payload.delta > 0 and (not order_item.menu_item or
+            order_item.menu_item.is_deleted or not order_item.menu_item.is_available or order_item.menu_item.is_stop_list):
+        raise HTTPException(400, "Bu taom hozir mavjud emas yoki stop-listda")
 
     # Natija 0 yoki undan kam bo'lsa -> delete_order_item mantiqi
     if new_quantity <= 0:
-        if order_item.sent_to_kitchen:
-            user_role = current_user.role.value if hasattr(current_user.role, "value") else str(current_user.role)
-            if user_role == "waiter":
-                raise HTTPException(status_code=403, detail="Oshxonaga yuborilgan taomni faqat Admin/Kassir bekor qila oladi!")
+        if kitchen_sent_quantity(order_item):
+            require_kitchen_admin(current_user)
 
-            cancelled_qty = order_item.sent_quantity or order_item.quantity or 1
+            cancelled_qty = kitchen_sent_quantity(order_item)
             from app.core.audit import log_audit_event
             await log_audit_event(
                 db=db,
@@ -1444,11 +1424,9 @@ async def update_item_delta(
         if new_quantity > 500:
             raise HTTPException(status_code=400, detail="Taom miqdori 500 dan oshishi mumkin emas")
 
-        sent_qty = order_item.sent_quantity or 0
-        if order_item.sent_to_kitchen and new_quantity < sent_qty:
-            user_role = current_user.role.value if hasattr(current_user.role, "value") else str(current_user.role)
-            if user_role == "waiter":
-                raise HTTPException(status_code=403, detail="Oshxonaga yuborilgan taomni faqat Admin/Kassir bekor qila oladi!")
+        sent_qty = kitchen_sent_quantity(order_item)
+        if new_quantity < sent_qty:
+            require_kitchen_admin(current_user)
 
             cancelled_qty = sent_qty - new_quantity
             from app.core.audit import log_audit_event
@@ -1491,9 +1469,7 @@ async def update_item_delta(
     await db.commit()
     wake_printer_worker()
 
-
-    full_order = await load_order_full(db, order_id) or order
-    resp = build_order_response(full_order)
+    # expire_on_commit=False: the response already contains the committed state.
     resp_dict = resp.model_dump() if hasattr(resp, "model_dump") else resp.dict()
     rest_id = resp_dict.get("restaurant_id", 1)
     ord_id = resp_dict.get("id", order_id)
@@ -1537,13 +1513,9 @@ async def update_item_weight(
 ):
     """Tortiladigan taom (baliq, go'sht) narxini belgilash.
 
-    Asosiy yo'l — ofitsiant tarozidagi SUMMANI o'zi yozadi (`price`):
-    "baliqning kg sini emas, pulini yoz". Shunda summa boshqa hech
-    qayerda qayta hisoblanmaydi.
-
-    Istasa og'irlikni ham (`weight`) kiritadi — u chekda va oshxona
-    begunogida ko'rinadi. Faqat og'irlik kiritilsa, summa eski yo'l
-    bilan 1 kg narxiga ko'paytiriladi.
+    Ofitsiant oshxonaga yuborilgandan keyin ham tarozidagi yakuniy
+    summa yoki og'irlikni tuzatadi. Summa berilsa og'irlik undan olinadi;
+    faqat og'irlik berilsa summa hisoblanadi. Dona soni o'zgarmaydi.
     """
     await lock_rows(db, Order, [order_id])
     item_res = await db.execute(
@@ -1558,7 +1530,7 @@ async def update_item_weight(
     order = await load_order_full(db, order_id)
     if not order:
         raise HTTPException(status_code=404, detail="Buyurtma topilmadi")
-    if order.status in (OrderStatus.PAID, OrderStatus.CANCELLED):
+    if order.is_paid or order.status in (OrderStatus.PAID, OrderStatus.CANCELLED):
         raise HTTPException(status_code=400, detail="Yopilgan buyurtmani o'zgartirib bo'lmaydi")
 
     menu_item = order_item.menu_item
@@ -1579,29 +1551,33 @@ async def update_item_weight(
             detail="Summani yoki og'irlikni kiriting.",
         )
 
-    # Ofitsiant summani o'zi yozsa — shu summa qoladi. Faqat og'irlik
-    # kiritilsa, eski yo'l bilan 1 kg narxiga ko'paytiriladi.
+    old_total = order_item.total_price or 0
+    old_weight = order_item.weight
+    old_manual_price = order_item.manual_price
+    was_sent = kitchen_sent_quantity(order_item) > 0
+    unit_price = order_item.unit_price or 0.0
+    qty = max(1, order_item.quantity or 1)
+    if unit_price <= 0:
+        raise HTTPException(400, "Bir kilogramm yoki litr narxi belgilanmagan. Avval admin narxni tekshirsin.")
+    # One input is authoritative. Derive the other, including for older clients
+    # that send both fields; never retain an old weight with a new amount.
     order_item.manual_price = round(float(payload.price), 2) if has_price else None
-
-    if has_weight:
-        order_item.weight = payload.weight
-    elif has_price:
-        # OG'IRLIKNI O'ZIMIZ HISOBLAYMIZ: summa / 1 kg narxi.
-        # Ofitsiant 204 000 so'm desa, 120 000 so'm/kg baliq uchun
-        # chekda "1.7 кг" deb chiqadi — mijoz nechchi kg olganini
-        # ko'radi va narx qayerdan kelganini tushunadi.
-        unit_price = order_item.unit_price or 0.0
-        qty = max(1, order_item.quantity or 1)
-        if unit_price > 0:
-            order_item.weight = round(
-                float(order_item.manual_price) / (unit_price * qty), 3)
-        else:
-            order_item.weight = None
+    if has_price:
+        order_item.weight = round(float(order_item.manual_price) / (unit_price * qty), 3)
     else:
-        order_item.weight = None
+        order_item.weight = payload.weight
     order_item.total_price = line_total(
         menu_item, order_item.quantity, order_item.weight, order_item.manual_price, order_item.unit_price
     )
+
+    if was_sent and (old_total != order_item.total_price or old_weight != order_item.weight or old_manual_price != order_item.manual_price):
+        from app.core.audit import log_audit_event
+        await log_audit_event(db=db, restaurant_id=order.restaurant_id, action="edit_kitchen_item_price",
+            user=current_user, entity_type="order_item", entity_id=order_item.id,
+            details={"order_id": order.id, "old_total": old_total, "new_total": order_item.total_price,
+                     "old_weight": old_weight, "new_weight": order_item.weight,
+                     "quantity": order_item.quantity, "unit_price": unit_price,
+                     "input": "price" if has_price else "weight"})
 
     await recalc_order_totals(db, order)
     await db.flush()
@@ -1642,10 +1618,12 @@ async def update_item_size(
     order = await load_order_full(db, order_id)
     if not order:
         raise HTTPException(status_code=404, detail="Buyurtma topilmadi")
-    if order.status in (OrderStatus.PAID, OrderStatus.CANCELLED):
+    if order.is_paid or order.status in (OrderStatus.PAID, OrderStatus.CANCELLED):
         raise HTTPException(status_code=400, detail="Yopilgan buyurtmani o'zgartirib bo'lmaydi")
 
     size = (payload.portion_size or "").strip()
+    if kitchen_sent_quantity(order_item) > 0 and size != (order_item.portion_size or ""):
+        raise HTTPException(409, "Taom oshxonaga yuborilgan. Hajmni almashtirish uchun eski taomni bekor qilib, yangisini qo'shing")
     order_item.portion_size = size or None
 
     await db.flush()
@@ -1689,11 +1667,10 @@ async def delete_order_item(
     if not order_item:
         raise HTTPException(status_code=404, detail="Taom topilmadi")
 
-    if order_item.sent_to_kitchen:
-        if current_user.role == UserRole.WAITER or current_user.role == "waiter":
-            raise HTTPException(status_code=403, detail="Oshxonaga yuborilgan taomni faqat Admin/Kassir bekor qila oladi!")
+    if kitchen_sent_quantity(order_item):
+        require_kitchen_admin(current_user)
 
-        cancelled_qty = order_item.sent_quantity or order_item.quantity or 1
+        cancelled_qty = kitchen_sent_quantity(order_item)
         from app.core.audit import log_audit_event
         await log_audit_event(
             db=db,
@@ -1935,16 +1912,7 @@ async def _send_to_kitchen(order_id, reprint, db, current_user, idempotency, *, 
     # 0. SQLite'da ikkita bir vaqtdagi so'rov race condition bo'lmasligi uchun qatorni qulflaymiz:
     await lock_rows(db, Order, [order_id])
 
-    res = await db.execute(
-        select(Order)
-        .options(
-            selectinload(Order.items).selectinload(OrderItem.menu_item),
-            selectinload(Order.table),
-            selectinload(Order.waiter),
-        )
-        .where(Order.id == order_id)
-    )
-    order = res.scalar_one_or_none()
+    order = await load_order_full(db, order_id)
     if not order:
         raise HTTPException(status_code=404, detail="Buyurtma topilmadi")
 
@@ -2236,16 +2204,7 @@ async def checkout_order(
     # bo'lmasligi uchun tranzaksiyaning eng boshida qatorni qulflaymiz
     await lock_rows(db, Order, [order_id])
 
-    res = await db.execute(
-        select(Order)
-        .options(
-            selectinload(Order.items).selectinload(OrderItem.menu_item),
-            selectinload(Order.table),
-            selectinload(Order.waiter),
-        )
-        .where(Order.id == order_id)
-    )
-    order = res.scalar_one_or_none()
+    order = await load_order_full(db, order_id)
     if not order:
         raise HTTPException(status_code=404, detail="Buyurtma topilmadi")
 
@@ -2268,7 +2227,7 @@ async def checkout_order(
         )
 
     # Bo'sh buyurtma (taom yo'q yoki subtotal == 0) to'lanmasin: 400
-    subtotal = sum(i.total_price for i in order.items)
+    subtotal = money_sum(i.total_price for i in order.items)
     if not order.items or subtotal <= 0:
         raise HTTPException(status_code=400, detail="Bo'sh buyurtmani to'lab bo'lmaydi")
 
@@ -2293,8 +2252,8 @@ async def checkout_order(
             order,
             fallback=(settings.service_fee_percent if settings else None),
         )
-    fee_amount = subtotal * (fee_pct / 100.0)
-    discount = payload.discount
+    fee_amount = percent(subtotal, fee_pct)
+    discount = money(payload.discount)
 
     # discount > subtotal + service_fee bo'lsa 400
     if discount > (subtotal + fee_amount):
@@ -2313,7 +2272,7 @@ async def checkout_order(
             detail=f"Kassir uchun ruxsat etilgan maksimal chegirma {max_cashier_discount}% (kiritilgan: {round(discount_pct, 1)}%)",
         )
 
-    total = max(0.0, subtotal + fee_amount - discount)
+    total = max(0.0, money_sum([subtotal, fee_amount, -discount]))
 
     advance = round((order.table.deposit_amount or 0) if order.table else 0, 2)
     if advance > total:
@@ -2338,10 +2297,10 @@ async def checkout_order(
     # ─── To'lov summalarini tekshirish va kassaga to'g'ri yozish ───
     # Kassir faqat to'lov turini tanlab, summani kiritmasligi mumkin —
     # bunday holda butun summa o'sha tur bo'yicha yoziladi.
-    cash_in = max(0.0, payload.cash_amount or 0.0)
-    card_in = max(0.0, payload.card_amount or 0.0)
-    click_in = max(0.0, payload.click_amount or 0.0)
-    debt_in = max(0.0, payload.debt_amount or 0.0)
+    cash_in = money(payload.cash_amount)
+    card_in = money(payload.card_amount)
+    click_in = money(payload.click_amount)
+    debt_in = money(payload.debt_amount)
 
     if (cash_in + card_in + click_in + debt_in) == 0.0:
         if payload.payment_method == "cash":
@@ -2393,9 +2352,15 @@ async def checkout_order(
             select(Debt).where(Debt.order_id == order.id)
         )
         debt_obj = existing_debt_res.scalar_one_or_none()
+        if debt_obj and (debt_obj.restaurant_id != order.restaurant_id or
+                abs(debt_obj.amount - order.debt_amount) > 0.01 or
+                (debt_obj.paid_amount or 0) != 0 or
+                abs(debt_obj.remaining_amount - order.debt_amount) > 0.01):
+            raise HTTPException(409, "Mavjud qarz ushbu hisobga mos emas. Nasiya yozuvini tekshiring")
         if not debt_obj:
-            cust_name = payload.debt_customer_name or order.customer_name or "Noma'lum Mijoz"
-            cust_phone = payload.debt_customer_phone or "—"
+            from app.routers.debts import validate_debt_customer
+            cust_name, cust_phone = validate_debt_customer(
+                payload.debt_customer_name or order.customer_name, payload.debt_customer_phone)
             debt_obj = Debt(
                 restaurant_id=order.restaurant_id,
                 order_id=order.id,
@@ -2409,6 +2374,18 @@ async def checkout_order(
                 note=payload.debt_note or f"Buyurtma {order.order_number} uchun qarz",
             )
             db.add(debt_obj)
+
+    # Kitchen tickets and payment must succeed or roll back together. A separate
+    # no-key handler prevents the nested send from overwriting checkout replay.
+    kitchen_result = None
+    if any((it.sent_quantity or 0) < it.quantity for it in order.items):
+        order.is_paid = False
+        order.status = OrderStatus.PENDING
+        await db.flush()
+        kitchen_result = await _send_to_kitchen(order.id, False, db, current_user,
+            IdempotencyHandler(None, "checkout-kitchen", db), finalize=False)
+        order.is_paid = True
+        order.status = OrderStatus.PAID
 
     waiter_user = order.waiter or current_user
     if waiter_user and waiter_user.commission_percent and waiter_user.commission_percent > 0:
@@ -2576,6 +2553,7 @@ async def checkout_order(
         "amount_due": amount_due,
         "raw_text": bill_text,
         "debt_created": bool(debt_obj),
+        "kitchen": kitchen_result,
         "order": build_order_response(full_order),
     }
     await idempotency.save_response(current_user.id, res)
@@ -2689,7 +2667,9 @@ def call_waiter_ip_key(request: Request) -> str:
 )
 async def call_waiter(payload: CallWaiterRequest, db: AsyncSession = Depends(get_db)):
     """Mijoz stolidan ofitsiantni chaqiradi (rate-limit va spam himoyasi bilan)"""
-    result = await db.execute(select(Table).where(Table.id == payload.table_id))
+    # Serialize call creation/resolution for this table across PostgreSQL workers.
+    # SQLite write requests already hold BEGIN IMMEDIATE.
+    result = await db.execute(select(Table).where(Table.id == payload.table_id).with_for_update())
     table = result.scalar_one_or_none()
     if not table or not table.is_active:
         raise HTTPException(status_code=404, detail="Stol topilmadi yoki faol emas")
@@ -2718,6 +2698,16 @@ async def call_waiter(payload: CallWaiterRequest, db: AsyncSession = Depends(get
         .order_by(Order.created_at.desc())
     )
     active_order = order_res.scalars().first()
+
+    pending_notification = await db.scalar(select(Notification).where(
+        Notification.restaurant_id == table.restaurant_id,
+        Notification.type == NotificationType.CALL_WAITER,
+        Notification.is_read == False,
+        Notification.data["table_id"].as_integer() == table.id,
+    ).order_by(Notification.id.desc()).limit(1))
+    if pending_notification:
+        return {"success": True, "call_id": pending_notification.id,
+                "message": f"Stol #{table.number} uchun ofitsiant allaqachon chaqirilgan"}
 
     # Agar bu stol uchun chaqiruv allaqachon kutish holatida bo'lsa, spam bildirishnoma yaratmaslik
     if active_order and active_order.call_waiter and active_order.call_status == CallStatus.PENDING:
@@ -2819,6 +2809,8 @@ async def list_waiter_calls(
     for n in notifications:
         data = n.data or {}
         table_id = data.get("table_id")
+        if table_id and table_id in seen_table_ids:
+            continue
         table_number = data.get("table_number")
         room = data.get("room")
         note = data.get("note") or n.message
@@ -2868,7 +2860,8 @@ async def list_waiter_calls(
         if o.table_id not in seen_table_ids:
             calls.append(
                 WaiterCallResponse(
-                    id=100000 + o.id,
+                    # Negative order IDs cannot collide with notification IDs.
+                    id=-o.id,
                     type="call_waiter",
                     table_id=o.table_id,
                     table_number=o.table.number if o.table else o.table_id,
@@ -2879,8 +2872,30 @@ async def list_waiter_calls(
                     is_resolved=False,
                 )
             )
+            seen_table_ids.add(o.table_id)
 
     return calls
+
+
+async def _finish_table_calls(db, restaurant_id, table_id):
+    """Keep the two historical call stores consistent in one transaction."""
+    notifications = (await db.scalars(select(Notification).where(
+        Notification.restaurant_id == restaurant_id,
+        Notification.type == NotificationType.CALL_WAITER,
+        Notification.is_read == False,
+        Notification.data["table_id"].as_integer() == table_id,
+    ))).all()
+    for notification in notifications:
+        notification.is_read = True
+        notification.read_at = datetime.now(timezone.utc)
+    orders = (await db.scalars(select(Order).where(
+        Order.restaurant_id == restaurant_id, Order.table_id == table_id,
+        Order.call_waiter == True,
+    ))).all()
+    for order in orders:
+        order.call_waiter = False
+        order.call_status = CallStatus.COMPLETED
+    return [notification.id for notification in notifications]
 
 
 # ─── Chaqiruvni yakunlash (Bordim) ───────────────────────────
@@ -2891,72 +2906,46 @@ async def resolve_waiter_call(
     current_user: User = Depends(require_role("waiter", "admin", "developer")),
 ):
     """Ofitsiant yoki Admin chaqiruv bo'yicha mijozga xizmat ko'rsatganini tasdiqlaydi"""
-    table_id = None
-    table_num = None
-    # Bug 5 fix: `or 1` o'chirildi — developer user restaurant_id=None bo'lsa
-    # `None or 1` → 1 (noto'g'ri restoran) o'rniga, to'g'ri qiymat keyin aniqlanadi.
-    restaurant_id = current_user.restaurant_id  # None bo'lishi mumkin, keyinroq aniqlanadi
-
-    # Bug 6 fix: 100000 magic number o'chirildi.
-    # Yangi strategiya: avval Notification jadvalidan qidiramiz (call_id = notif.id),
-    # topilmasa Order jadvalidan qidiramiz (call_id = order.id).
-    # Bu yondashuv 100,000+ buyurtmada ham to'g'ri ishlaydi.
-    notif_res = await db.execute(
-        select(Notification).where(Notification.id == call_id)
-    )
-    notif = notif_res.scalar_one_or_none()
-
-    if notif:
-        # Notification orqali topildi
-        notif.is_read = True
-        notif.read_at = datetime.now(timezone.utc)
+    notif = await db.scalar(select(Notification).where(
+        Notification.id == call_id, Notification.type == NotificationType.CALL_WAITER,
+    )) if call_id > 0 else None
+    order = None
+    if notif is not None:
+        table_id = (notif.data or {}).get("table_id")
         restaurant_id = notif.restaurant_id
-        data = notif.data or {}
-        table_id = data.get("table_id")
-        table_num = data.get("table_number")
-        order_id = data.get("order_id")
-        if order_id:
-            o_res = await db.execute(select(Order).where(Order.id == order_id))
-            o = o_res.scalar_one_or_none()
-            if o:
-                o.call_waiter = False
-                o.call_status = CallStatus.COMPLETED
     else:
-        # Notification topilmadi — Order.id sifatida urinib ko'ramiz
-        o_res = await db.execute(
-            select(Order).options(selectinload(Order.table)).where(Order.id == call_id)
-        )
-        o = o_res.scalar_one_or_none()
-        if o:
-            o.call_waiter = False
-            o.call_status = CallStatus.COMPLETED
-            restaurant_id = o.restaurant_id
-            table_id = o.table_id
-            table_num = o.table.number if o.table else o.table_id
+        # Support IDs emitted by old clients as well as the unambiguous new IDs.
+        order_id = -call_id if call_id < 0 else call_id - 100000 if call_id > 100000 else call_id
+        order = await db.scalar(select(Order).where(Order.id == order_id))
+        if order is None:
+            raise HTTPException(404, "Chaqiruv topilmadi")
+        table_id, restaurant_id = order.table_id, order.restaurant_id
+    table = await db.scalar(select(Table).where(
+        Table.id == table_id, Table.restaurant_id == restaurant_id,
+    ).with_for_update())
+    if table is None:
+        raise HTTPException(404, "Chaqiruv stoli topilmadi")
 
-    # restaurant_id hali ham None bo'lsa (developer user + notif ham topilmasa) — xato
-    if restaurant_id is None:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Chaqiruv #{call_id} topilmadi yoki restaurant aniqlanmadi",
-        )
+    if notif is not None:
+        await db.refresh(notif)
+        if notif.is_read:
+            # A retry of an old call must never acknowledge a newer call.
+            return {"success": True, "already_resolved": True, "message": "Chaqiruv avval yakunlangan"}
+    else:
+        await db.refresh(order)
+        if not order.call_waiter:
+            return {"success": True, "already_resolved": True, "message": "Chaqiruv avval yakunlangan"}
+        newer_call = await db.scalar(select(Notification.id).where(
+            Notification.restaurant_id == restaurant_id,
+            Notification.type == NotificationType.CALL_WAITER,
+            Notification.is_read == False,
+            Notification.data["table_id"].as_integer() == table_id,
+        ).limit(1))
+        if newer_call is not None:
+            raise HTTPException(409, "Chaqiruv yangilangan. Ro'yxatni yangilab, qayta qabul qiling")
 
-    if table_id:
-        await db.execute(
-            update(Notification)
-            .where(
-                Notification.restaurant_id == restaurant_id,
-                Notification.type == NotificationType.CALL_WAITER,
-                Notification.is_read == False,
-            )
-            .values(is_read=True, read_at=datetime.now(timezone.utc))
-        )
-        st_orders = await db.execute(
-            select(Order).where(Order.table_id == table_id, Order.call_waiter == True)
-        )
-        for st_o in st_orders.scalars().all():
-            st_o.call_waiter = False
-            st_o.call_status = CallStatus.COMPLETED
+    resolved_ids = await _finish_table_calls(db, restaurant_id, table_id)
+    table_num = table.number
 
     await db.flush()
     await db.commit()
@@ -2968,6 +2957,7 @@ async def resolve_waiter_call(
         {
             "type": "call_completed",
             "call_id": call_id,
+            "resolved_call_ids": resolved_ids,
             "table_id": table_id,
             "table_number": table_num,
             "waiter_name": waiter_display,
@@ -3052,6 +3042,7 @@ async def list_orders(
     table_id: Optional[int] = None,
     order_type: Optional[str] = None,
     active_only: bool = Query(False),
+    ready_for_delivery: bool = Query(False),
     limit: int = Query(default=100, ge=1, le=300, description="Qaytariladigan buyurtmalar soni"),
     offset: int = Query(default=0, ge=0, description="O'tkazib yuboriladigan buyurtmalar soni"),
     include_items: bool = Query(default=False, description="Tarkibidagi taomlar ro'yxatini ham yuklash"),
@@ -3079,6 +3070,9 @@ async def list_orders(
 
     if active_only:
         query = query.where(Order.is_paid == False, Order.status.notin_([OrderStatus.PAID, OrderStatus.CANCELLED]))
+    if ready_for_delivery:
+        query = query.where(Order.ready_at.is_not(None), Order.served_at.is_(None),
+            Order.status != OrderStatus.CANCELLED)
     if status:
         query = query.where(Order.status == status)
     if table_id:
@@ -3330,28 +3324,23 @@ async def deliver_order(
     - Oshpaz, boshqa ofitsiantlar va mijozga WebSocket xabari uzatiladi
     """
     await lock_rows(db, Order, [order_id])
-    result = await db.execute(
-        select(Order)
-        .options(
-            selectinload(Order.items).selectinload(OrderItem.menu_item),
-            selectinload(Order.table),
-            selectinload(Order.waiter),
-        )
-        .where(Order.id == order_id)
-    )
-    order = result.scalar_one_or_none()
+    order = await load_order_full(db, order_id)
     if not order:
         raise HTTPException(status_code=404, detail="Buyurtma topilmadi")
 
-    if order.status == OrderStatus.SERVED:
+    if order.status == OrderStatus.SERVED or order.served_at is not None:
         raise HTTPException(status_code=400, detail="Bu buyurtma allaqachon yetkazib berilgan")
+
+    if (order.is_paid or order.status == OrderStatus.PAID) and order.ready_at is None:
+        raise HTTPException(409, "Oldindan to'langan taomni tayyor bo'lgach yetkazib bering")
 
     if order.status == OrderStatus.CANCELLED:
         raise HTTPException(status_code=400, detail="Bekor qilingan buyurtmani yetkazib bo'lmaydi")
 
     now = datetime.now(timezone.utc)
     old_status = order.status
-    order.status = OrderStatus.SERVED
+    if not order.is_paid:
+        order.status = OrderStatus.SERVED
     order.served_at = now
 
     # Agar ofitsiant tayinlanmagan bo'lsa, yetkazib bergan xodim tayinlanadi
@@ -3398,7 +3387,7 @@ async def deliver_order(
         "table_number": table_num,
         "waiter_id": current_user.id,
         "waiter_name": waiter_display,
-        "status": OrderStatus.SERVED,
+        "status": order.status,
         "served_at": now.isoformat(),
         "note": payload.note if payload else None,
         "message": f"{order.order_number} stolga yetkazildi ({waiter_display})",
@@ -3438,16 +3427,7 @@ async def update_order_status(
             detail="To'lov faqat /checkout orqali qabul qilinadi",
         )
 
-    result = await db.execute(
-        select(Order)
-        .options(
-            selectinload(Order.items).selectinload(OrderItem.menu_item),
-            selectinload(Order.table),
-            selectinload(Order.waiter),
-        )
-        .where(Order.id == order_id)
-    )
-    order = result.scalar_one_or_none()
+    order = await load_order_full(db, order_id)
     if not order:
         raise HTTPException(status_code=404, detail="Buyurtma topilmadi")
 
@@ -3473,6 +3453,8 @@ async def update_order_status(
         )
 
     if payload.status == OrderStatus.CANCELLED:
+        if any(kitchen_sent_quantity(item) for item in order.items):
+            require_kitchen_admin(current_user)
         if not payload.note or len(payload.note.strip()) < 3:
             raise HTTPException(
                 status_code=400,
@@ -3572,7 +3554,7 @@ async def update_order_status(
             data={"order_id": order.id, "table_id": order.table_id, "table_number": table_num},
         )
     elif payload.status == OrderStatus.CANCELLED:
-        sent_items = [i for i in (order.items or []) if (i.sent_quantity or 0) > 0]
+        sent_items = [i for i in (order.items or []) if kitchen_sent_quantity(i) > 0]
         sent_items_count = len(sent_items)
 
         if sent_items_count > 0:
@@ -3582,7 +3564,7 @@ async def update_order_status(
             settings = set_res.scalar_one_or_none()
             waiter_name = (order.waiter.full_name or order.waiter.username) if order.waiter else (current_user.full_name or current_user.username)
             for item in sent_items:
-                await _send_cancellation_receipt(db, order, item.menu_item, item.sent_quantity, waiter_name, settings)
+                await _send_cancellation_receipt(db, order, item.menu_item, kitchen_sent_quantity(item), waiter_name, settings)
 
         from app.core.audit import log_audit_event
         await log_audit_event(
@@ -3661,7 +3643,7 @@ async def mark_item_prepared(
     order = await db.scalar(select(Order).where(Order.id == order_id))
     if not order:
         raise HTTPException(404, "Buyurtma topilmadi")
-    if order.is_paid or order.status == OrderStatus.CANCELLED:
+    if order.status == OrderStatus.CANCELLED:
         raise HTTPException(409, "Yopilgan buyurtmani tayyorlab bo'lmaydi")
     settings = await db.scalar(select(RestaurantSettings).where(RestaurantSettings.restaurant_id == order.restaurant_id))
     if current_user.role == 'chef' and not getattr(settings, 'enable_chef_kds', False):
@@ -3697,8 +3679,9 @@ async def mark_item_prepared(
             .where(Order.id == order_id)
         )
         order = order_result.scalar_one_or_none()
-        if order and order.status in [OrderStatus.PENDING, OrderStatus.CONFIRMED, OrderStatus.PREPARING]:
-            order.status = OrderStatus.READY
+        if order and not order.ready_at and (order.is_paid or order.status in [OrderStatus.PENDING, OrderStatus.CONFIRMED, OrderStatus.PREPARING]):
+            if not order.is_paid:
+                order.status = OrderStatus.READY
             order.ready_at = datetime.now(timezone.utc)
             order_ready_now = True
 
@@ -3773,8 +3756,8 @@ async def complete_waiter_call(
     if not order:
         raise HTTPException(status_code=404, detail="Buyurtma topilmadi")
 
-    order.call_waiter = False
-    order.call_status = CallStatus.COMPLETED
+    await db.execute(select(Table.id).where(Table.id == order.table_id).with_for_update())
+    resolved_ids = await _finish_table_calls(db, order.restaurant_id, order.table_id)
 
     await db.flush()
     await db.commit()
@@ -3787,6 +3770,7 @@ async def complete_waiter_call(
         {
             "type": "call_completed",
             "order_id": order.id,
+            "resolved_call_ids": resolved_ids,
             "table_id": order.table_id,
             "table_number": table_num,
             "waiter_name": current_user.full_name or current_user.username,

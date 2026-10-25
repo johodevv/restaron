@@ -40,7 +40,7 @@ export const DunyoLanding = ({ onOpenLogin }) => {
           if (groups.length > 0) {
             setActiveCatId(groups[0].id);
           }
-          preloadImages(collectImageUrls(groups));
+          preloadImages(collectImageUrls(groups.slice(0, 1)).slice(0, 8));
         }
       } catch (err) {
         console.warn('Menyuni yuklashda xatolik:', err);

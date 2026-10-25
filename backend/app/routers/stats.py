@@ -215,7 +215,9 @@ async def get_revenue_chart(
     start_utc, _ = uz_day_bounds_utc(first_day_uz)
 
     # Kun bo'yicha guruhlashda func.date(Order.created_at, '+5 hours') ishlatiladi (UZ kuni bo'yicha)
-    date_col = func.date(Order.created_at, "+5 hours").label("order_date")
+    date_col = (func.date(func.timezone('Asia/Tashkent', Order.created_at))
+                if db.bind.dialect.name == 'postgresql'
+                else func.date(Order.created_at, "+5 hours")).label("order_date")
     result = await db.execute(
         select(date_col, func.count(Order.id), func.sum(Order.total))
         .where(
@@ -261,40 +263,34 @@ async def get_waiter_performance(
     # Qo'shimcha tuzatishlar:
     #   1) Order.status filtri — faqat SERVED/PAID buyurtmalar hisoblansin (bekor qilinganlar emas)
     #   2) Review uchun ham sana filtri to'g'ri qo'llanilgan (allaqachon bor edi)
-    completed_statuses = ["served", "paid"]
+    completed_statuses = [OrderStatus.SERVED, OrderStatus.PAID]
+    sales = select(Order.waiter_id.label('waiter_id'),
+        func.count(Order.id).label('orders_served'),
+        func.sum(Order.total).label('total_revenue')).where(
+        Order.restaurant_id == restaurant_id, Order.created_at >= since_utc,
+        Order.status.in_(completed_statuses)).group_by(Order.waiter_id).subquery()
+    ratings = select(Review.waiter_id.label('waiter_id'),
+        func.avg(Review.service_rating).label('avg_rating')).where(
+        Review.restaurant_id == restaurant_id, Review.created_at >= since_utc
+    ).group_by(Review.waiter_id).subquery()
 
     result = await db.execute(
         select(
             User.id,
             User.full_name,
             User.username,
-            func.count(Order.id).label("orders_served"),
-            func.coalesce(func.sum(Order.total), 0.0).label("total_revenue"),
-            func.coalesce(func.avg(Review.service_rating), 0.0).label("avg_rating"),
+            func.coalesce(sales.c.orders_served, 0).label("orders_served"),
+            func.coalesce(sales.c.total_revenue, 0.0).label("total_revenue"),
+            func.coalesce(ratings.c.avg_rating, 0.0).label("avg_rating"),
         )
-        .outerjoin(
-            Order,
-            and_(
-                Order.waiter_id == User.id,
-                Order.restaurant_id == restaurant_id,
-                Order.created_at >= since_utc,
-                Order.status.in_(completed_statuses),  # Faqat yakunlangan buyurtmalar
-            ),
-        )
-        .outerjoin(
-            Review,
-            and_(
-                Review.waiter_id == User.id,
-                Review.created_at >= since_utc,
-            ),
-        )
+        .outerjoin(sales, sales.c.waiter_id == User.id)
+        .outerjoin(ratings, ratings.c.waiter_id == User.id)
         .where(
             User.restaurant_id == restaurant_id,
             User.role == UserRole.WAITER,
             User.is_active == True,  # Faqat faol ofitsiantlar
         )
-        .group_by(User.id, User.full_name, User.username)
-        .order_by(func.count(Order.id).desc())
+        .order_by(func.coalesce(sales.c.orders_served, 0).desc(), User.id)
     )
 
     return [

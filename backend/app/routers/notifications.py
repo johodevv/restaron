@@ -1,18 +1,23 @@
 """
 Bildirishnomalar API
 """
-from fastapi import APIRouter, Depends, Query, BackgroundTasks
+from fastapi import APIRouter, Depends, Query, BackgroundTasks, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update, delete
 from typing import List, Optional
 from datetime import datetime, timezone, timedelta
 
-from app.core.database import get_db, AsyncSessionLocal
+from app.core.database import get_db, write_session
 from app.core.security import get_current_user
 from app.models.notification import Notification, NotificationTarget
 from app.models.user import User, UserRole
 
 router = APIRouter(prefix="/notifications", tags=["🔔 Bildirishnomalar"])
+
+
+def check_restaurant(restaurant_id, user):
+    if user.role != UserRole.DEVELOPER and restaurant_id != user.restaurant_id:
+        raise HTTPException(404, "Restoran topilmadi")
 
 # -------------------------------------------------------------------
 # 🧹 YORDAMCHI: Eski bildirishnomalarni o'chirish (Problem 10)
@@ -26,7 +31,7 @@ async def _cleanup_old_notifications(
     Bu funksiya BackgroundTasks orqali chaqiriladi — alohida AsyncSessionLocal ochadi.
     """
     cutoff = datetime.now(timezone.utc) - timedelta(days=days)
-    async with AsyncSessionLocal() as bg_db:
+    async with write_session() as bg_db:
         result = await bg_db.execute(
             delete(Notification).where(
                 Notification.restaurant_id == restaurant_id,
@@ -50,6 +55,7 @@ async def list_notifications(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    check_restaurant(restaurant_id, current_user)
     query = select(Notification).where(
         Notification.restaurant_id == restaurant_id
     )
@@ -116,6 +122,7 @@ async def mark_all_read(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    check_restaurant(restaurant_id, current_user)
     await db.execute(
         update(Notification)
         .where(
@@ -146,7 +153,12 @@ async def cleanup_old_notifications(
             detail="Faqat admin yoki manager tozalash huquqiga ega",
         )
 
-    deleted_count = await _cleanup_old_notifications(restaurant_id, db, days=days)
+    check_restaurant(restaurant_id, current_user)
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    result = await db.execute(delete(Notification).where(
+        Notification.restaurant_id == restaurant_id,
+        Notification.is_read == True, Notification.created_at < cutoff))
+    deleted_count = result.rowcount
     return {
         "success": True,
         "deleted": deleted_count,

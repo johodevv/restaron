@@ -209,6 +209,13 @@ async def resolve_print_job(job_id: int, action: Literal['printed', 'retry'],
     job.status = 'done' if action == 'printed' else 'pending'
     job.printed_at = datetime.now(timezone.utc) if action == 'printed' else None
     if action == 'retry':
+        from app.models.audit_log import AuditLog
+        archived_orphan = await db.scalar(select(AuditLog.id).where(
+            AuditLog.restaurant_id == job.restaurant_id,
+            AuditLog.action == 'orphan_print_reference_archived',
+            AuditLog.entity_type == 'print_job', AuditLog.entity_id == str(job.id)).limit(1))
+        if archived_orphan:
+            raise HTTPException(409, 'Buyurtmasi yo‘q arxivlangan vazifa qayta chop etilmaydi. Audit arxivini tekshiring')
         if job.order_id is not None and await db.scalar(select(Order.id).where(Order.id == job.order_id, Order.restaurant_id == job.restaurant_id)) is None:
             raise HTTPException(409, 'Buyurtmasi topilmagan eski vazifani qayta yuborib bo‘lmaydi')
         job.raw_text = '*** TAKROR / QAYTA YUBORILDI ***\n' + job.raw_text
@@ -591,22 +598,26 @@ async def get_receipt_pdf(
     import re
     from app.core.pdf_generator import PDF_ARCHIVE_BASE, generate_checkout_receipt_pdf_sync
 
-    date_str = r.created_at.strftime("%Y-%m-%d") if r.created_at else datetime.now().strftime("%Y-%m-%d")
+    local_time = to_uz(r.created_at or datetime.now(timezone.utc))
+    date_str = local_time.strftime("%Y-%m-%d")
     clean_num = re.sub(r"[^\w\-]", "", (r.receipt_number or "BILL").replace("#", ""))
     day_folder = os.path.join(PDF_ARCHIVE_BASE, date_str)
 
     target_file = None
     if os.path.exists(day_folder):
         for fname in os.listdir(day_folder):
-            if clean_num in fname and fname.endswith(".pdf"):
+            if fname == f"BILL_{clean_num}_{local_time.strftime('%H%M%S')}.pdf":
                 target_file = os.path.join(day_folder, fname)
                 break
 
     if not target_file or not os.path.exists(target_file):
+        restaurant = await db.scalar(select(Restaurant).where(Restaurant.id == r.restaurant_id))
+        settings = await db.scalar(select(RestaurantSettings).where(RestaurantSettings.restaurant_id == r.restaurant_id))
+        advance = float(r.advance_amount or 0)
         pdf_payload = {
-            "restaurant_name": "Dunyo Choyxonasi",
-            "address": "Xorazm viloyati, Xiva tumani",
-            "phone": "+998884593400",
+            "restaurant_name": receipt_title(settings, restaurant),
+            "address": getattr(settings, 'receipt_address', None) or getattr(restaurant, 'address', None),
+            "phone": getattr(settings, 'receipt_phone', None) or getattr(restaurant, 'phone', None),
             "order_number": r.receipt_number,
             "table_name": r.table_name,
             "waiter_name": r.waiter_name,
@@ -615,6 +626,9 @@ async def get_receipt_pdf(
             "service_fee_percent": r.service_fee_percent,
             "service_fee_amount": r.service_fee_amount,
             "total": r.total_amount,
+            "discount": round(max(0, (r.subtotal or 0) + (r.service_fee_amount or 0) - (r.total_amount or 0)), 2),
+            "advance_amount": advance,
+            "amount_due": round(max(0, (r.total_amount or 0) - advance), 2),
             "payment_method": r.payment_method,
             "cash_amount": r.cash_amount,
             "card_amount": r.card_amount,
@@ -623,7 +637,7 @@ async def get_receipt_pdf(
             "receipt_note": r.notes,
             "created_at": r.created_at,
         }
-        target_file = generate_checkout_receipt_pdf_sync(pdf_payload)
+        target_file = await asyncio.to_thread(generate_checkout_receipt_pdf_sync, pdf_payload)
 
     from fastapi.responses import FileResponse
     return FileResponse(

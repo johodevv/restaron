@@ -307,6 +307,7 @@ export const App = () => {
                     />
 
                     <ReviewModal
+                      qrToken={tableInfo?.qr_token}
                       isOpen={reviewOpen}
                       onClose={() => setReviewOpen(false)}
                       order={reviewOrder}

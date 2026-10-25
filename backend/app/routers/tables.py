@@ -1016,12 +1016,13 @@ async def set_table_service_fee(
 
     old_percent = orders[0].service_fee_percent if orders else None
     pct = round(float(payload.percent), 2)
+    from app.core.money import money_sum, percent
     for o in orders:
         subtotal = sum((i.total_price or 0.0) for i in o.items)
         o.service_fee_percent = pct
         o.subtotal = round(subtotal, 2)
-        o.service_fee_amount = round(subtotal * (pct / 100.0), 2)
-        o.total = round(subtotal + o.service_fee_amount - (o.discount or 0.0), 2)
+        o.service_fee_amount = percent(o.subtotal, pct)
+        o.total = money_sum([o.subtotal, o.service_fee_amount, -(o.discount or 0)])
 
     await db.flush()
 
@@ -1276,6 +1277,13 @@ async def update_table(
         raise HTTPException(status_code=404, detail="Stol topilmadi")
 
     data = payload.model_dump(exclude_unset=True)
+    if any(data.get(field, True) is None for field in ('number', 'capacity', 'is_active', 'status')):
+        raise HTTPException(422, "Stol raqami, sig'imi va holati bo'sh bo'lishi mumkin emas")
+    if await open_orders_count(db, table.id):
+        if data.get('is_active') is False or ('status' in data and data['status'] != TableStatus.OCCUPIED):
+            raise HTTPException(409, "Ochiq hisob bor stolni yashirish yoki bo'shatish mumkin emas")
+    if data.get('is_active') is False and (table.deposit_amount or 0) > 0:
+        raise HTTPException(409, "Avansi bor stolni yashirish mumkin emas")
     if "room" in data:
         data["room"] = norm_zone(data["room"])
 

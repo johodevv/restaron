@@ -81,6 +81,42 @@ def test_sqlite_backup_and_integrity_check(temp_backup_env):
     assert count == 2
 
 
+def test_restore_refuses_database_owned_by_running_app(temp_backup_env):
+    from tools.database_lock import offline_database_lock
+    source = str(temp_backup_env['db'])
+    backup = str(temp_backup_env['zaxira'] / 'offline.db')
+    create_sqlite_backup(source, backup)
+    before = open(source,'rb').read()
+    with offline_database_lock(source):
+        assert not restore_database(backup, source, str(temp_backup_env['zaxira']))
+    assert open(source,'rb').read() == before
+
+
+def test_external_backup_failure_is_observable(temp_backup_env):
+    blocked = temp_backup_env['root'] / 'blocked'
+    blocked.write_text('not a directory')
+    assert sync_extra_directory(str(temp_backup_env['db']), str(temp_backup_env['backend']), str(blocked)) is False
+
+
+def test_custom_media_directories_are_included_in_external_backup(temp_backup_env):
+    custom=temp_backup_env['root'] / 'custom_media';custom.mkdir()
+    (custom/'menu.jpg').write_bytes(b'test media')
+    assert sync_extra_directory(str(temp_backup_env['db']),str(temp_backup_env['backend']),
+        str(temp_backup_env['extra']),uploads_dir=str(custom))
+    assert (temp_backup_env['extra']/'uploads'/'menu.jpg').read_bytes()==b'test media'
+
+
+def test_restore_listing_honors_configured_backup_directory(temp_backup_env,monkeypatch,capsys):
+    from tools.restore_db import main
+    import sys
+    (temp_backup_env['zaxira']/'custom_test.db').write_bytes(b'listing only')
+    monkeypatch.setenv('SQLITE_DB_PATH',str(temp_backup_env['db']))
+    monkeypatch.setenv('BACKUP_DIR',str(temp_backup_env['zaxira']))
+    monkeypatch.setattr(sys,'argv',['restore_db.py','--list'])
+    assert main()==0
+    assert 'custom_test.db' in capsys.readouterr().out
+
+
 def test_corrupted_database_integrity_failure(tmp_path):
     """1. Yaxlitlik tekshiruvi (integrity_check) buzilgan faylda False qaytaradi"""
     bad_db = tmp_path / "corrupt.db"

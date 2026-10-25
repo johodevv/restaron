@@ -95,7 +95,7 @@ async function executeFetch(url, config, timeoutMs) {
     return await fetch(url, { ...config, signal: controller.signal });
   } catch (err) {
     if (timedOut || err.name === 'AbortError') {
-      const timeoutErr = new Error('Server javob bermadi.');
+      const timeoutErr = new Error("Server javobi kechikdi. Natija noma'lum — hisobni yangilab tekshiring; qayta urinishda shu amal kaliti saqlanadi.");
       timeoutErr.name = 'TimeoutError';
       timeoutErr.isTimeout = true;
       throw timeoutErr;
@@ -162,7 +162,9 @@ async function request(endpoint, options = {}) {
 
   const url = endpoint.startsWith('http') ? endpoint : `${BASE_URL}${endpoint}`;
   const isGet = method === 'GET';
-  const timeoutMs = isGet ? 15000 : 25000;
+  // Peak-load measurements can exceed 25s on a busy SQLite host. This is a
+  // recovery window, not a performance claim: retry keeps the same saved key.
+  const timeoutMs = isGet ? 15000 : (isIdempotent ? 60000 : 25000);
 
   let response;
   try {

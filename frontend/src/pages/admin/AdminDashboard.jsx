@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import api, { BASE_URL } from '../../utils/api';
+import api from '../../utils/api';
 import { useAuth } from '../../context/AuthContext';
 import { useTheme } from '../../context/ThemeContext';
 import { useWebSocket } from '../../context/WebSocketContext';
@@ -7,6 +7,8 @@ import BillModal from '../../components/BillModal';
 import CheckoutModal from '../../components/CheckoutModal';
 import ThermalReceiptModal from '../../components/ThermalReceiptModal';
 import PrinterStatusBanner from '../../components/PrinterStatusBanner';
+import TablesTab from './TablesTab';
+import { resolveQrBaseUrl } from '../../utils/tableDirectory';
 import { DebtsTab } from './DebtsTab';
 import { ReceiptsArchiveTab } from './ReceiptsArchiveTab';
 import { PaymentsReportTab } from './PaymentsReportTab';
@@ -75,6 +77,7 @@ export const AdminDashboard = () => {
   const [stats, setStats] = useState(null);
   const [categories, setCategories] = useState([]);
   const [tables, setTables] = useState([]);
+  const [tablesError, setTablesError] = useState('');
   const [staff, setStaff] = useState([]);
   const [waiterCalls, setWaiterCalls] = useState([]);
   const [reviews, setReviews] = useState([]);
@@ -98,24 +101,8 @@ export const AdminDashboard = () => {
 
   // Network & Host Settings for QR codes
   const [lanInfo, setLanInfo] = useState(null);
-  const [qrBaseUrl, setQrBaseUrl] = useState(() => {
-    const saved = localStorage.getItem('restaron_qr_base_url');
-    if (saved && !saved.includes('localhost') && !saved.includes('192.168.')) {
-      return saved;
-    }
-    return window.location.origin;
-  });
-  const [isEditingBaseUrl, setIsEditingBaseUrl] = useState(false);
-  const [tempBaseUrl, setTempBaseUrl] = useState('');
-
-  // Modals & UI States
-  const [selectedTableQR, setSelectedTableQR] = useState(null);
-  const [copiedId, setCopiedId] = useState(null);
-
-  // Table creation state
-  const [newTableNumber, setNewTableNumber] = useState('');
-  const [newTableRoom, setNewTableRoom] = useState('');
-  const [newTableCapacity, setNewTableCapacity] = useState(4);
+  const [qrBaseUrl, setQrBaseUrl] = useState(() =>
+    resolveQrBaseUrl(localStorage.getItem('restaron_qr_base_url'), null, window.location.origin));
 
   // Staff creation state
   const [newStaffUsername, setNewStaffUsername] = useState('');
@@ -125,14 +112,6 @@ export const AdminDashboard = () => {
 
   // Zonalar (stol kategoriyalari): Zal, Terrassa, 2-qavat, VIP
   const [zones, setZones] = useState([]);
-  // Stollar bo'limi filtrlari: zona va holat (bo'sh / band)
-  const [tableZoneFilter, setTableZoneFilter] = useState('');     // '' = hammasi
-  const [tableStatusFilter, setTableStatusFilter] = useState(''); // '' | available | occupied | reserved
-  const [newZoneName, setNewZoneName] = useState('');
-  const [zoneBusy, setZoneBusy] = useState(false);
-  const [editingZoneId, setEditingZoneId] = useState(null);
-  const [editingZoneName, setEditingZoneName] = useState('');
-
   // Category Modal States (Add & Edit)
   const [showCategoryModal, setShowCategoryModal] = useState(false);
   const [editingCategory, setEditingCategory] = useState(null);
@@ -170,7 +149,7 @@ export const AdminDashboard = () => {
       const [statsData, menuData, tablesData, staffData, callsData, reviewsData, lanData, zonesData, ordersData] = await Promise.all([
         (user?.role === 'cashier' ? Promise.resolve(null) : api.get(`/stats/dashboard?restaurant_id=${restaurantId}`)).catch(() => null),
         api.get(`/menu/full/${restaurantId}`).catch(() => []),
-        api.get(`/tables/?restaurant_id=${restaurantId}`).catch(() => []),
+        api.get(`/tables/?restaurant_id=${restaurantId}`).catch(error => { setTablesError(error.message); return null; }),
         (user?.role === 'cashier' ? Promise.resolve([]) : api.get(`/users/?restaurant_id=${restaurantId}`)).catch(() => []),
         api.get(`/orders/calls?restaurant_id=${restaurantId}`).catch(() => []),
         (user?.role === 'cashier' ? Promise.resolve([]) : api.get(`/reviews/?restaurant_id=${restaurantId}`)).catch(() => []),
@@ -181,7 +160,7 @@ export const AdminDashboard = () => {
 
       setStats(statsData);
       setCategories(menuData || []);
-      setTables(tablesData || []);
+      if (tablesData !== null) { setTables(tablesData || []); setTablesError(''); }
       setZones(zonesData || []);
       setStaff(staffData || []);
       setWaiterCalls(callsData || []);
@@ -190,17 +169,9 @@ export const AdminDashboard = () => {
 
       if (lanData) {
         setLanInfo(lanData);
-        // If Cloudflare tunnel is active, always use the public URL for QR codes
-        if (lanData.public_url && lanData.mode === 'internet') {
-          setQrBaseUrl(lanData.public_url);
-          localStorage.setItem('restaron_qr_base_url', lanData.public_url);
-        } else {
-          const savedUrl = localStorage.getItem('restaron_qr_base_url');
-          if (!savedUrl && lanData.suggested_frontend_url) {
-            setQrBaseUrl(lanData.suggested_frontend_url);
-            localStorage.setItem('restaron_qr_base_url', lanData.suggested_frontend_url);
-          }
-        }
+        const resolved = resolveQrBaseUrl(localStorage.getItem('restaron_qr_base_url'), lanData, window.location.origin);
+        setQrBaseUrl(resolved);
+        localStorage.setItem('restaron_qr_base_url', resolved);
       }
     } catch (e) {
       console.error(e);
@@ -279,17 +250,6 @@ export const AdminDashboard = () => {
       alert(err.message || 'Stolni tasdiqlashda xatolik yuz berdi');
     }
   };
-
-  // Handle Table Lock (Qayta qulflash / Yangi PIN)
-  const handleLockTable = async (tableId) => {
-    try {
-      await api.post(`/tables/${tableId}/lock`, {});
-      await loadAll();
-    } catch (err) {
-      alert(err.message || 'Stolni qulflashda xatolik yuz berdi');
-    }
-  };
-
 
   // Handle Staff Deletion (Bo'shatish)
   const handleDeleteStaff = async (staffId, staffName) => {
@@ -370,28 +330,6 @@ export const AdminDashboard = () => {
     }
   };
 
-  // Save QR Base URL
-  const handleSaveBaseUrl = () => {
-    if (tempBaseUrl.trim()) {
-      let formatted = tempBaseUrl.trim();
-      if (!formatted.startsWith('http://') && !formatted.startsWith('https://')) {
-        formatted = `http://${formatted}`;
-      }
-      formatted = formatted.replace(/\/$/, '');
-      setQrBaseUrl(formatted);
-      localStorage.setItem('restaron_qr_base_url', formatted);
-    }
-    setIsEditingBaseUrl(false);
-  };
-
-  const handleResetToAutoIp = (suggestedUrl) => {
-    if (suggestedUrl) {
-      setQrBaseUrl(suggestedUrl);
-      localStorage.setItem('restaron_qr_base_url', suggestedUrl);
-      setIsEditingBaseUrl(false);
-    }
-  };
-
   // WebSocket: real-time buyurtmalar va oshxona printeriga yuborilgan cheklar monitoringi
   useEffect(() => {
     const unsub = addEventListener('*', (event) => {
@@ -417,114 +355,16 @@ export const AdminDashboard = () => {
     return () => unsub();
   }, [addEventListener, playChime]);
 
-  // ─── TABLES MANAGEMENT ──────────────────────────────────────────
-  // ─── Zonalar (stol kategoriyalari) ───────────────────────────
-  const reloadZones = async () => {
+  const reloadTables = async () => {
     try {
-      setZones(await api.get(`/tables/zones?restaurant_id=${restaurantId}`));
-    } catch (err) {
-      console.error('Zonalarni yuklashda xatolik:', err);
-    }
-  };
-
-  const handleCreateZone = async (e) => {
-    e.preventDefault();
-    const name = newZoneName.trim();
-    if (!name) return;
-    setZoneBusy(true);
-    try {
-      await api.post('/tables/zones', { restaurant_id: restaurantId, name });
-      setNewZoneName('');
-      await reloadZones();
-    } catch (err) {
-      alert(err.message || "Zona qo'shishda xatolik");
-    } finally {
-      setZoneBusy(false);
-    }
-  };
-
-  const handleRenameZone = async (zoneId) => {
-    const name = editingZoneName.trim();
-    if (!name) return;
-    setZoneBusy(true);
-    try {
-      await api.patch(`/tables/zones/${zoneId}`, { name });
-      setEditingZoneId(null);
-      setEditingZoneName('');
-      // Stollarning zona nomi ham o'zgargani uchun hammasini qayta yuklaymiz
-      await loadAll();
-    } catch (err) {
-      alert(err.message || 'Zona nomini o\'zgartirishda xatolik');
-    } finally {
-      setZoneBusy(false);
-    }
-  };
-
-  const handleDeleteZone = async (zone) => {
-    if (!window.confirm(`"${zone.name}" zonasini o'chirasizmi?`)) return;
-    setZoneBusy(true);
-    try {
-      await api.delete(`/tables/zones/${zone.id}`);
-      await reloadZones();
-    } catch (err) {
-      alert(err.message || "Zonani o'chirishda xatolik");
-    } finally {
-      setZoneBusy(false);
-    }
-  };
-
-  const handleCreateTable = async (e) => {
-    e.preventDefault();
-    if (!newTableNumber) return;
-    try {
-      await api.post('/tables/', {
-        restaurant_id: restaurantId,
-        number: parseInt(newTableNumber),
-        room: newTableRoom.trim() || undefined,
-        capacity: parseInt(newTableCapacity) || 4,
-      });
-      setNewTableNumber('');
-      setNewTableRoom('');
-      loadAll();
-    } catch (err) {
-      alert(err.message || 'Xatolik');
-    }
-  };
-
-  const handleClearTable = async (tableId, tableNumber) => {
-    if (!window.confirm(`#${tableNumber} raqamli stolni bo'shatish (tozalash)ni xohlaysizmi?`)) return;
-    try {
-      await api.post(`/tables/${tableId}/clear`);
-      loadAll();
-    } catch (err) {
-      alert(err.message || "Stolni bo'shatishda xatolik");
-    }
-  };
-
-  const handleUpdateTableStatus = async (tableId, newStatus) => {
-    try {
-      await api.patch(`/tables/${tableId}/status?table_status=${newStatus}`);
-      loadAll();
-    } catch (err) {
-      alert(err.message || "Holatni o'zgartirishda xatolik");
-    }
-  };
-
-  const handleDeleteTable = async (tableId, tableNumber) => {
-    if (!window.confirm(`#${tableNumber} raqamli stolni o'chirishni xohlaysizmi?`)) return;
-    try {
-      await api.delete(`/tables/${tableId}`);
-      loadAll();
-    } catch (err) {
-      alert(err.message || 'Xatolik');
-    }
-  };
-
-  const handleCopyLink = (qrToken, id) => {
-    const url = `${qrBaseUrl}/?table=${qrToken}`;
-    navigator.clipboard.writeText(url);
-    setCopiedId(id);
-    setTimeout(() => setCopiedId(null), 2000);
+      const [nextTables, nextZones] = await Promise.all([
+        api.get(`/tables/?restaurant_id=${restaurantId}`),
+        api.get(`/tables/zones?restaurant_id=${restaurantId}`),
+      ]);
+      setTables(nextTables || []);
+      setZones(nextZones || []);
+      setTablesError('');
+    } catch (error) { setTablesError(error.message); throw error; }
   };
 
   // ─── CATEGORY MANAGEMENT ──────────────────────────────────────────
@@ -793,76 +633,13 @@ export const AdminDashboard = () => {
     catch (err) { alert(err.message); }
   };
 
-  // ─── Stollar: zona va holat bo'yicha filtr ──────────────────────
-  // "Terrassa" ni bossangiz faqat terrassadagi stollar chiqadi,
-  // "Band" ni bossangiz faqat band stollar.
-  const tableStatusOf = (t) => (t.status || '').toLowerCase();
-
-  const zoneNameOf = (t) => (t.room || '').trim();
-
-  // Zona ro'yxati: sozlamadagi zonalar + stollarda uchraydigan zonalar
-  const tableZoneOptions = (() => {
-    const names = zones.map((z) => z.name);
-    tables.forEach((t) => {
-      const z = zoneNameOf(t);
-      if (z && !names.includes(z)) names.push(z);
-    });
-    const opts = names.map((n) => ({
-      value: n,
-      label: n,
-      count: tables.filter((t) => zoneNameOf(t) === n).length,
-    }));
-    const noZone = tables.filter((t) => !zoneNameOf(t)).length;
-    if (noZone > 0) {
-      opts.push({ value: '__nozone__', label: 'Zonasiz', count: noZone });
-    }
-    return opts.filter((o) => o.count > 0);
-  })();
-
-  const zoneMatches = (t) =>
-    !tableZoneFilter ||
-    (tableZoneFilter === '__nozone__' ? !zoneNameOf(t) : zoneNameOf(t) === tableZoneFilter);
-
-  const statusMatches = (t) =>
-    !tableStatusFilter || tableStatusOf(t) === tableStatusFilter;
-
-  const filteredTables = tables.filter((t) => zoneMatches(t) && statusMatches(t));
-
-  // Tanlangan holat bo'yicha sanoqlar (zona filtri hisobga olinadi)
-  const statusCounts = (() => {
-    const inZone = tables.filter(zoneMatches);
-    return {
-      all: inZone.length,
-      available: inZone.filter((t) => tableStatusOf(t) === 'available').length,
-      occupied: inZone.filter((t) => tableStatusOf(t) === 'occupied').length,
-      reserved: inZone.filter((t) => tableStatusOf(t) === 'reserved').length,
-    };
-  })();
-
-  // Stollarni zonalar bo'yicha guruhlash. Zonalar ro'yxatidagi tartib
-  // saqlanadi; zonasiz stollar oxirida alohida guruhda chiqadi.
-  const tableGroups = (() => {
-    const groups = [];
-    const used = new Set();
-    for (const z of zones) {
-      const items = filteredTables.filter((t) => zoneNameOf(t) === z.name);
-      items.forEach((t) => used.add(t.id));
-      groups.push({ key: `z${z.id}`, name: z.name, items });
-    }
-    const rest = filteredTables.filter((t) => !used.has(t.id));
-    if (rest.length > 0) {
-      groups.push({ key: 'nozone', name: 'Zonasiz stollar', items: rest });
-    }
-    return groups.filter((g) => g.items.length > 0);
-  })();
-
   return (
-    <div className={`mx-auto px-2 sm:px-4 animate-fade-in ${tab === 'pos' ? 'w-full h-full min-h-0 flex flex-col overflow-hidden gap-1 py-1' : 'max-w-7xl py-6 pb-24 space-y-4'}`}>
+    <div className={`mx-auto px-2 sm:px-4 animate-fade-in ${tab === 'tables' ? 'tables-admin-shell ' : ''}${tab === 'pos' ? 'w-full h-full min-h-0 flex flex-col overflow-hidden gap-1 py-1' : 'max-w-7xl py-6 pb-24 space-y-4'}`}>
       {/* Printer statusi (navbat to'lib qolsa yoki printer ishlamasa ogohlantirish) */}
       {tab !== 'pos' && <PrinterStatusBanner />}
 
       {/* Top Header — Faqat POS bo'lmagan sahifalarda chiqadi */}
-      {tab !== 'pos' && (
+      {tab !== 'pos' && tab !== 'tables' && (
         <div className="p-6 rounded-3xl glass-card border border-theme-border bg-gradient-to-r from-theme-surface via-theme-bg to-theme-surface flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-xl">
           <div>
             <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-theme-primary/15 border border-theme-primary/30 text-theme-primary text-xs font-bold mb-2">
@@ -888,7 +665,7 @@ export const AdminDashboard = () => {
       )}
 
       {/* Internet URL Status Banner — Faqat POS bo'lmagan sahifalarda chiqadi */}
-      {tab !== 'pos' && lanInfo && (
+      {tab !== 'pos' && tab !== 'tables' && lanInfo && (
         <div className={`p-3.5 rounded-2xl border flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs font-semibold shadow-lg ${
           lanInfo.mode === 'internet'
             ? 'bg-emerald-500/10 border-emerald-500/40 text-emerald-300'
@@ -1528,515 +1305,16 @@ export const AdminDashboard = () => {
         </div>
       )}
 
-      {/* TAB 3: TABLES & QR CODES */}
-      {tab === 'tables' && (
-        <div className="space-y-6">
-          {/* Network IP & QR Base URL Configuration */}
-          <div className="p-5 sm:p-6 rounded-3xl glass-card border border-theme-border bg-theme-surface/80 space-y-3 shadow-lg">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-              <div className="flex items-center gap-2.5">
-                <div className="w-9 h-9 rounded-xl bg-theme-primary/20 text-theme-primary flex items-center justify-center">
-                  <Wifi className="w-5 h-5" />
-                </div>
-                <div>
-                  <h4 className="font-bold text-sm text-white">📱 Mobil Qurilmalar (Telefon) Uchun QR URL Manzili</h4>
-                  <p className="text-xs text-theme-muted">
-                    QR kod telefonda ochilishi uchun serveringizning lokal IP manzili ishlatiladi.
-                  </p>
-                </div>
-              </div>
-
-              {!isEditingBaseUrl ? (
-                <button
-                  onClick={() => {
-                    setTempBaseUrl(qrBaseUrl);
-                    setIsEditingBaseUrl(true);
-                  }}
-                  className="px-3.5 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 border border-theme-border text-white text-xs font-semibold self-start sm:self-auto"
-                >
-                  Manzilni o'zgartirish
-                </button>
-              ) : null}
-            </div>
-
-            {isEditingBaseUrl ? (
-              <div className="pt-2 flex flex-col sm:flex-row items-center gap-2">
-                <input
-                  type="text"
-                  value={tempBaseUrl}
-                  onChange={(e) => setTempBaseUrl(e.target.value)}
-                  placeholder="masalan: http://192.168.1.15:5173"
-                  className="flex-1 w-full px-3.5 py-2 rounded-xl bg-black/40 border border-theme-border text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-theme-primary"
-                />
-                <button
-                  onClick={handleSaveBaseUrl}
-                  className="w-full sm:w-auto px-4 py-2 rounded-xl bg-theme-primary text-white text-xs font-bold shadow-glow"
-                >
-                  Saqlash
-                </button>
-                <button
-                  onClick={() => setIsEditingBaseUrl(false)}
-                  className="w-full sm:w-auto px-3 py-2 rounded-xl bg-white/5 text-theme-muted hover:text-white text-xs"
-                >
-                  Bekor qilish
-                </button>
-              </div>
-            ) : (
-              <div className="flex flex-wrap items-center gap-2 pt-1">
-                <span className="text-xs text-theme-muted">Hozirgi QR havola bazasi:</span>
-                <span className="px-2.5 py-1 rounded-lg bg-black/40 border border-theme-border text-xs font-mono text-emerald-400 font-bold">
-                  {qrBaseUrl}
-                </span>
-
-                {lanInfo?.public_url && qrBaseUrl !== lanInfo.public_url && (
-                  <button
-                    onClick={() => handleResetToAutoIp(lanInfo.public_url)}
-                    className="text-[11px] text-emerald-400 underline font-semibold ml-2"
-                  >
-                    🌐 Internet URL ga o'rnatish ({lanInfo.public_url.replace('https://', '').substring(0, 30)}...)
-                  </button>
-                )}
-
-                {lanInfo?.local_url && qrBaseUrl !== lanInfo.local_url && (
-                  <button
-                    onClick={() => handleResetToAutoIp(lanInfo.local_url)}
-                    className="text-[11px] text-blue-400 underline font-semibold ml-2"
-                  >
-                    📡 Lokal IP ga o'rnatish ({lanInfo.local_url})
-                  </button>
-                )}
-
-                {qrBaseUrl !== window.location.origin && (
-                  <button
-                    onClick={() => handleResetToAutoIp(window.location.origin)}
-                    className="text-[11px] text-amber-400 underline font-semibold ml-2"
-                  >
-                    🖥 Hozirgi manzilga o'rnatish ({window.location.origin})
-                  </button>
-                )}
-              </div>
-            )}
-          </div>
-
-          {/* ─── Zonalar (Stol kategoriyalari): Zal, Terrassa, 2-qavat ─── */}
-          <div className="p-5 rounded-3xl glass-card border border-theme-border bg-theme-surface/80 shadow-lg space-y-3.5">
-            <div>
-              <h3 className="text-sm font-black text-white flex items-center gap-2">
-                <MapPin className="w-4 h-4 text-theme-primary" />
-                <span>Zonalar (stollar kategoriyasi)</span>
-              </h3>
-              <p className="text-[11px] text-theme-muted mt-1">
-                Restorandagi joylar: Zal, Terrassa, 2-qavat, VIP xona. Har bir
-                stolni o'z zonasiga biriktirasiz — chek va oshxona begunogida
-                zona nomi chiqadi.
-              </p>
-            </div>
-
-            <form onSubmit={handleCreateZone} className="flex flex-col sm:flex-row gap-2.5">
-              <input
-                type="text"
-                value={newZoneName}
-                onChange={(e) => setNewZoneName(e.target.value)}
-                placeholder="Yangi zona nomi (masalan: Terrassa)"
-                maxLength={100}
-                className="w-full sm:flex-1 px-3.5 py-2.5 rounded-xl bg-black/30 border border-theme-border text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-theme-primary"
-              />
-              <button
-                type="submit"
-                disabled={zoneBusy || !newZoneName.trim()}
-                className="w-full sm:w-auto px-5 py-2.5 rounded-xl bg-theme-primary hover:bg-theme-primary-hover disabled:opacity-40 text-white text-xs font-bold shadow-glow whitespace-nowrap"
-              >
-                + Zona qo'shish
-              </button>
-            </form>
-
-            {zones.length === 0 ? (
-              <p className="text-[11px] text-theme-muted italic">
-                Hali zona qo'shilmagan. Yuqoridagi maydonga nom yozib qo'shing.
-              </p>
-            ) : (
-              <div className="flex flex-wrap gap-2">
-                {zones.map((z) => (
-                  <div
-                    key={z.id}
-                    className="flex items-center gap-2 px-3 py-2 rounded-xl bg-black/30 border border-theme-border"
-                  >
-                    {editingZoneId === z.id ? (
-                      <>
-                        <input
-                          type="text"
-                          value={editingZoneName}
-                          onChange={(e) => setEditingZoneName(e.target.value)}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter') handleRenameZone(z.id);
-                            if (e.key === 'Escape') setEditingZoneId(null);
-                          }}
-                          autoFocus
-                          maxLength={100}
-                          className="w-36 px-2 py-1 rounded-lg bg-black/50 border border-theme-primary/60 text-xs text-white focus:outline-none"
-                        />
-                        <button
-                          onClick={() => handleRenameZone(z.id)}
-                          disabled={zoneBusy}
-                          title="Saqlash"
-                          className="text-emerald-400 hover:text-emerald-300 disabled:opacity-40"
-                        >
-                          <CheckCircle className="w-4 h-4" />
-                        </button>
-                        <button
-                          onClick={() => setEditingZoneId(null)}
-                          title="Bekor qilish"
-                          className="text-zinc-500 hover:text-white"
-                        >
-                          <X className="w-4 h-4" />
-                        </button>
-                      </>
-                    ) : (
-                      <>
-                        <span className="text-xs font-bold text-white">{z.name}</span>
-                        <span className="text-[10px] font-bold text-theme-muted px-1.5 py-0.5 rounded-md bg-white/5">
-                          {z.tables_count} stol
-                        </span>
-                        <button
-                          onClick={() => {
-                            setEditingZoneId(z.id);
-                            setEditingZoneName(z.name);
-                          }}
-                          title="Nomini o'zgartirish"
-                          className="text-zinc-500 hover:text-theme-primary"
-                        >
-                          <Edit2 className="w-3.5 h-3.5" />
-                        </button>
-                        <button
-                          onClick={() => handleDeleteZone(z)}
-                          disabled={zoneBusy}
-                          title="Zonani o'chirish"
-                          className="text-zinc-500 hover:text-red-400 disabled:opacity-40"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      </>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-
-          {/* Add Table Form */}
-          <form
-            onSubmit={handleCreateTable}
-            className="p-5 rounded-3xl glass-card border border-theme-border bg-theme-surface/80 flex flex-col sm:flex-row items-center gap-3 shadow-lg"
-          >
-            <input
-              type="number"
-              placeholder="Stol raqami (masalan: 6)"
-              value={newTableNumber}
-              onChange={(e) => setNewTableNumber(e.target.value)}
-              className="w-full sm:w-36 px-3.5 py-2.5 rounded-xl bg-black/30 border border-theme-border text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-theme-primary"
-              required
-            />
-            <select
-              value={newTableRoom}
-              onChange={(e) => setNewTableRoom(e.target.value)}
-              title="Stol qaysi zonada turadi"
-              className="w-full sm:flex-1 px-3.5 py-2.5 rounded-xl bg-black/30 border border-theme-border text-xs text-white focus:outline-none focus:border-theme-primary"
-            >
-              <option value="">— Zonasiz —</option>
-              {zones.map((z) => (
-                <option key={z.id} value={z.name}>
-                  {z.name}
-                </option>
-              ))}
-            </select>
-            <input
-              type="number"
-              placeholder="Sig'imi"
-              value={newTableCapacity}
-              onChange={(e) => setNewTableCapacity(e.target.value)}
-              className="w-full sm:w-28 px-3.5 py-2.5 rounded-xl bg-black/30 border border-theme-border text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-theme-primary"
-            />
-            <button
-              type="submit"
-              className="w-full sm:w-auto px-5 py-2.5 rounded-xl bg-theme-primary hover:bg-theme-primary-hover text-white text-xs font-bold shadow-glow whitespace-nowrap"
-            >
-              + Stol qo'shish
-            </button>
-          </form>
-
-          {/* ─── Filtrlar: zona va holat ───────────────────────────
-              "Terrassa" ni bossangiz faqat terrassadagi stollar,
-              "Band" ni bossangiz faqat band stollar chiqadi. */}
-          <div className="space-y-2.5 pt-1">
-            {tableZoneOptions.length > 0 && (
-              <div>
-                <span className="block text-[10px] font-black text-theme-muted uppercase tracking-wider mb-1.5">
-                  Zona bo'yicha
-                </span>
-                <div className="flex flex-wrap items-center gap-1.5">
-                  <button
-                    type="button"
-                    onClick={() => setTableZoneFilter('')}
-                    className={`px-3 py-1.5 rounded-xl text-xs font-black transition-all active:scale-95 ${
-                      tableZoneFilter === ''
-                        ? 'bg-theme-primary text-white shadow-glow'
-                        : 'bg-black/30 border border-theme-border text-slate-300 hover:border-theme-primary/50'
-                    }`}
-                  >
-                    Hammasi {tables.length}
-                  </button>
-                  {tableZoneOptions.map((o) => (
-                    <button
-                      key={o.value}
-                      type="button"
-                      onClick={() => setTableZoneFilter(o.value)}
-                      className={`px-3 py-1.5 rounded-xl text-xs font-black transition-all active:scale-95 ${
-                        tableZoneFilter === o.value
-                          ? 'bg-theme-primary text-white shadow-glow'
-                          : 'bg-black/30 border border-theme-border text-slate-300 hover:border-theme-primary/50'
-                      }`}
-                    >
-                      {o.label} {o.count}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            <div>
-              <span className="block text-[10px] font-black text-theme-muted uppercase tracking-wider mb-1.5">
-                Holati bo'yicha
-              </span>
-              <div className="flex flex-wrap items-center gap-1.5">
-                {[
-                  { v: '', label: 'Hammasi', n: statusCounts.all, cls: 'bg-theme-primary text-white shadow-glow' },
-                  { v: 'available', label: "Bo'sh", n: statusCounts.available, cls: 'bg-emerald-500 text-slate-950 shadow-md' },
-                  { v: 'occupied', label: 'Band', n: statusCounts.occupied, cls: 'bg-red-500 text-white shadow-md' },
-                  { v: 'reserved', label: 'Rezerv', n: statusCounts.reserved, cls: 'bg-amber-500 text-slate-950 shadow-md' },
-                ].map((o) => (
-                  <button
-                    key={o.v || 'all'}
-                    type="button"
-                    onClick={() => setTableStatusFilter(o.v)}
-                    className={`px-3 py-1.5 rounded-xl text-xs font-black transition-all active:scale-95 ${
-                      tableStatusFilter === o.v
-                        ? o.cls
-                        : 'bg-black/30 border border-theme-border text-slate-300 hover:border-theme-primary/50'
-                    }`}
-                  >
-                    {o.label} {o.n}
-                  </button>
-                ))}
-              </div>
-            </div>
-          </div>
-
-          {/* Tables Grid — zonalar bo'yicha guruhlangan */}
-          {tableGroups.length === 0 && (
-            <div className="p-8 rounded-3xl glass-card border border-theme-border text-center space-y-1">
-              <p className="text-sm font-black text-white">Bu filtrga mos stol yo'q</p>
-              <p className="text-xs text-theme-muted">
-                Yuqoridagi "Hammasi" tugmasini bosib barcha stollarni ko'ring.
-              </p>
-            </div>
-          )}
-          {tableGroups.map((group) => (
-          <div key={group.key} className="space-y-3 w-full overflow-x-hidden">
-            <div className="flex items-center gap-2 pt-2">
-              <MapPin className="w-4 h-4 text-theme-primary shrink-0" />
-              <h3 className="text-sm font-black text-white uppercase tracking-wide">
-                {group.name}
-              </h3>
-              <span className="text-[10px] font-bold text-theme-muted px-2 py-0.5 rounded-md bg-white/5">
-                {group.items.length} stol
-              </span>
-              <div className="flex-1 h-px bg-theme-border/60" />
-            </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5 sm:gap-5 w-full overflow-x-hidden">
-            {group.items.map((t) => {
-              const qrLink = `${qrBaseUrl}/?table=${t.qr_token}`;
-              const qrImageSrc = `${BASE_URL}/tables/qr-image/${t.qr_token}?base_url=${encodeURIComponent(qrBaseUrl)}`;
-
-              const statusStr = (t.status || '').toLowerCase();
-              const isOccupied = statusStr === 'occupied';
-              const isReserved = statusStr === 'reserved';
-
-              return (
-                <div
-                  key={t.id}
-                  className={`p-3.5 sm:p-5 rounded-2xl sm:rounded-3xl glass-card border transition-all duration-300 flex flex-col justify-between gap-4 shadow-lg w-full overflow-x-hidden ${
-                    isOccupied
-                      ? 'border-red-500/50 bg-red-950/20 shadow-red-500/10'
-                      : isReserved
-                      ? 'border-amber-500/50 bg-amber-950/20'
-                      : 'border-theme-border bg-theme-surface/80 hover:border-theme-primary/50'
-                  }`}
-                >
-                  <div className="flex items-start justify-between">
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <span className="text-2xl font-black text-white tracking-tight">
-                          Stol #{t.number}
-                        </span>
-                        <span
-                          className={`px-2.5 py-1 rounded-lg font-bold text-[10px] uppercase ${
-                            !t.is_unlocked && t.current_pin
-                              ? 'bg-amber-500/30 text-amber-300 border border-amber-500/50 animate-pulse'
-                              : isOccupied
-                              ? 'bg-red-500/20 text-red-300 border border-red-500/30'
-                              : isReserved
-                              ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
-                              : 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
-                          }`}
-                        >
-                          {!t.is_unlocked && t.current_pin ? '🔒 Kod Kutilmoqda' : (isOccupied ? 'Band' : isReserved ? 'Bron' : "Bo'sh")}
-                        </span>
-                      </div>
-                      <div className="text-xs text-theme-muted mt-0.5">
-                        {t.room || 'Asosiy zal'} • Sig'imi: {t.capacity || 4} kishi
-                      </div>
-                    </div>
-
-                    <button
-                      onClick={() => handleDeleteTable(t.id, t.number)}
-                      title="Stolni o'chirish"
-                      className="p-2 rounded-xl text-zinc-500 hover:text-red-400 hover:bg-red-500/10 transition-colors"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  </div>
-
-                  {/* If table is locked with pin */}
-                  {!t.is_unlocked && t.current_pin && (
-                    <div className="p-3 rounded-2xl bg-amber-500/15 border border-amber-500/40 text-center space-y-1.5">
-                      <span className="text-[10px] uppercase text-amber-300 font-bold block">Mijoz Kirdi (Kodi):</span>
-                      <span className="text-xl font-mono font-black text-amber-300 block">{t.current_pin}</span>
-                      <button
-                        onClick={() => handleUnlockTable(t.id)}
-                        className="w-full min-h-[44px] py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-black font-extrabold text-xs sm:text-sm shadow-md active:scale-95 transition-all flex items-center justify-center gap-1.5"
-                      >
-                        <CheckCircle2 className="w-4 h-4 shrink-0" />
-                        <span>✅ Ulanishni Tasdiqlash</span>
-                      </button>
-                    </div>
-                  )}
-
-                  {/* Admin Table Control: Clear / Bill / Status Change */}
-                  <div className="space-y-2 pt-2 border-t border-theme-border/60">
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="text-[11px] text-theme-muted font-semibold">Holat:</span>
-                      <select
-                        value={statusStr || 'available'}
-                        onChange={(e) => handleUpdateTableStatus(t.id, e.target.value)}
-                        className="text-xs px-2.5 py-1 rounded-lg bg-black/40 border border-theme-border text-white focus:outline-none focus:border-theme-primary"
-                      >
-                        <option value="available">Bo'sh (AVAILABLE)</option>
-                        <option value="occupied">Band (OCCUPIED)</option>
-                        <option value="reserved">Bron (RESERVED)</option>
-                      </select>
-                    </div>
-
-                    {/* View Bill & Direct Print Button */}
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                      <button
-                        onClick={() => handleOpenBill(t)}
-                        className="w-full min-h-[44px] py-2 px-2.5 rounded-xl bg-theme-primary/15 hover:bg-theme-primary/25 border border-theme-primary/30 text-theme-primary text-xs sm:text-sm font-medium flex items-center justify-center gap-1.5 transition-all shadow-sm active:scale-95"
-                      >
-                        <Receipt className="w-4 h-4 shrink-0" />
-                        <span>Hisobni ko'rish</span>
-                      </button>
-
-                      <button
-                        onClick={() => handleDirectPrintBill(t.id, t.number)}
-                        className="w-full min-h-[44px] py-2 px-2.5 rounded-xl bg-blue-600/20 hover:bg-blue-600/30 border border-blue-500/40 text-blue-300 text-xs sm:text-sm font-medium flex items-center justify-center gap-1.5 transition-all shadow-sm active:scale-95"
-                        title="Mijoz hisob chekini to'g'ridan-to'g'ri Printer 1 ga chiqarish"
-                      >
-                        <Printer className="w-4 h-4 shrink-0" />
-                        <span>Chek (Printer 1)</span>
-                      </button>
-                    </div>
-
-                    {/* Bron qilish va Kassa to'lov tugmalari */}
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                      <button
-                        onClick={() => {
-                          setSelectedBookingTable(t);
-                          setBookingModalOpen(true);
-                        }}
-                        className="w-full min-h-[44px] py-2 px-3 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30 text-amber-300 text-xs sm:text-sm font-medium flex items-center justify-center gap-1.5 transition-all active:scale-95"
-                      >
-                        <Calendar className="w-4 h-4 shrink-0" />
-                        <span>📅 Bron qilish</span>
-                      </button>
-
-                      <button
-                        onClick={() => handleOpenCheckout(t)}
-                        className="w-full min-h-[44px] py-2 px-3 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white text-xs sm:text-sm font-medium flex items-center justify-center gap-1.5 transition-all shadow-md shadow-emerald-600/25 active:scale-95"
-                        title="To'lovni qabul qilish va hisobni yopish"
-                      >
-                        <CreditCard className="w-4 h-4 shrink-0" />
-                        <span>To'lov / Kassa</span>
-                      </button>
-                    </div>
-
-                    {t.is_unlocked && (
-                      <button
-                        onClick={() => handleLockTable(t.id)}
-                        className="w-full min-h-[44px] py-2 px-3 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30 text-amber-300 font-medium text-xs sm:text-sm flex items-center justify-center gap-1.5 transition-all active:scale-95"
-                      >
-                        <Lock className="w-4 h-4 shrink-0" />
-                        <span>Qayta Qulflash (Yangi PIN)</span>
-                      </button>
-                    )}
-
-                    {isOccupied && (
-                      <button
-                        onClick={() => handleClearTable(t.id, t.number)}
-                        className="w-full min-h-[44px] py-2 px-3 rounded-xl bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/40 text-emerald-300 font-medium text-xs sm:text-sm flex items-center justify-center gap-1.5 transition-all active:scale-95"
-                      >
-                        <CheckCircle className="w-4 h-4 shrink-0" />
-                        <span>Stolni bo'shatish (Tozalash)</span>
-                      </button>
-                    )}
-
-                    <div className="grid grid-cols-2 gap-2 pt-1">
-                      <button
-                        type="button"
-                        onClick={() => setSelectedTableQR({ ...t, qrLink })}
-                        className="px-3 py-2 rounded-xl bg-theme-primary/15 hover:bg-theme-primary/25 border border-theme-primary/40 text-theme-primary text-xs font-bold flex items-center justify-center gap-1.5 transition-all active:scale-95 shadow-sm"
-                        title="QR kodni kattalashtirib ko'rish va chop etish"
-                      >
-                        <QrCode className="w-3.5 h-3.5" />
-                        <span>QR kodni ko'rish</span>
-                      </button>
-
-                      <button
-                        onClick={() => handleCopyLink(t.qr_token, t.id)}
-                        className="px-3 py-2 rounded-xl bg-white/5 hover:bg-white/10 border border-theme-border text-white text-xs font-semibold flex items-center justify-center gap-1.5 transition-all"
-                      >
-                        {copiedId === t.id ? (
-                          <>
-                            <Check className="w-3.5 h-3.5 text-emerald-400" />
-                            <span className="text-emerald-400">Nusxalandi!</span>
-                          </>
-                        ) : (
-                          <>
-                            <Copy className="w-3.5 h-3.5 text-theme-muted" />
-                            <span>Havola</span>
-                          </>
-                        )}
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-          </div>
-          ))}
-        </div>
-      )}
+      {/* Compact table directory: fetch accounts only when a table is opened. */}
+      {tab === 'tables' && <TablesTab
+        tables={tables} zones={zones} restaurantId={restaurantId}
+        loading={loading} error={tablesError}
+        qrBaseUrl={qrBaseUrl} lanInfo={lanInfo} ordersRevision={recentOrders}
+        onQrBaseUrlChange={value => { localStorage.setItem('restaron_qr_base_url', value); setQrBaseUrl(value); }}
+        onRefresh={reloadTables} onCheckout={handleOpenCheckout}
+        onPrintBill={handleDirectPrintBill}
+        onBook={table => { setSelectedBookingTable(table); setBookingModalOpen(true); }}
+      />}
 
       {/* TAB 4: STAFF (ACCOUNTS) */}
       {tab === 'staff' && (
@@ -2693,90 +1971,6 @@ export const AdminDashboard = () => {
         </div>
       )}
 
-      {/* ─── MODAL: QR CODE LARGE VIEW & PRINT ───────────────────────────── */}
-      {selectedTableQR && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-fade-in">
-          <div className="relative w-full max-w-sm rounded-3xl glass-card border border-theme-border bg-theme-surface p-6 sm:p-8 space-y-6 shadow-2xl text-center">
-            <button
-              onClick={() => setSelectedTableQR(null)}
-              className="absolute top-4 right-4 p-2 rounded-full bg-white/10 hover:bg-white/20 text-white transition-colors"
-            >
-              <X className="w-4 h-4" />
-            </button>
-
-            {/* Printable Area */}
-            <div id="printable-qr-badge" className="p-5 rounded-2xl bg-white text-black space-y-3 shadow-xl">
-              <div className="flex items-center justify-center gap-2">
-                <div className="w-8 h-8 rounded-lg bg-black text-white flex items-center justify-center font-black text-sm">
-                  🍽️
-                </div>
-                <div className="text-left">
-                  <div className="text-xs font-black tracking-wider uppercase text-zinc-800">RestAron</div>
-                  <div className="text-[10px] text-zinc-500 font-medium">Aqlli Restoran Tizimi</div>
-                </div>
-              </div>
-
-              <div className="py-1">
-                <span className="text-2xl font-black text-black">
-                  Stol #{selectedTableQR.number}
-                </span>
-                {selectedTableQR.room && (
-                  <div className="text-xs font-semibold text-zinc-600">
-                    ({selectedTableQR.room})
-                  </div>
-                )}
-              </div>
-
-              <div className="flex justify-center p-2 bg-white rounded-xl border border-zinc-200">
-                <img
-                  src={`${BASE_URL}/tables/qr-image/${selectedTableQR.qr_token}?base_url=${encodeURIComponent(qrBaseUrl)}`}
-                  alt={`Stol #${selectedTableQR.number} QR`}
-                  className="w-48 h-48 object-contain"
-                />
-              </div>
-
-              <div className="text-[11px] font-bold text-zinc-800">
-                📱 Kamerangizni yoqing va menyuni oching
-              </div>
-            </div>
-
-            {/* Action Buttons */}
-            <div className="space-y-2 pt-1">
-              <div className="grid grid-cols-2 gap-2">
-                <button
-                  onClick={() => window.print()}
-                  className="w-full py-3 rounded-xl bg-theme-primary hover:bg-theme-primary-hover text-white text-xs font-bold shadow-glow flex items-center justify-center gap-2 transition-all"
-                >
-                  <Printer className="w-4 h-4" />
-                  <span>Chop etish</span>
-                </button>
-
-                <a
-                  href={`${BASE_URL}/tables/qr-image/${selectedTableQR.qr_token}?base_url=${encodeURIComponent(qrBaseUrl)}`}
-                  download={`Stol_${selectedTableQR.number}_QR.png`}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="w-full py-3 rounded-xl bg-white/10 hover:bg-white/20 text-white text-xs font-bold border border-white/15 flex items-center justify-center gap-2 transition-all"
-                >
-                  <Download className="w-4 h-4" />
-                  <span>PNG Yuklash</span>
-                </a>
-              </div>
-
-              <a
-                href={selectedTableQR.qrLink || `${qrBaseUrl}/?table=${selectedTableQR.qr_token}`}
-                target="_blank"
-                rel="noreferrer"
-                className="w-full py-2.5 rounded-xl bg-black/30 hover:bg-black/50 text-theme-muted hover:text-white text-xs font-semibold flex items-center justify-center gap-2 transition-all"
-              >
-                <ExternalLink className="w-3.5 h-3.5" />
-                <span>Mijoz sifatida ochish</span>
-              </a>
-            </div>
-          </div>
-        </div>
-      )}
-
       <ThermalReceiptModal
         isOpen={thermalOpen}
         onClose={() => setThermalOpen(false)}
@@ -2814,6 +2008,7 @@ export const AdminDashboard = () => {
 
       {/* Booking / Reservation Modal */}
       <BookingModal
+        appearance={tab === 'tables' ? 'tables' : 'default'}
         isOpen={bookingModalOpen}
         onClose={() => setBookingModalOpen(false)}
         table={selectedBookingTable}

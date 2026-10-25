@@ -20,14 +20,14 @@ asyncpg>=0.29.0            # PostgreSQL async drayveri (Production High-Concurre
 psycopg2-binary>=2.9.9     # PostgreSQL sync drayveri (Migratsiya va utilities)
 
 # ─── Auth & Security ─────────────────────────────────────────────────────────
-python-jose[cryptography]==3.3.0   # JWT token
+python-jose[cryptography]==3.5.0   # JWT token; security fixes
 bcrypt>=4.0.0                       # Parol xeshlash (security.py da to'g'ridan-to'g'ri)
 
 # ─── Validation & Config ─────────────────────────────────────────────────────
 pydantic[email]==2.7.1
 pydantic-settings==2.2.1
 python-dotenv==1.0.1
-python-multipart==0.0.9   # File upload (FastAPI)
+python-multipart==0.0.32   # File upload; malformed-boundary DoS fixes
 
 # ─── Image & QR & PDF ────────────────────────────────────────────────────────
 Pillow==10.3.0

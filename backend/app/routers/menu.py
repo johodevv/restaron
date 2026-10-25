@@ -336,6 +336,8 @@ async def update_menu_item(
     if not item:
         raise HTTPException(status_code=404, detail="Taom topilmadi")
     data = payload.model_dump(exclude_unset=True)
+    if 'price' in data and data['price'] is None:
+        raise HTTPException(422, "Taom narxi bo'sh bo'lishi mumkin emas")
     if any(field in data and data[field] != getattr(item, field) for field in ('is_weighted', 'unit')):
         used = await db.scalar(select(OrderItem.id).where(OrderItem.menu_item_id == item.id).limit(1))
         if used:

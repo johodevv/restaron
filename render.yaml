@@ -1,13 +1,18 @@
 services:
-  # Backend FastAPI Service (Free Tier on Render)
+  # Local SQLite and uploaded files require a paid persistent disk.
+  # Applying this blueprint changes the hosting plan; it does not migrate data.
   - type: web
     name: restaron-backend
     runtime: python
     region: frankfurt
-    plan: free
+    plan: starter
     rootDir: backend
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    disk:
+      name: restaron-data
+      mountPath: /var/data
+      sizeGB: 10
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.0
@@ -22,8 +27,16 @@ services:
       - key: ACCESS_TOKEN_EXPIRE_MINUTES
         value: "1440"
       - key: DATABASE_URL
-        value: sqlite+aiosqlite:///./restaron.db
-      - key: CORS_ORIGINS
-        value: "*"
+        value: sqlite+aiosqlite:////var/data/restaron.db
+      - key: SYNC_DATABASE_URL
+        value: sqlite:////var/data/restaron.db
+      - key: UPLOAD_DIR
+        value: /var/data/uploads
+      - key: PDF_ARCHIVE_DIR
+        value: /var/data/receipts_archive/PDFs
+      - key: BACKUP_DIR
+        value: /var/data/zaxira
+      - key: ALLOWED_ORIGINS
+        value: https://restaron-frontend.vercel.app
       - key: QR_BASE_URL
         value: https://restaron-frontend.vercel.app

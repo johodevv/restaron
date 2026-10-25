@@ -3,6 +3,7 @@ WebSocket Connection Manager — Real-time xabarlar va bildirishnomalar boshqaru
 """
 import asyncio
 import time
+import json
 from datetime import datetime, timezone
 from typing import Dict, Set, Optional, List, Any
 from fastapi import WebSocket
@@ -18,6 +19,11 @@ class ConnectionManager:
         self._lock = asyncio.Lock()
         self._heartbeat_task: Optional[asyncio.Task] = None
         self._running = False
+        self._outgoing = {}
+        self._senders = {}
+        self._socket_loops = {}
+        self._closing = set()
+        self._close_tasks = set()
 
     def update_heartbeat(self, websocket: WebSocket):
         """Mijozdan faollik (ping/pong) kelganda oxirgi ko'ringan vaqtni yangilash"""
@@ -64,9 +70,69 @@ class ConnectionManager:
             },
             websocket,
         )
+        if websocket in self._connection_meta:
+            queue = asyncio.Queue(maxsize=256)
+            self._outgoing[websocket] = queue
+            self._socket_loops[websocket] = asyncio.get_running_loop()
+            self._senders[websocket] = asyncio.create_task(self._sender(websocket, queue))
+
+    async def _sender(self, websocket, queue):
+        try:
+            while True:
+                message = await queue.get()
+                try:
+                    await asyncio.wait_for(websocket.send_text(message), timeout=2.0)
+                except Exception:
+                    await self.disconnect(websocket)
+                    try:
+                        await asyncio.wait_for(websocket.close(code=1013), timeout=1)
+                    except Exception:
+                        pass
+                    return
+                finally:
+                    queue.task_done()
+        except asyncio.CancelledError:
+            pass
+
+    async def drain(self):
+        """Wait for queued events during verification or graceful shutdown."""
+        await asyncio.wait_for(asyncio.gather(*(q.join() for q in list(self._outgoing.values()))), 3)
+
+    def _enqueue(self, websocket, message):
+        queue = self._outgoing.get(websocket)
+        if queue is None or websocket in self._closing:
+            return
+        try:
+            queue.put_nowait(message)
+        except asyncio.QueueFull:
+            self._closing.add(websocket)
+            task = asyncio.create_task(self._close_lagging(websocket))
+            self._close_tasks.add(task)
+            task.add_done_callback(self._close_tasks.discard)
+
+    async def _close_lagging(self, websocket):
+        try:
+            await self.disconnect(websocket)
+            await asyncio.wait_for(websocket.close(code=1013), timeout=1)
+        except Exception:
+            pass
+        finally:
+            self._closing.discard(websocket)
 
     async def disconnect(self, websocket: WebSocket):
         """Ulanish uzilganda tozalash"""
+        queue = self._outgoing.pop(websocket, None)
+        task = self._senders.pop(websocket, None)
+        owner = self._socket_loops.pop(websocket, None)
+        if task and task is not asyncio.current_task():
+            if owner and owner is not asyncio.get_running_loop():
+                owner.call_soon_threadsafe(task.cancel)
+            else:
+                task.cancel()
+        if queue:
+            while not queue.empty():
+                queue.get_nowait()
+                queue.task_done()
         async with self._lock:
             meta = self._connection_meta.pop(websocket, None)
             if meta:
@@ -93,15 +159,34 @@ class ConnectionManager:
 
     async def send_personal_message(self, message: dict, websocket: WebSocket) -> bool:
         """Bitta mijozga xabar yuborish"""
+        if websocket in self._outgoing:
+            await self._broadcast_to_sockets([websocket], message)
+            return True
         return await self._send_with_timeout(websocket, message, timeout=2.0)
 
     async def _broadcast_to_sockets(self, target_sockets: List[WebSocket], message: dict):
-        """Ulanishlarga ketma-ket emas, asyncio.gather bilan parallel yuborish (timeout=2.0)"""
+        """Enqueue one serialized event in each socket's bounded FIFO."""
         if not target_sockets:
             return
+        if message.get('type') in ('order_updated', 'new_order') and isinstance(message.get('order'), dict):
+            message = dict(message)
+            message.setdefault('table_id', message['order'].get('table_id'))
+            message.setdefault('order_id', message['order'].get('id'))
         encoded = jsonable_encoder(message)
-        tasks = [self._send_with_timeout(ws, encoded, timeout=2.0, encoded=True) for ws in target_sockets]
-        await asyncio.gather(*tasks, return_exceptions=True)
+        serialized = json.dumps(encoded, ensure_ascii=False, separators=(',', ':'))
+        fallback = []
+        for ws in target_sockets:
+            queue = self._outgoing.get(ws)
+            if queue is None:
+                fallback.append(self._send_with_timeout(ws, encoded, timeout=2.0, encoded=True))
+                continue
+            owner = self._socket_loops.get(ws)
+            if owner and owner is not asyncio.get_running_loop():
+                owner.call_soon_threadsafe(self._enqueue, ws, serialized)
+            else:
+                self._enqueue(ws, serialized)
+        if fallback:
+            await asyncio.gather(*fallback, return_exceptions=True)
 
     async def send_to_user(self, restaurant_id: int, user_id: int, message: dict):
         """Muayyan foydalanuvchiga (ofitsiant, oshpaz, admin) yuborish"""
@@ -245,14 +330,8 @@ class ConnectionManager:
                 async with self._lock:
                     all_sockets = list(self._connection_meta.keys())
 
-                for ws in all_sockets:
-                    try:
-                        await ws.send_json({
-                            "type": "ping",
-                            "timestamp": datetime.now(timezone.utc).isoformat(),
-                        })
-                    except Exception:
-                        await self.disconnect(ws)
+                await self._broadcast_to_sockets(all_sockets, {
+                    "type": "ping", "timestamp": datetime.now(timezone.utc).isoformat()})
 
             except asyncio.CancelledError:
                 break
@@ -269,6 +348,8 @@ class ConnectionManager:
             except asyncio.CancelledError:
                 pass
             self._heartbeat_task = None
+        for websocket in list(self._connection_meta):
+            await self.disconnect(websocket)
 
 
 # Global singleton nusxa

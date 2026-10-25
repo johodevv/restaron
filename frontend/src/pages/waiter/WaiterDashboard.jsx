@@ -5,6 +5,9 @@ import { useDialogFocus } from '../../hooks/useDialogFocus';
 import { posLabel } from '../../utils/posLabels';
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import api from '../../utils/api';
+import { latestOrder } from '../../utils/orderSync';
+import { canDeleteOrderItem, canDecreaseOrderItem, kitchenSentQuantity } from '../../utils/kitchenPermissions';
+import { convertWeightedInput, weightedUpdatePayload } from '../../utils/weightedItem';
 import { useAuth } from '../../context/AuthContext';
 import { useWebSocket } from '../../context/WebSocketContext';
 import { ThermalReceiptModal } from '../../components/ThermalReceiptModal';
@@ -109,8 +112,11 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
   const [weightValue, setWeightValue] = useState('');
   // Tortiladigan taomning SUMMASI — ofitsiant kg emas, pulini yozadi
   const [priceValue, setPriceValue] = useState('');
+  const [weightEditedField, setWeightEditedField] = useState('price');
+  const weightSaveLock = useRef(false);
   const [printingBill, setPrintingBill] = useState(false);
   const [savingWeight, setSavingWeight] = useState(false);
+  const weightDialogRef = useDialogFocus(!!weightModalItem, () => { if (!weightSaveLock.current) setWeightModalItem(null); });
 
   // O'lchanadigan taom hajmi (1.5 L kola, 1.4 kg baliq) uchun oyna
   const [sizeModalItem, setSizeModalItem] = useState(null);
@@ -285,11 +291,12 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
     setLoading(true);
     setLoadError(null);
     try {
-      const [tablesData, menuData, callsData, ordersData] = await Promise.all([
+      const [tablesData, menuData, callsData, ordersData, readyData] = await Promise.all([
         api.get(`/tables/?restaurant_id=${restaurantId}`),
         api.get(`/menu/full/${restaurantId}`),
         api.get(`/orders/calls?restaurant_id=${restaurantId}`),
         api.get(`/orders/?restaurant_id=${restaurantId}&active_only=true&limit=300&include_items=true`),
+        api.get(`/orders/?restaurant_id=${restaurantId}&ready_for_delivery=true&limit=300&include_items=true`),
       ]);
 
       setTables(tablesData || []);
@@ -302,8 +309,7 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
       setCalls(callsData || []);
       setOrders(ordersData || []);
 
-      const ready = (ordersData || []).filter((o) => o.status === 'ready');
-      setReadyOrders(ready);
+      setReadyOrders(readyData || []);
 
       // Select first table if none selected
       if (tablesData && tablesData.length > 0) {
@@ -397,16 +403,21 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
     const pollInterval = setInterval(async () => {
       if (document.visibilityState === 'visible') {
         try {
-          const [freshTables, freshOrders] = await Promise.all([
+          const [freshTables, freshOrders, freshReady, freshCalls] = await Promise.all([
             api.get(`/tables/?restaurant_id=${restaurantId}`),
             api.get(`/orders/?restaurant_id=${restaurantId}&active_only=true&limit=300&include_items=true`),
+            api.get(`/orders/?restaurant_id=${restaurantId}&ready_for_delivery=true&limit=300&include_items=true`),
+            api.get(`/orders/calls?restaurant_id=${restaurantId}`),
           ]);
           if (Array.isArray(freshTables)) {
             setTables(freshTables);
           }
           if (Array.isArray(freshOrders)) {
             setOrders(freshOrders);
+            if (selectedTableRef.current) await fetchTableActiveOrder(selectedTableRef.current);
           }
+          if (Array.isArray(freshReady)) setReadyOrders(freshReady);
+          if (Array.isArray(freshCalls)) setCalls(freshCalls);
         } catch (_) {}
       }
     }, 30000);
@@ -433,19 +444,24 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
   useEffect(() => {
     if (!addEventListener) return;
     const unsub = addEventListener('*', (event) => {
+      const eventTableId = event.table_id ?? event.order?.table_id;
       if (event.type === 'call_waiter') {
         if (soundEnabled && playChime) playChime('urgent');
         api.get(`/orders/calls?restaurant_id=${restaurantId}`).then((data) => setCalls(data || [])).catch(() => {});
+      } else if (event.type === 'call_completed') {
+        api.get(`/orders/calls?restaurant_id=${restaurantId}`).then((data) => setCalls(data || [])).catch(() => {});
       } else if (event.type === 'order_ready') {
         if (soundEnabled && playChime) playChime('success');
-        api.get(`/orders/?restaurant_id=${restaurantId}&active_only=true&limit=300&include_items=true`)
-          .then((data) => setReadyOrders((data || []).filter((o) => o.status === 'ready')))
+        api.get(`/orders/?restaurant_id=${restaurantId}&ready_for_delivery=true&limit=300&include_items=true`)
+          .then((data) => setReadyOrders(data || []))
           .catch(() => {});
+      } else if (event.type === 'order_delivered') {
+        setReadyOrders((prev) => prev.filter((o) => o.id !== event.order_id));
       } else if (event.type === 'table_status_updated') {
         const nextStatus = event.new_status || event.status;
         setTables((prev) =>
           prev.map((t) =>
-            t.id === event.table_id
+            t.id === eventTableId
               ? {
                   ...t,
                   status: nextStatus || t.status,
@@ -454,7 +470,7 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
               : t
           )
         );
-        if (orderType === 'table' && selectedTable && event.table_id === selectedTable.id) {
+        if (orderType === 'table' && selectedTable && eventTableId === selectedTable.id) {
           setSelectedTable((prev) =>
             prev
               ? {
@@ -470,24 +486,28 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
         }
       } else if (event.type === 'order_paid' || event.type === 'order_cancelled') {
         // 2. Stol faqat order_paid, order_cancelled yoki table_status_updated (status=available) kelganda bo'shasin
-        setTables((prev) =>
-          prev.map((t) =>
-            t.id === event.table_id
-              ? { ...t, status: 'available', is_occupied: false }
-              : t
-          )
-        );
-        if (orderType === 'table' && selectedTable && event.table_id === selectedTable.id) {
-          setSelectedTable((prev) => (prev ? { ...prev, status: 'available', is_occupied: false } : null));
+        const closedId = event.order_id ?? event.order?.id;
+        setOrders((prev) => prev.filter((o) => o.id !== closedId));
+        if (orderType === 'table' && selectedTable && eventTableId === selectedTable.id) {
+          fetchTableActiveOrder(eventTableId);
+        } else if (activeOrderRef.current?.id === closedId) {
           setActiveOrder(null);
         }
       } else if (event.type === 'order_updated' || event.type === 'new_order') {
         // 2. 'bekor qilingan' deb faqat event.order?.status === 'cancelled' bo'lganda hisobla
         const isCancelled = event.order?.status === 'cancelled';
-        if (event.table_id) {
+        if (event.order) {
+          setOrders((prev) => {
+            if (isCancelled || event.order.is_paid) return prev.filter((o) => o.id !== event.order.id);
+            const existing = prev.find((o) => o.id === event.order.id);
+            const updated = latestOrder(existing, event.order);
+            return existing ? prev.map((o) => o.id === updated.id ? updated : o) : [...prev, updated];
+          });
+        }
+        if (eventTableId) {
           setTables((prev) =>
             prev.map((t) => {
-              if (t.id !== event.table_id) return t;
+              if (t.id !== eventTableId) return t;
               return {
                 ...t,
                 status: isCancelled ? 'available' : 'occupied',
@@ -496,17 +516,23 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
             })
           );
         }
-        if (orderType === 'table' && selectedTable && event.table_id === selectedTable.id) {
+        if (orderType === 'table' && selectedTable && eventTableId === selectedTable.id) {
           if (event.order) {
             if (isCancelled) {
               setActiveOrder(null);
             } else {
-              setActiveOrder(event.order);
+              if (activeOrderRef.current && activeOrderRef.current.id !== event.order.id) {
+                fetchTableActiveOrder(eventTableId);
+              } else {
+                setActiveOrder((prev) => latestOrder(prev, event.order));
+              }
             }
           } else {
-            // event.order yo'q bo'lsa stolni BO'SH qilma: band qoldir va tanlangan stol uchun fetchTableActiveOrder(event.table_id) bilan yangila
-            fetchTableActiveOrder(event.table_id);
+            // event.order yo'q bo'lsa stolni BO'SH qilma: band qoldir va tanlangan stol uchun fetchTableActiveOrder(eventTableId) bilan yangila
+            fetchTableActiveOrder(eventTableId);
           }
+        } else if (event.order && activeOrderRef.current?.id === event.order.id) {
+          setActiveOrder((prev) => isCancelled ? null : latestOrder(prev, event.order));
         }
       } else if (event.type === 'stop_list_updated') {
         // 5. stop_list_updated hodisasini tingla va menyudagi taom mavjudligini yangila (CustomerMenu.jsx shaklida)
@@ -541,6 +567,7 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
       .pop();
     if (line) {
       setWeightModalItem(line);
+      setWeightEditedField('price');
       setWeightValue('');
       setPriceValue('');
     }
@@ -699,6 +726,9 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
   const handleQtyChange = async (item, delta) => {
     if (!activeOrder || !item || delta === 0) return;
     const newQty = item.quantity + delta;
+    if (delta < 0 && !canDecreaseOrderItem(user, item)) {
+      showToast('Oshxonaga yuborilgan taomni faqat admin kamaytiradi.', 'warning'); return;
+    }
 
     // 1. Darhol ekranni yangilaymiz (0ms kechikish)
     setActiveOrder((prev) => {
@@ -761,6 +791,10 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
   // Delete item from order — Darhol ekrandan olib tashlaydi
   const handleDeleteItem = async (itemId) => {
     if (!activeOrder) return;
+    const item = activeOrder.items?.find(line => line.id === itemId);
+    if (!item || !canDeleteOrderItem(user, item)) {
+      showToast('Oshxonaga yuborilgan taomni faqat admin o‘chiradi.', 'warning'); return;
+    }
     const orderId = activeOrder.id;
 
     // 1. Darhol ekrandan o'chiramiz (0ms javob)
@@ -814,25 +848,17 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
   };
 
   // Tortiladigan taom narxini saqlash.
-  // ASOSIY yo'l — ofitsiant SUMMANI yozadi (baliqning kg i emas, puli).
-  // Og'irlik ixtiyoriy: yozilsa chekda va oshxona begunogida ko'rinadi.
+  // Only the last edited field is sent; the backend derives its counterpart.
   const handleSaveWeight = async () => {
-    if (!activeOrder || !weightModalItem) return;
-    const w = parseFloat(String(weightValue).replace(',', '.'));
-    const pr = parseFloat(String(priceValue).replace(/[^0-9.,]/g, '').replace(',', '.'));
-    const hasPrice = !isNaN(pr) && pr >= 0 && String(priceValue).trim() !== '';
-    const hasWeight = !isNaN(w) && w > 0;
-    if (!hasPrice && !hasWeight) {
-      showToast('Summani kiriting (masalan: 204000)', 'warning');
-      return;
-    }
+    if (!activeOrder || !weightModalItem || weightSaveLock.current) return;
+    let body;
+    try { body = weightedUpdatePayload(weightModalItem, weightEditedField, priceValue, weightValue); }
+    catch (error) { showToast(error.message, 'warning'); return; }
+    weightSaveLock.current = true;
     setSavingWeight(true);
     const scope = selectionKey;
     try {
       await orderQueueRef.current;
-      const body = {};
-      if (hasPrice) body.price = Math.round(pr);
-      if (hasWeight) body.weight = w;
       const updated = await api.patch(
         `/orders/${activeOrder.id}/items/${weightModalItem.id}/weight`,
         body
@@ -844,6 +870,7 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
     } catch (err) {
       showToast(err.message || 'Narxni saqlashda xatolik', 'urgent');
     } finally {
+      weightSaveLock.current = false;
       setSavingWeight(false);
     }
   };
@@ -1035,7 +1062,8 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
   const handleResolveCall = async (callId) => {
     try {
       await api.post(`/orders/calls/${callId}/resolve`, {});
-      setCalls((prev) => prev.filter((c) => c.id !== callId));
+      // Reconcile with persisted state, including duplicate historical calls.
+      setCalls(await api.get(`/orders/calls?restaurant_id=${restaurantId}`));
     } catch (err) {
       showToast(err.message || 'Xatolik', 'urgent');
     }
@@ -1358,12 +1386,13 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
                             <button
                               onClick={() => {
                                 setWeightModalItem(it);
+                                setWeightEditedField(it.manual_price != null || !it.weight ? 'price' : 'weight');
                                 setWeightValue(it.weight ? String(it.weight) : '');
                                 setPriceValue(
                                   it.manual_price !== null && it.manual_price !== undefined
-                                    ? String(Math.round(it.manual_price))
+                                    ? String(it.manual_price)
                                     : it.total_price
-                                      ? String(Math.round(it.total_price))
+                                      ? String(it.total_price)
                                       : ''
                                 );
                               }}
@@ -1374,7 +1403,7 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
                                 }`}
                             >
                               {isPriced(it)
-                                ? `💰 ${Math.round(it.total_price || 0).toLocaleString('uz-UZ')}` +
+                                ? `💰 ${Number(it.total_price || 0).toLocaleString('uz-UZ', { maximumFractionDigits: 2 })}` +
                                 (it.weight ? `·${it.weight}${it.unit || 'kg'}` : '')
                                 : label("💰 Narx yo'q")}
                             </button>
@@ -1417,6 +1446,7 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
                               </span>
                             );
                           })()}
+                          {kitchenSentQuantity(it) > 0 && !canDeleteOrderItem(user, it) && <span className="text-[10px] text-slate-400">{label('O‘chirish: faqat admin')}</span>}
                         </div>
                       </div>
 
@@ -1425,8 +1455,9 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
                         <button
                           type="button"
                           onClick={() => handleQtyChange(it, -1)}
-                          className="min-w-[36px] min-h-[44px] rounded-xl bg-emerald-700 hover:bg-emerald-600 text-white flex items-center justify-center font-black text-base active:scale-90 shadow-sm"
-                          title={label("Kamaytirish")}
+                          disabled={!canDecreaseOrderItem(user, it)}
+                          className="min-w-[36px] min-h-[44px] rounded-xl bg-emerald-700 hover:bg-emerald-600 text-white flex items-center justify-center font-black text-base active:scale-90 shadow-sm disabled:opacity-30 disabled:cursor-not-allowed"
+                          title={canDecreaseOrderItem(user, it) ? label('Kamaytirish') : label('Oshxonaga yuborilgan: faqat admin kamaytiradi')}
                         >
                           -
                         </button>
@@ -1453,8 +1484,9 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
                         <button
                           type="button"
                           onClick={() => handleDeleteItem(it.id)}
-                          className="min-w-[40px] min-h-[44px] rounded-xl text-slate-500 hover:text-red-400 hover:bg-red-500/10 active:scale-90 transition-all flex items-center justify-center"
-                          title={label("Taomni o'chirish")}
+                          disabled={!canDeleteOrderItem(user, it)}
+                          className="min-w-[40px] min-h-[44px] rounded-xl text-slate-500 hover:text-red-400 hover:bg-red-500/10 active:scale-90 transition-all flex items-center justify-center disabled:opacity-30 disabled:cursor-not-allowed"
+                          title={canDeleteOrderItem(user, it) ? label("Taomni o'chirish") : label('Oshxonaga yuborilgan: faqat admin o‘chiradi')}
                         >
                           <Trash2 className="w-4 h-4" />
                         </button>
@@ -1746,15 +1778,17 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
       {/* ─── Tortilgan og'irlikni kiritish (baliq 1.35 kg) ──────────── */}
       {weightModalItem && (
         <div className="fixed inset-0 z-[55] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in">
-          <div className="bg-slate-900 border-2 border-cyan-600/60 rounded-3xl max-w-md w-full p-5 shadow-2xl">
+          <div ref={weightDialogRef} role="dialog" aria-modal="true" aria-label="Tortiladigan taom narxi va og‘irligi" className="bg-slate-900 border-2 border-cyan-600/60 rounded-3xl max-w-md w-full p-5 shadow-2xl max-h-[90dvh] overflow-y-auto">
             <div className="flex items-start justify-between mb-1">
               <div>
-                <h3 className="text-base font-black text-white">{label("💰 Narxini kiritish")}</h3>
+                <h3 className="text-base font-black text-white">{label('Narx va og‘irlik')}</h3>
                 <p className="text-xs font-bold text-cyan-300 mt-0.5">
                   {weightModalItem.menu_item_name || 'Taom'}
                 </p>
               </div>
               <button
+                aria-label="Narx oynasini yopish"
+                disabled={savingWeight}
                 onClick={() => setWeightModalItem(null)}
                 className="text-slate-400 hover:text-white p-1"
               >
@@ -1762,26 +1796,27 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
               </button>
             </div>
 
-            <p className="text-[11px] text-slate-400 mb-3">{label("Mahsulotni tarozida torting va")}<b className="text-white">{label("summasini")}</b>{label("yozing. Chekda aynan shu summa chiqadi — mijoz bilan nizo bo'lmaydi.")}</p>
+            <p className="text-xs text-slate-400 mb-3">{label('Narx yoki og‘irlikni yozing — ikkinchisi avtomatik hisoblanadi. Oshxonaga yuborilgandan keyin ham tuzatish mumkin.')}</p>
+            {weightModalItem.quantity > 1 && <p className="text-xs text-cyan-200 mb-3">Summa — {weightModalItem.quantity} ta uchun jami; og‘irlik — bittasi uchun.</p>}
 
             <div className="p-3 rounded-2xl bg-cyan-500/10 border border-cyan-500/30 mb-3">
               <div className="flex justify-between text-xs text-slate-300 font-semibold">
-                <span>1 {weightModalItem.unit || 'kg'}{label("narxi:")}</span>
+                <span>1 {weightModalItem.unit || 'kg'} {label("narxi:")}</span>
                 <span className="font-mono font-black text-white">
-                  {(weightModalItem.unit_price || 0).toLocaleString('uz-UZ')}{label("so'm")}</span>
+                  {(weightModalItem.unit_price || 0).toLocaleString('uz-UZ')} {label("so'm")}</span>
               </div>
             </div>
 
             {/* ASOSIY maydon — SUMMA */}
-            <label className="block text-[10px] font-black text-emerald-400 uppercase tracking-wider mb-1.5">{label("Summa (so'm) — shuni yozing:")}</label>
+            <label className="block text-xs font-bold text-emerald-400 mb-1.5">{label('Summa (so‘m)')}</label>
             <input
-              type="number"
-              step="1"
-              min="0"
-              inputMode="numeric"
+              type="text"
+              inputMode="decimal"
+              aria-label="Taom summasi"
+              disabled={savingWeight}
               autoFocus
               value={priceValue}
-              onChange={(e) => setPriceValue(e.target.value)}
+              onChange={event => { const values = convertWeightedInput(weightModalItem, 'price', event.target.value); setWeightEditedField('price'); setPriceValue(values.price); setWeightValue(values.weight); }}
               onKeyDown={(e) => {
                 if (e.key === 'Enter') handleSaveWeight();
               }}
@@ -1793,37 +1828,31 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
               if (pr <= 0) return <div className="mb-3" />;
               return (
                 <p className="text-center text-sm font-black text-emerald-400 font-mono mb-3">
-                  {Math.round(pr).toLocaleString('uz-UZ')}{label("so'm")}</p>
+                  {pr.toLocaleString('uz-UZ', { maximumFractionDigits: 2 })} {label("so'm")}</p>
               );
             })()}
 
-            {/* IXTIYORIY — og'irlik. Oshxona nechchi kg ekanini bilishi uchun */}
-            <label className="block text-[10px] font-black text-slate-500 uppercase tracking-wider mb-1.5">{label("Og'irlik (")}{weightModalItem.unit || 'kg'}{label(") — ixtiyoriy")}</label>
+            <label className="block text-xs font-bold text-slate-300 mb-1.5">{label("Og'irlik (")}{weightModalItem.unit || 'kg'})</label>
             <input
-              type="number"
-              step="0.01"
-              min="0"
+              type="text"
               inputMode="decimal"
+              aria-label="Taom og‘irligi"
+              disabled={savingWeight}
               value={weightValue}
               onChange={(e) => {
-                const v = e.target.value;
-                setWeightValue(v);
-                // Og'irlik yozilsa summani TAKLIF qilamiz — ofitsiant
-                // xohlasa uni qo'lda tuzatadi.
-                const w = parseFloat(String(v).replace(',', '.'));
-                if (w > 0) {
-                  setPriceValue(String(Math.round(w * (weightModalItem.unit_price || 0))));
-                }
+                const values = convertWeightedInput(weightModalItem, 'weight', e.target.value);
+                setWeightEditedField('weight'); setWeightValue(values.weight); setPriceValue(values.price);
               }}
               onKeyDown={(e) => {
                 if (e.key === 'Enter') handleSaveWeight();
               }}
-              placeholder={label("masalan: 1.7 (yozsangiz chekda ko'rinadi)")}
+              placeholder="masalan: 1,5"
               className="w-full p-2.5 rounded-xl bg-slate-950 border border-slate-700 text-base text-slate-200 font-mono font-bold text-center focus:outline-none focus:border-cyan-500 mb-4"
             />
 
             <div className="flex items-center gap-2">
               <button
+                disabled={savingWeight}
                 onClick={() => setWeightModalItem(null)}
                 className="min-h-[44px] px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-sm font-bold text-slate-300"
               >{label("Keyinroq")}</button>

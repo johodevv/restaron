@@ -83,56 +83,60 @@ def restore_database(
     backup_dir: str,
 ) -> bool:
     """Tanlangan zaxirani tiklash amali"""
-    # 1. Tanlangan zaxiraning yaxlitligini tekshirish
-    if not check_sqlite_integrity(selected_backup_path):
-        print(f"\n[XATOLIK] Tanlangan zaxira nusxasi buzilgan (integrity_check muvaffaqiyatsiz):", file=sys.stderr)
-        print(f"  {selected_backup_path}", file=sys.stderr)
-        return False
-
-    # 2. Joriy bazani restaron_OLDINGI.db sifatida saqlab qo'yish
-    old_backup_path = os.path.join(backup_dir, "restaron_OLDINGI.db")
-    if os.path.exists(db_path):
-        try:
-            # SQLite backup API bilan yoki xavfsiz nusxa olish
-            src_conn = sqlite3.connect(db_path)
-            dst_conn = sqlite3.connect(old_backup_path)
-            with dst_conn:
-                src_conn.backup(dst_conn)
-            dst_conn.close()
-            src_conn.close()
-            print(f"[1/3] Joriy ma'lumotlar bazasi saqlandi: {old_backup_path}")
-        except Exception as e:
-            # Agar fayl qulflangan bo'lsa oddiy copy urinib ko'ramiz
-            try:
-                shutil.copy2(db_path, old_backup_path)
-                print(f"[1/3] Joriy ma'lumotlar bazasi ko'chirildi: {old_backup_path}")
-            except Exception as copy_err:
-                print(f"[OGOHLANTIRISH] Joriy bazani saqlashda xatolik: {copy_err}")
-
-    # Eski WAL va SHM fayllarini tozalash (yangi bazaga ta'sir qilmasligi uchun)
-    for ext in ("-wal", "-shm"):
-        wal_file = db_path + ext
-        if os.path.exists(wal_file):
-            try:
-                os.remove(wal_file)
-            except Exception as e:
-                print(f"[OGOHLANTIRISH] {wal_file} faylini o'chirib bo'lmadi: {e}")
-
-    # 3. Tanlangan nusxani restaron.db ga tiklash
     try:
-        shutil.copy2(selected_backup_path, db_path)
-        print(f"[2/3] Tanlangan zaxira nusxasi tiklandi: {os.path.basename(selected_backup_path)} -> {os.path.basename(db_path)}")
-    except Exception as e:
-        print(f"[XATOLIK] Faylni ko'chirishda xatolik: {e}", file=sys.stderr)
+        try:
+            from tools.database_lock import offline_database_lock
+        except ImportError:
+            from database_lock import offline_database_lock
+        with offline_database_lock(db_path):
+            return _restore_database_unlocked(selected_backup_path, db_path, backup_dir)
+    except (RuntimeError, OSError) as exc:
+        print(f'[XATOLIK] {exc}', file=sys.stderr)
         return False
 
-    # 4. Tiklangan bazaning yaxlitligini tekshirish
-    if not check_sqlite_integrity(db_path):
-        print(f"[XATOLIK] Tiklangan ma'lumotlar bazasi yaxlitlik tekshiruvidan o'tmadi!", file=sys.stderr)
-        return False
 
-    print(f"[3/3] Tiklangan baza yaxlitligi tasdiqlandi: OK (PRAGMA integrity_check muvaffaqiyatli)")
-    return True
+def _restore_database_unlocked(selected_backup_path, db_path, backup_dir):
+    from contextlib import closing
+    import tempfile
+    if os.path.abspath(selected_backup_path) == os.path.abspath(db_path):
+        return False
+    if not check_sqlite_integrity(selected_backup_path):
+        print('[XATOLIK] Zaxira nusxasi buzilgan', file=sys.stderr)
+        return False
+    staged = None
+    try:
+        os.makedirs(backup_dir, exist_ok=True)
+        # Stage first: even choosing OLDINGI.db cannot overwrite the selected
+        # recovery source while backing up the current database.
+        fd, staged = tempfile.mkstemp(prefix='.restore-', suffix='.db', dir=os.path.dirname(os.path.abspath(db_path)))
+        os.close(fd)
+        shutil.copy2(selected_backup_path, staged)
+        if not check_sqlite_integrity(staged):
+            return False
+        old_backup_path = os.path.join(backup_dir, 'restaron_OLDINGI.db')
+        if os.path.exists(db_path):
+            with closing(sqlite3.connect(db_path, timeout=5)) as src:
+                checkpoint = src.execute('PRAGMA wal_checkpoint(TRUNCATE)').fetchone()
+                if checkpoint and checkpoint[0] != 0:
+                    raise RuntimeError('WAL band; tiklash boshlanmadi')
+                with closing(sqlite3.connect(old_backup_path)) as dst:
+                    src.backup(dst)
+            if not check_sqlite_integrity(old_backup_path):
+                raise RuntimeError('Joriy bazaning zaxirasi tekshiruvdan o‘tmadi')
+        for ext in ('-wal', '-shm'):
+            sidecar = db_path + ext
+            if os.path.exists(sidecar):
+                os.remove(sidecar)
+        os.replace(staged, db_path)
+        staged = None
+        print('[OK] Baza tekshirilgan zaxiradan atomar tiklandi; oldingi baza saqlandi')
+        return check_sqlite_integrity(db_path)
+    except (OSError, sqlite3.Error, RuntimeError) as exc:
+        print(f'[XATOLIK] Tiklash to‘xtatildi: {exc}', file=sys.stderr)
+        return False
+    finally:
+        if staged and os.path.exists(staged):
+            os.remove(staged)
 
 
 def main() -> int:
@@ -145,11 +149,21 @@ def main() -> int:
     tools_dir = os.path.dirname(os.path.abspath(__file__))
     backend_dir = os.path.abspath(os.path.join(tools_dir, ".."))
     db_path = os.path.join(backend_dir, "restaron.db")
-    backup_dir = os.path.join(backend_dir, "zaxira")
+    backup_dir = os.getenv('BACKUP_DIR') or os.path.join(backend_dir, "zaxira")
 
     custom_db = os.getenv("SQLITE_DB_PATH")
     if custom_db:
         db_path = custom_db
+    else:
+        from sqlalchemy.engine import make_url
+        if backend_dir not in sys.path:
+            sys.path.insert(0, backend_dir)
+        from app.core.config import settings
+        url = make_url(settings.DATABASE_URL)
+        if url.get_backend_name() != 'sqlite':
+            print('PostgreSQL uchun pg_restore asosidagi tiklash talab qilinadi', file=sys.stderr)
+            return 1
+        db_path = url.database
 
     backups = get_available_backups(backup_dir)
 

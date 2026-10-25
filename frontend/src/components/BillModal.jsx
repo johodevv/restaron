@@ -1,6 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
 import api from '../utils/api';
 import { useWebSocket } from '../context/WebSocketContext';
+import { useAuth } from '../context/AuthContext';
+import { canCancelKitchenItems } from '../utils/kitchenPermissions';
+import { convertWeightedInput, weightedUpdatePayload } from '../utils/weightedItem';
 import {
   Receipt,
   X,
@@ -35,6 +38,8 @@ export const BillModal = ({
   const [weightEdit, setWeightEdit] = useState(null);   // {order_id, order_item_id, name, unit}
   const [weightValue, setWeightValue] = useState('');
   const [priceValue, setPriceValue] = useState('');
+  const [weightEditedField, setWeightEditedField] = useState('price');
+  const weightSaveLock = useRef(false);
   // Xizmat haqi foizini shu hisob uchun o'zgartirish (VIP 15%, ko'cha 0% ...)
   const [feeEditOpen, setFeeEditOpen] = useState(false);
   const [feeValue, setFeeValue] = useState('');
@@ -42,6 +47,7 @@ export const BillModal = ({
   const [removingId, setRemovingId] = useState(null);
   const [savingWeight, setSavingWeight] = useState(false);
   const { addEventListener } = useWebSocket();
+  const { user } = useAuth();
   // Hisob yopilayotganda kelgan WebSocket xabari eski chekni qaytarib
   // qo'ymasligi uchun qulf.
   const closingRef = useRef(false);
@@ -150,6 +156,7 @@ ${node.innerHTML}
   // Taom allaqachon oshxonadan chiqqan bo'lishi mumkin, shuning uchun
   // bu amal faqat admin uchun va tasdiqlash so'raladi.
   const handleRemoveItem = async (item) => {
+    if (!canCancelKitchenItems(user)) return;
     const ids = item.order_item_ids?.length
       ? item.order_item_ids
       : item.order_item_id
@@ -218,20 +225,13 @@ ${node.innerHTML}
   // Kassir tortiladigan taom NARXINI tuzatadi.
   // Asosiy maydon — summa (baliqning kg i emas, puli).
   const handleSaveWeight = async () => {
-    if (!weightEdit) return;
-    const w = parseFloat(String(weightValue).replace(',', '.'));
-    const pr = parseFloat(String(priceValue).replace(/[^0-9.,]/g, '').replace(',', '.'));
-    const hasPrice = !isNaN(pr) && pr >= 0 && String(priceValue).trim() !== '';
-    const hasWeight = !isNaN(w) && w > 0;
-    if (!hasPrice && !hasWeight) {
-      alert('Summani kiriting (masalan: 204000)');
-      return;
-    }
+    if (!weightEdit || weightSaveLock.current) return;
+    let body;
+    try { body = weightedUpdatePayload(weightEdit, weightEditedField, priceValue, weightValue); }
+    catch (error) { alert(error.message); return; }
+    weightSaveLock.current = true;
     setSavingWeight(true);
     try {
-      const body = {};
-      if (hasPrice) body.price = Math.round(pr);
-      if (hasWeight) body.weight = w;
       await api.patch(
         `/orders/${weightEdit.order_id}/items/${weightEdit.order_item_id}/weight`,
         body
@@ -243,6 +243,7 @@ ${node.innerHTML}
     } catch (err) {
       alert(err.message || 'Narxni saqlashda xatolik');
     } finally {
+      weightSaveLock.current = false;
       setSavingWeight(false);
     }
   };
@@ -299,9 +300,8 @@ ${node.innerHTML}
           </button>
         </div>
         <p className="text-[11px] text-slate-400 mb-3">
-          Tarozidagi <b className="text-white">summani</b> yozing — chek va
-          hisob shu zahoti to'g'rilanadi. Og'irlik ixtiyoriy: yozsangiz
-          chekda ham ko'rinadi.
+          Narx yoki og‘irlikni yozing — ikkinchisi avtomatik hisoblanadi.
+          Hisob va chek saqlangan qiymatga mos yangilanadi.
         </p>
         <div className="p-3 rounded-2xl bg-cyan-500/10 border border-cyan-500/30 mb-3 flex justify-between text-xs font-semibold text-slate-300">
           <span>1 {weightEdit.unit} narxi:</span>
@@ -310,16 +310,16 @@ ${node.innerHTML}
           </span>
         </div>
         <label className="block text-[10px] font-black text-emerald-400 uppercase tracking-wider mb-1.5">
-          Summa (so'm) — shuni yozing:
+          Summa (so‘m)
         </label>
         <input
-          type="number"
-          step="1"
-          min="0"
-          inputMode="numeric"
+          type="text"
+          inputMode="decimal"
+          aria-label="Taom summasi"
+          disabled={savingWeight}
           autoFocus
           value={priceValue}
-          onChange={(e) => setPriceValue(e.target.value)}
+          onChange={event => { const values = convertWeightedInput(weightEdit, 'price', event.target.value); setWeightEditedField('price'); setPriceValue(values.price); setWeightValue(values.weight); }}
           onKeyDown={(e) => { if (e.key === 'Enter') handleSaveWeight(); }}
           placeholder="masalan: 204000"
           className="w-full p-3.5 rounded-xl bg-slate-950 border-2 border-emerald-600 text-3xl text-white font-mono font-black text-center focus:outline-none focus:border-emerald-400 mb-1"
@@ -329,24 +329,22 @@ ${node.innerHTML}
           if (pr <= 0) return <div className="mb-3" />;
           return (
             <p className="text-center text-sm font-black text-emerald-400 font-mono mb-3">
-              {Math.round(pr).toLocaleString()} so'm
+              {pr.toLocaleString(undefined, { maximumFractionDigits: 2 })} so'm
             </p>
           );
         })()}
         <label className="block text-[10px] font-black text-slate-500 uppercase tracking-wider mb-1.5">
-          Og'irlik ({weightEdit.unit}) — ixtiyoriy
+          Og‘irlik ({weightEdit.unit})
         </label>
         <input
-          type="number"
-          step="0.01"
-          min="0"
+          type="text"
           inputMode="decimal"
+          aria-label="Taom og‘irligi"
+          disabled={savingWeight}
           value={weightValue}
           onChange={(e) => {
-            const v = e.target.value;
-            setWeightValue(v);
-            const w = parseFloat(String(v).replace(',', '.'));
-            if (w > 0) setPriceValue(String(Math.round(w * (weightEdit.unit_price || 0))));
+            const values = convertWeightedInput(weightEdit, 'weight', e.target.value);
+            setWeightEditedField('weight'); setWeightValue(values.weight); setPriceValue(values.price);
           }}
           onKeyDown={(e) => { if (e.key === 'Enter') handleSaveWeight(); }}
           placeholder="masalan: 1.7"
@@ -582,13 +580,15 @@ ${node.innerHTML}
                                   name: item.name,
                                   unit: item.unit || 'kg',
                                   unit_price: item.unit_price || 0,
+                                  quantity: item.quantity,
                                 });
+                                setWeightEditedField(item.manual_price != null || !item.weight ? 'price' : 'weight');
                                 setWeightValue(item.weight ? String(item.weight) : '');
                                 setPriceValue(
                                   item.manual_price !== null && item.manual_price !== undefined
-                                    ? String(Math.round(item.manual_price))
+                                    ? String(item.manual_price)
                                     : item.total_price
-                                    ? String(Math.round(item.total_price))
+                                    ? String(item.total_price)
                                     : ''
                                 );
                               }}
@@ -602,7 +602,7 @@ ${node.innerHTML}
                               }`}
                             >
                               {item.manual_price !== null && item.manual_price !== undefined
-                                ? `💰 ${Math.round(item.manual_price).toLocaleString()} ✎` +
+                                ? `💰 ${Number(item.manual_price).toLocaleString(undefined, { maximumFractionDigits: 2 })} ✎` +
                                   (item.weight > 0 ? ` · ${item.weight} ${item.unit || 'kg'}` : '')
                                 : item.weight > 0
                                 ? `⚖️ ${item.weight} ${item.unit || 'kg'} ✎`
@@ -649,7 +649,7 @@ ${node.innerHTML}
                         {/* Mijoz taomni qaytarib bersa shu tugma bilan
                             hisobdan olib tashlanadi. Chop etilgan chekka
                             tushmaydi (bill-remove-btn yashiriladi). */}
-                        {isStaff && (item.order_item_ids?.length || item.order_item_id) && (
+                        {isStaff && canCancelKitchenItems(user) && (item.order_item_ids?.length || item.order_item_id) && (
                           <button
                             type="button"
                             onClick={() => handleRemoveItem(item)}

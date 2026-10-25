@@ -19,7 +19,8 @@ async def kitchen_orders(db=Depends(get_db), user=Depends(require_role('chef', '
     orders = (await db.scalars(select(Order).options(
         selectinload(Order.items).selectinload(OrderItem.menu_item),
         selectinload(Order.table), selectinload(Order.waiter)).where(
-            Order.restaurant_id == user.restaurant_id, Order.is_paid == False,
-            Order.status.notin_([OrderStatus.PAID, OrderStatus.CANCELLED]),
-            Order.items.any(OrderItem.sent_quantity > 0)).order_by(Order.created_at, Order.id))).all()
+            Order.restaurant_id == user.restaurant_id,
+            Order.status != OrderStatus.CANCELLED,
+            Order.items.any(OrderItem.sent_quantity > OrderItem.prepared_quantity)
+        ).order_by(Order.created_at, Order.id))).all()
     return [build_order_response(order) for order in orders]

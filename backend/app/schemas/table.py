@@ -19,10 +19,10 @@ class TableCreate(TableBase):
 
 
 class TableUpdate(BaseModel):
-    number: Optional[int] = None
+    number: Optional[int] = Field(None, gt=0)
     name: Optional[str] = None
     room: Optional[str] = None
-    capacity: Optional[int] = None
+    capacity: Optional[int] = Field(None, gt=0)
     status: Optional[TableStatus] = None
     is_active: Optional[bool] = None
     reserved_by_name: Optional[str] = None

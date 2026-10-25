@@ -24,6 +24,15 @@ from app.core.sms_telegram import send_sms
 router = APIRouter(prefix="/debts", tags=["📒 Qarzlar (Nasiya Daftari)"])
 
 
+def validate_debt_customer(name, phone):
+    name, phone = (name or '').strip(), (phone or '').strip()
+    if len(name) < 2 or name.lower() in {"noma'lum mijoz", "nomalum mijoz", "noma'lum", "nomalum", "unknown", "none"}:
+        raise HTTPException(400, "Nasiya uchun mijozning haqiqiy ismini kiriting")
+    if len(''.join(c for c in phone if c.isdigit())) < 7:
+        raise HTTPException(400, "Nasiya uchun mijoz telefon raqamini kiriting")
+    return name, phone
+
+
 @router.get("/", response_model=List[DebtResponse], summary="Qarzlar ro'yxati")
 async def list_debts(
     restaurant_id: int,
@@ -89,8 +98,7 @@ async def create_debt(
     current_user: User = Depends(require_role("admin", "cashier", "developer")),
 ):
     """Yangi qarzdor qaydini yaratish (faqat admin, cashier, developer)"""
-    c_name = (payload.customer_name or "").strip()
-    c_phone = (payload.customer_phone or "").strip()
+    c_name, c_phone = validate_debt_customer(payload.customer_name, payload.customer_phone)
 
     invalid_names = {"noma'lum mijoz", "nomalum mijoz", "noma'lum", "nomalum", "unknown", "none"}
     if not c_name or c_name.lower() in invalid_names:
@@ -109,6 +117,16 @@ async def create_debt(
     current_role = current_user.role.value if hasattr(current_user.role, "value") else str(current_user.role)
     if current_role != "developer" and current_user.restaurant_id:
         restaurant_id = current_user.restaurant_id
+
+    # Linked debts are created exclusively by checkout, in the same transaction
+    # as the final amount and receipt. Manual entries cannot pre-empt checkout.
+    if payload.order_id is not None:
+        from app.models.order import Order
+        linked = await db.scalar(select(Order.id).where(
+            Order.id == payload.order_id, Order.restaurant_id == restaurant_id))
+        if linked is None:
+            raise HTTPException(404, "Buyurtma ushbu restoranda topilmadi")
+        raise HTTPException(409, "Buyurtma nasiyasini kassa to'lov oynasida rasmiylashtiring")
 
     debt = Debt(
         restaurant_id=restaurant_id,
@@ -272,8 +290,12 @@ async def delete_debt(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_role("admin", "developer")),
 ):
+    await lock_rows(db, Debt, [debt_id])
     result = await db.execute(select(Debt).where(Debt.id == debt_id))
     debt = result.scalar_one_or_none()
     if not debt:
         raise HTTPException(status_code=404, detail="Qarz topilmadi")
+    if debt.order_id is not None or (debt.paid_amount or 0) > 0 or await db.scalar(
+            select(DebtPaymentRecord.id).where(DebtPaymentRecord.debt_id == debt_id).limit(1)):
+        raise HTTPException(409, "To'lov tarixi yoki buyurtmasi bor qarzni o'chirish mumkin emas")
     await db.delete(debt)

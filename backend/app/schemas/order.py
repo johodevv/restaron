@@ -139,7 +139,7 @@ class OrderCheckoutRequest(BaseModel):
     card_amount: float = Field(default=0.0, ge=0, le=10_000_000_000)
     click_amount: float = Field(default=0.0, ge=0, le=10_000_000_000)
     debt_amount: float = Field(default=0.0, ge=0, le=10_000_000_000)
-    discount: float = Field(default=0.0, ge=0)
+    discount: float = Field(default=0.0, ge=0, le=10_000_000_000, allow_inf_nan=False)
     service_fee_percent: Optional[float] = Field(default=None, ge=0, le=100)
     # Qarz (Nasiya) uchun ma'lumotlar
     debt_customer_name: Optional[str] = Field(default=None, max_length=100)
@@ -289,7 +289,7 @@ class TableBillResponse(BaseModel):
 
 
 class WaiterCallResponse(BaseModel):
-    id: int  # Notification ID or synthetic ID
+    id: int  # Positive: Notification.id; negative: legacy Order.id.
     type: str = "call_waiter"
     table_id: int
     table_number: int

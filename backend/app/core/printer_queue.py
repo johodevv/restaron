@@ -299,11 +299,15 @@ async def _worker_loop():
 
             now = datetime.now(timezone.utc)
             async with AsyncSessionLocal() as session:
+                # Select the oldest due job per configured printer before the
+                # global batch limit; a broken printer cannot hide another queue.
+                heads = (select(func.min(PrintJob.id)).where(
+                    PrintJob.status == 'pending', PrintJob.next_attempt_at <= now
+                ).group_by(PrintJob.printer_name))
                 stmt = (
                     select(PrintJob)
                     .where(
-                        PrintJob.status == "pending",
-                        PrintJob.next_attempt_at <= now,
+                        PrintJob.id.in_(heads),
                     )
                     .order_by(PrintJob.id.asc())
                     .limit(50)

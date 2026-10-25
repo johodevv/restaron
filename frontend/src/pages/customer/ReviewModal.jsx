@@ -4,7 +4,7 @@ import api from '../../utils/api';
 import confetti from 'canvas-confetti';
 import { X, Heart, Send, CheckCircle2, Loader2 } from 'lucide-react';
 
-export const ReviewModal = ({ isOpen, onClose, order }) => {
+export const ReviewModal = ({ isOpen, onClose, order, qrToken }) => {
   const [foodRating, setFoodRating] = useState(5);
   const [serviceRating, setServiceRating] = useState(5);
   const [comment, setComment] = useState('');
@@ -22,6 +22,7 @@ export const ReviewModal = ({ isOpen, onClose, order }) => {
       await api.post('/reviews/', {
         restaurant_id: order.restaurant_id,
         order_id: order.id,
+        qr_token: qrToken,
         waiter_id: order.waiter_id || undefined,
         customer_name: customerName.trim() || undefined,
         food_rating: foodRating,

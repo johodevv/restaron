@@ -1,46 +1,9 @@
 @echo off
-chcp 65001 >nul
-setlocal enabledelayedexpansion
-title RestAron - Xizmatni To'xtatish
-color 0C
-
-REM  Avtomatik ishga tushadigan RestAron xizmatini to'xtatadi.
-REM  Ma'lumotlar bazasi (backend\restaron.db) O'CHIRILMAYDI.
-
-net session >nul 2>&1
-if %errorLevel% neq 0 (
-    echo  XATO: Administrator huquqi kerak.
-    echo  O'ng tugma -^> "Run as administrator".
-    pause
-    exit /b 1
-)
-
+setlocal DisableDelayedExpansion
 cd /d "%~dp0"
-
-echo.
-echo  RestAron xizmati to'xtatilmoqda...
-echo.
-
-REM Rejalashtirilgan vazifani to'xtatish
-schtasks /End /TN "RestAron Server" >nul 2>&1
-schtasks /Delete /TN "RestAron Server" /F >nul 2>&1
-
-REM Jarayonlarni yopish
-taskkill /F /FI "IMAGENAME eq python.exe" /FI "WINDOWTITLE eq RestAron*" >nul 2>&1
-for /f "tokens=2" %%p in ('tasklist /FI "IMAGENAME eq python.exe" /FO LIST ^| findstr PID') do (
-    taskkill /F /PID %%p >nul 2>&1
-)
-taskkill /F /IM cloudflared.exe /T >nul 2>&1
-
-REM Kompyuter yonganda saytni ochadigan yozuvni ham olib tashlaymiz,
-REM aks holda server o'chiq bo'lsa ham brauzer har safar ochilaveradi.
-set "STARTUP_FILE=%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\RestAron saytni ochish.cmd"
-if exist "%STARTUP_FILE%" del /f /q "%STARTUP_FILE%" >nul 2>&1
-
-echo  Xizmat to'xtatildi va avtomatik ishga tushish o'chirildi.
-echo.
-echo  Ma'lumotlar saqlanib qoldi: backend\restaron.db
-echo.
-echo  Qayta yoqish uchun: 2_SERVERNI_ORNATISH.bat
-echo.
+echo RestAron serverini to'xtatish va avtomatik ishga tushishni bekor qilish.
+echo Faqat shu loyihaning jarayonlari yopiladi. Baza va buyurtmalar saqlanadi.
+"%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File "%~dp0tools\windows_autostart.ps1" -Remove
+set "result=%errorlevel%"
 pause
+exit /b %result%

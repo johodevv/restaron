@@ -11,7 +11,7 @@ class DebtCreate(BaseModel):
     order_id: Optional[int] = None
     customer_name: str = Field(..., min_length=2)
     customer_phone: str = Field(..., min_length=7)
-    amount: float = Field(..., gt=0)
+    amount: float = Field(..., gt=0, le=10_000_000_000, allow_inf_nan=False)
     due_date: Optional[datetime] = None
     note: Optional[str] = None
 
@@ -26,7 +26,7 @@ class DebtUpdate(BaseModel):
 
 
 class DebtPayment(BaseModel):
-    payment_amount: float = Field(..., gt=0)
+    payment_amount: float = Field(..., gt=0, le=10_000_000_000, allow_inf_nan=False)
     note: Optional[str] = None
 
 
