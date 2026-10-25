@@ -480,8 +480,8 @@ async def test_g_tokenless_websocket_never_receives_restaurant_order_broadcast()
 
     # 1. Tokensiz restoran kanaliga ulanishga urinish -> 4403 bilan yopilishi shart
     with pytest.raises(WebSocketDisconnect) as exc_info:
-        with client.websocket_connect("/api/v1/ws/1"):
-            pass
+        with client.websocket_connect("/api/v1/ws/1") as rejected:
+            rejected.receive_json()
     assert exc_info.value.code == 4403
 
     # 2. Stol orqali tokensiz guest sifatida ulanish

@@ -62,10 +62,13 @@ async def websocket_endpoint(
 
     has_token = token is not None and token.strip() != ""
 
+    # A close before accept becomes an opaque HTTP 403/1006 in a browser.
+    # Accept rejected handshakes only to send a close code; never register them.
     if has_token:
         user = await authenticate_ws_token(token)
         # 1. Token berilgan, lekin yaroqsiz yoki muddati o'tgan bo'lsa guest sifatida ulama — 4401 kodi bilan yop.
         if not user:
+            await websocket.accept()
             await websocket.close(code=4401)
             return
 
@@ -74,6 +77,7 @@ async def websocket_endpoint(
 
         # 2. Xodim tokeni uchun user.restaurant_id yo'ldagi restaurant_id ga teng bo'lishi shart (developer istisno); bo'lmasa 4403 bilan yop.
         if not is_dev and user.restaurant_id != restaurant_id:
+            await websocket.accept()
             await websocket.close(code=4403)
             return
 
@@ -84,6 +88,7 @@ async def websocket_endpoint(
         # Token umuman yo'q bo'lsa faqat guest (mijoz) rejimi.
         # 3. Guest uchun table_id majburiy va shu restoranga tegishli stol bo'lishi kerak (bazada tekshir); aks holda 4403.
         if not table_id:
+            await websocket.accept()
             await websocket.close(code=4403)
             return
 
@@ -96,6 +101,7 @@ async def websocket_endpoint(
             )
             table_row = result.scalar_one_or_none()
             if not table_row:
+                await websocket.accept()
                 await websocket.close(code=4403)
                 return
 

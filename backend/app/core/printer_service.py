@@ -27,6 +27,10 @@ def _wrap_words(text: str, width: int, indent: str = "") -> List[str]:
     """
     text = str(text).strip()
     width = max(4, int(width))
+    if indent:
+        indent = indent[:max(0, width - 4)]
+        parts = _wrap_words(text, width - len(indent))
+        return [parts[0]] + [indent + part for part in parts[1:]]
 
     # Narx "120 000" ko'rinishida yoziladi — minglik ajratgich BO'SH JOY.
     # Shuning uchun oddiy so'z bo'yicha bo'lish raqamni ikkiga uzib
@@ -56,9 +60,7 @@ def _wrap_words(text: str, width: int, indent: str = "") -> List[str]:
         cur = word
     if cur or not out:
         out.append(cur)
-    if not indent:
-        return out
-    return [out[0]] + [f"{indent}{ln}"[:width] for ln in out[1:]]
+    return out
 
 
 def _name_amount_block(name: str, right: str, width: int) -> List[str]:
@@ -150,17 +152,10 @@ def draw_table(columns: List[Dict[str, Any]], rows: List[List[str]],
         if row_sep and r_no > 0:
             out.append(line(BOX["ml"], BOX["mm"], BOX["mr"]))
         cells = list(row) + [""] * (len(widths) - len(row))
-        wrap_idx = next((i for i, c in enumerate(columns) if c.get("wrap")), 0)
-        parts = _wrap_words(str(cells[wrap_idx]), widths[wrap_idx]) or [""]
-        for n, piece in enumerate(parts):
-            vals = []
-            for i, w in enumerate(widths):
-                if i == wrap_idx:
-                    vals.append(_fit(piece, w, columns[i].get("align", "left")))
-                elif n == 0:
-                    vals.append(_fit(cells[i], w, columns[i].get("align", "right")))
-                else:
-                    vals.append(" " * w)
+        parts = [_wrap_words(str(value), width) for value, width in zip(cells, widths)]
+        for n in range(max(map(len, parts))):
+            vals = [_fit(values[n] if n < len(values) else "", width, columns[i].get("align", "left"))
+                    for i, (values, width) in enumerate(zip(parts, widths))]
             out.append(BOX["v"] + BOX["v"].join(vals) + BOX["v"])
 
     out.append(line(BOX["bl"], BOX["bm"], BOX["br"]))
@@ -222,6 +217,8 @@ def _amount_line(label: str, amount: str, width: int = 42) -> str:
     """
     label = str(label)
     amount = str(amount)
+    if len(amount) > width and len(amount.replace(" ", "")) <= width:
+        amount = amount.replace(" ", "")
     if len(label) + 1 + len(amount) <= width:
         return _pad_line(label, amount, width)
 
@@ -251,22 +248,7 @@ def _center_line(text: str, width: int = 42) -> str:
         pad = (width - len(text)) // 2
         return f"{' ' * pad}{text}"
 
-    lines = []
-    current = ""
-    for word in text.split():
-        if not current:
-            current = word[:width]
-        elif len(current) + 1 + len(word) <= width:
-            current = f"{current} {word}"
-        else:
-            lines.append(current)
-            current = word[:width]
-    if current:
-        lines.append(current)
-
-    return "\n".join(
-        f"{' ' * ((width - len(ln)) // 2)}{ln}" for ln in lines
-    )
+    return "\n".join(line.center(width) for line in _wrap_words(text, width))
 
 
 def latin_to_cyrillic(text: Optional[str]) -> str:
@@ -462,10 +444,6 @@ def build_escpos_payload(raw_text: str, cut_paper: bool = True,
     qolgan kichik shrift (Font B) bilan chop etilishi mumkin.
     """
     clean_text = clean_for_cp866(raw_text or "")
-    try:
-        body = clean_text.encode("cp866", errors="replace")
-    except Exception:
-        body = (raw_text or "").encode("utf-8", errors="replace")
 
     # MUHIM: Xitoyda ishlab chiqarilgan printerlarda ko'pincha IEROGLIF
     # (Kanji/GB) rejimi yoqilgan bo'ladi -- har IKKI bayt bitta ieroglif
@@ -499,10 +477,43 @@ def build_escpos_payload(raw_text: str, cut_paper: bool = True,
 
     payload = (ESC_INIT + FS_KANJI_OFF + FS_KANJI_OFF2
                + esc_codepage + ESC_FONT_A + gs_size + esc_bold
-               + esc_char_sp + esc_line_sp + body)
+               + esc_char_sp + esc_line_sp + _encode_receipt_lines(clean_text, spec, spacing, ls_dots))
     if cut_paper:
         payload += ESC_CUT
     return payload
+
+
+def receipt_line_roles(text: str) -> List[tuple]:
+    """Plain-text roles shared by the encoder and receipt verification."""
+    result = []
+    amount_next = False
+    for line in text.splitlines(keepends=True):
+        stripped = line.strip()
+        total = stripped.startswith(("ЖАМИ:", "ЖАМИ ТЎЛОВ:", "ЖАМИ ТУЛОВ:", "ҚОЛГАН ТЎЛОВ:", "КОЛГАН ТУЛОВ:"))
+        amount = amount_next and bool(stripped) and stripped.replace(" ", "").replace(",", "").replace(".", "").isdigit()
+        role = "total" if total or amount else "table" if stripped and stripped[0] in "┌├└│" else "body"
+        result.append((line, role))
+        amount_next = total and stripped.endswith(":")
+    return result
+
+
+def _encode_receipt_lines(text: str, spec: dict, spacing: int, line_dots: Optional[int]) -> bytes:
+    body = bytearray()
+    for line, role in receipt_line_roles(text):
+        if role == "table":
+            # Extra character/line spacing breaks continuous CP866 box glyphs.
+            body.extend(b"\x1b\x20\x00" + b"\x1b\x33" + bytes([FONT_A_H * spec["h"]]))
+        elif role == "total":
+            height = min(8, spec["h"] + 1)
+            size = ((spec["w"] - 1) << 4) | (height - 1)
+            # Keep width unchanged so the amount never falls off the paper.
+            body.extend(b"\x1d\x21" + bytes([size]) + b"\x1b\x2d\x01")
+            body.extend(b"\x1b\x33" + bytes([min(255, FONT_A_H * height + 6)]))
+        body.extend(line.encode("cp866", errors="replace"))
+        if role in ("table", "total"):
+            body.extend(b"\x1b\x20" + bytes([spacing]) + b"\x1d\x21" + bytes([spec["gs"]]) + b"\x1b\x2d\x00")
+            body.extend(b"\x1b\x33" + bytes([line_dots]) if line_dots is not None else b"\x1b\x32")
+    return bytes(body)
 
 
 def receipt_columns(paper_width: int, font_size: str = DEFAULT_FONT_SIZE,
@@ -794,12 +805,12 @@ def format_pre_check(
             name = f"{name} [{latin_to_cyrillic(size)}]"
         qty = it.get("quantity") or 1
         unit_price = it.get("unit_price") or it.get("price") or 0.0
-        line_total = it.get("total_price") or (qty * unit_price)
+        line_total = it["total_price"] if it.get("total_price") is not None else (qty * unit_price)
         wt = it.get("weight")
         manual = it.get("manual_price")
         unit_cyr = latin_to_cyrillic(it.get("unit") or "kg")
 
-        qty_cell = f"{wt:g} {unit_cyr}" if (it.get("is_weighted") and wt) else str(qty)
+        qty_cell = f"{float(wt) * qty:g} {unit_cyr}" if (it.get("is_weighted") and wt) else str(qty)
         price_cell = f"{unit_price:,.0f}".replace(",", " ")
         total_cell = f"{line_total:,.0f}".replace(",", " ")
 
@@ -844,7 +855,7 @@ def format_pre_check(
                 {"title": "СУММА", "w": sum_w, "align": "right"},
             ]
             data = [[r[0], r[1], r[3]] for r in rows]
-        else:
+        elif name2 >= 8:
             # Juda tor chek (katta shrift) — soni nom ichiga kiritiladi,
             # shunda nomga ko'proq joy qoladi va so'zlar uzilmaydi.
             cols = [
@@ -858,10 +869,19 @@ def format_pre_check(
                     return name
                 if qty.replace(".", "", 1).isdigit():
                     return f"{name} x{qty}"
-                return f"{name} ({qty})"
+                return f"{name} ({qty.replace(' ', '')})"
 
             data = [[_narrow_name(r[0], r[1]), r[3]] for r in rows]
-        lines.extend(draw_table(cols, data, col_width))
+        else:
+            cols = None
+        if cols:
+            lines.extend(draw_table(cols, data, col_width))
+        else:
+            for nm, q, pr, tot in rows:
+                lines.extend(_wrap_words(nm, col_width))
+                lines.extend(_wrap_words(f"Миқдор: {q}", col_width))
+                lines.append(_amount_line("Сумма:", tot, col_width))
+                lines.append(sep)
     elif rows:
         # Eng katta shriftda ramka sig'maydi — oddiy ikki qatorli ko'rinish.
         lines.append("Таомлар:")
@@ -874,7 +894,7 @@ def format_pre_check(
     # izohlar sig'masligi uchun qisqa yozuvlardan foydalanamiz.
     narrow = col_width < 32
     sub_str = f"{subtotal:,.0f}".replace(",", " ")
-    lines.append(_amount_line("Жами:" if narrow else "Жами (Итого):", sub_str, col_width))
+    lines.append(_amount_line("Таомлар:" if narrow else "Таомлар ҳисоби:", sub_str, col_width))
 
     if service_fee_percent > 0:
         # MIJOZ CHEKIDA xizmat haqining SUMMASI yozilmaydi — faqat

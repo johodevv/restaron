@@ -8,6 +8,7 @@ import CheckoutModal from '../../components/CheckoutModal';
 import ThermalReceiptModal from '../../components/ThermalReceiptModal';
 import PrinterStatusBanner from '../../components/PrinterStatusBanner';
 import TablesTab from './TablesTab';
+import StaffDismissDialog from '../../components/StaffDismissDialog';
 import { resolveQrBaseUrl } from '../../utils/tableDirectory';
 import { DebtsTab } from './DebtsTab';
 import { ReceiptsArchiveTab } from './ReceiptsArchiveTab';
@@ -94,6 +95,10 @@ export const AdminDashboard = () => {
   const [thermalTitle, setThermalTitle] = useState('Chek');
   const [selectedBillTable, setSelectedBillTable] = useState(null);
   const [staffActionLoading, setStaffActionLoading] = useState(null);
+  const [staffView, setStaffView] = useState('active');
+  const [staffNotice, setStaffNotice] = useState(null);
+  const [staffToDismiss, setStaffToDismiss] = useState(null);
+  const [staffDismissError, setStaffDismissError] = useState('');
 
   // Booking Modal state
   const [bookingModalOpen, setBookingModalOpen] = useState(false);
@@ -251,33 +256,36 @@ export const AdminDashboard = () => {
     }
   };
 
-  // Handle Staff Deletion (Bo'shatish)
-  const handleDeleteStaff = async (staffId, staffName) => {
-    if (!window.confirm(`Haqiqatan ham "${staffName}" xodimini bo'shatish (akkauntini o'chirish)ni tasdiqlaysizmi?`)) {
-      return;
-    }
-    setStaffActionLoading(staffId);
+  // A dismissed account remains in history and is shown in the inactive list.
+  const handleDeleteStaff = (staffId) => {
+    setStaffDismissError('');
+    setStaffToDismiss(staff.find(person => person.id === staffId) || null);
+  };
+  const confirmDismissStaff = async () => {
+    if (!staffToDismiss || staffActionLoading !== null) return;
+    const target = staffToDismiss;
+    setStaffActionLoading(target.id);
+    setStaffDismissError('');
     try {
-      await api.delete(`/users/${staffId}`);
-      await loadAll();
+      await api.delete(`/users/${target.id}`);
+      setStaff(previous => previous.map(person => person.id === target.id ? { ...person, is_active: false } : person));
+      setStaffToDismiss(null);
+      setStaffNotice({ type: 'success', message: `${target.full_name || target.username} bo‘shatildi. Tizimga kirishi yopildi; tarixi “Nofaol” bo‘limida saqlanadi.` });
     } catch (err) {
-      alert(err.message || 'Xodimni o\'chirishda xatolik yuz berdi');
-    } finally {
-      setStaffActionLoading(null);
-    }
+      setStaffDismissError(err.message || 'Xodimni bo‘shatib bo‘lmadi. Qayta urinib ko‘ring.');
+    } finally { setStaffActionLoading(null); }
   };
 
-  // Handle Staff Active Status Toggle
   const handleToggleStaffActive = async (staffId, currentStatus) => {
+    if (staffActionLoading !== null) return;
     setStaffActionLoading(staffId);
     try {
-      await api.patch(`/users/${staffId}`, { is_active: !currentStatus });
-      await loadAll();
+      const updated = await api.patch(`/users/${staffId}`, { is_active: !currentStatus });
+      setStaff(previous => previous.map(person => person.id === staffId ? updated : person));
+      setStaffNotice({ type: 'success', message: currentStatus ? 'Xodim nofaol qilindi.' : 'Xodim qayta faollashtirildi. Endi yangi login bilan kirishi mumkin.' });
     } catch (err) {
-      alert(err.message || 'Holatni o\'zgartirishda xatolik');
-    } finally {
-      setStaffActionLoading(null);
-    }
+      setStaffNotice({ type: 'error', message: err.message || 'Holatni o‘zgartirib bo‘lmadi.' });
+    } finally { setStaffActionLoading(null); }
   };
 
   // Handle Resolve Call
@@ -904,7 +912,7 @@ export const AdminDashboard = () => {
             <div className="p-5 rounded-3xl glass-card border border-theme-border bg-theme-surface/80">
               <span className="text-xs text-theme-muted font-medium">Faol Xodimlar:</span>
               <div className="text-2xl font-black text-amber-400 mt-1">
-                {staff.length} nafar
+                {staff.filter(person => person.is_active).length} nafar
               </div>
             </div>
           </div>
@@ -1373,11 +1381,19 @@ export const AdminDashboard = () => {
             </button>
           </form>
 
+          <div className="space-y-3">
+            <div role="group" aria-label="Xodimlar holati" className="flex flex-wrap gap-2">
+              {[['active', 'Faol', staff.filter(person => person.is_active).length], ['inactive', 'Nofaol', staff.filter(person => !person.is_active).length]].map(([value, name, count]) => <button type="button" key={value} aria-pressed={staffView === value} onClick={() => setStaffView(value)} className={`min-h-[48px] px-5 rounded-xl font-bold border ${staffView === value ? 'bg-emerald-700 border-emerald-400 text-white' : 'bg-slate-800 border-slate-600 text-slate-200'}`}>{name} ({count})</button>)}
+            </div>
+            <p className="text-sm text-theme-muted">{staffView === 'active' ? 'Ishlayotgan xodimlar. O‘z hisobingizni bo‘shatib bo‘lmaydi.' : 'Nofaol va bo‘shatilgan xodimlar. Buyurtmalar tarixi saqlangan.'}</p>
+            {staffNotice && <p role={staffNotice.type === 'error' ? 'alert' : 'status'} className={`rounded-xl border px-4 py-3 text-sm ${staffNotice.type === 'error' ? 'bg-red-950/40 border-red-700 text-red-200' : 'bg-emerald-950/40 border-emerald-700 text-emerald-200'}`}>{staffNotice.message}</p>}
+          </div>
           {/* Staff List */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {staff.map((s) => (
+            {staff.filter(person => staffView === 'active' ? person.is_active : !person.is_active).map((s) => (
               <div
                 key={s.id}
+                data-testid={`staff-card-${s.id}`}
                 className={`p-5 rounded-3xl glass-card border transition-all flex flex-col justify-between gap-4 shadow-md ${
                   s.is_active ? 'border-theme-border bg-theme-surface/75' : 'border-red-500/30 bg-red-950/10 opacity-75'
                 }`}
@@ -1397,34 +1413,13 @@ export const AdminDashboard = () => {
                   </div>
                 </div>
 
-                {/* Staff Actions: Toggle Active + Delete / Bo'shatish */}
-                <div className="pt-3 border-t border-theme-border/60 flex items-center justify-between gap-2">
-                  <button
-                    onClick={() => handleToggleStaffActive(s.id, s.is_active)}
-                    disabled={staffActionLoading === s.id}
-                    className={`px-3 py-1.5 rounded-xl border text-xs font-semibold flex items-center gap-1.5 transition-all ${
-                      s.is_active
-                        ? 'bg-amber-500/10 border-amber-500/30 text-amber-300 hover:bg-amber-500/20'
-                        : 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300 hover:bg-emerald-500/20'
-                    }`}
-                  >
-                    <Power className="w-3.5 h-3.5" />
-                    <span>{s.is_active ? 'Nofaol qilish' : 'Faollashtirish'}</span>
-                  </button>
-
-                  <button
-                    onClick={() => handleDeleteStaff(s.id, s.full_name || s.username)}
-                    disabled={staffActionLoading === s.id}
-                    title="Xodimni bo'shatish (O'chirish)"
-                    className="px-3 py-1.5 rounded-xl bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 text-red-400 hover:text-red-300 text-xs font-bold flex items-center gap-1.5 transition-all"
-                  >
-                    <UserMinus className="w-3.5 h-3.5" />
-                    <span>Bo'shatish</span>
-                  </button>
+                <div className="pt-3 border-t border-theme-border/60 flex items-center gap-2">
+                  {s.id === user?.id ? <span className="text-sm text-theme-muted">Bu sizning hisobingiz</span> : s.is_active ? <button type="button" onClick={() => handleDeleteStaff(s.id)} disabled={staffActionLoading !== null} className="min-h-[48px] px-4 rounded-xl bg-red-500/10 border border-red-500/40 text-red-300 font-bold text-sm flex items-center gap-2 disabled:opacity-50"><UserMinus size={18} />Bo‘shatish</button> : <button type="button" onClick={() => handleToggleStaffActive(s.id, false)} disabled={staffActionLoading !== null} className="min-h-[48px] px-4 rounded-xl bg-emerald-500/10 border border-emerald-500/40 text-emerald-300 font-bold text-sm flex items-center gap-2 disabled:opacity-50"><Power size={18} />Qayta faollashtirish</button>}
                 </div>
               </div>
             ))}
           </div>
+          {!staff.some(person => staffView === 'active' ? person.is_active : !person.is_active) && <p className="py-8 text-center text-theme-muted">Bu bo‘limda xodim yo‘q.</p>}
         </div>
       )}
 
@@ -2018,6 +2013,7 @@ export const AdminDashboard = () => {
           loadAll();
         }}
       />
+      <StaffDismissDialog staff={staffToDismiss} busy={staffActionLoading !== null} error={staffDismissError} onClose={() => { if (staffActionLoading === null) setStaffToDismiss(null); }} onConfirm={confirmDismissStaff} />
     </div>
   );
 };

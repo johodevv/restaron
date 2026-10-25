@@ -1,4 +1,4 @@
-"""Sent kitchen quantities cannot be removed from a bill without an administrator."""
+"""Kitchen cancellation roles; every sent-item correction is audited by the caller."""
 from fastapi import HTTPException
 
 
@@ -17,3 +17,9 @@ def require_kitchen_admin(user):
     role = user.role.value if hasattr(user.role, 'value') else str(user.role)
     if role not in ('admin', 'developer'):
         raise HTTPException(403, "Oshxonaga yuborilgan taomni faqat admin o‘chirishi yoki dona sonini kamaytirishi mumkin. Adminga murojaat qiling.")
+
+
+def require_kitchen_item_editor(user):
+    role = user.role.value if hasattr(user.role, 'value') else str(user.role)
+    if role not in ('admin', 'developer', 'waiter'):
+        raise HTTPException(403, "Oshxonaga yuborilgan taomni ofitsiant yoki admin o‘zgartirishi mumkin.")

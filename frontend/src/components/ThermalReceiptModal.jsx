@@ -2,6 +2,9 @@ import React, { useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Printer, X, Copy, Check, Zap, AlertCircle, CheckCircle } from 'lucide-react';
 import api from '../utils/api';
+import { receiptLines } from '../utils/receiptLines';
+
+const ReceiptText = ({ text }) => receiptLines(text).map((line, index) => <span key={index} className={line.total ? 'receipt-total-line' : line.table ? 'receipt-table-line' : undefined} style={{ display: 'block', minHeight: '1em' }}>{line.text || '\u00a0'}</span>);
 
 export const ThermalReceiptModal = ({
   isOpen,
@@ -15,6 +18,12 @@ export const ThermalReceiptModal = ({
   const [usbStatus, setUsbStatus] = useState(null); // { success: boolean, message: string }
 
   if (!isOpen || !rawText) return null;
+
+  // Use the available paper width: a 22-column large-font bill must not be
+  // printed at the same tiny size as a 44-column bill in the browser fallback.
+  const columns = Math.max(10, ...rawText.split('\n').map(line => line.length));
+  const printFontMm = Math.min(5, (paperWidth >= 80 ? 72 : 48) / (columns * .62));
+  const previewFontPx = Math.min(20, Math.max(10, 290 / (columns * .62)));
 
   /**
    * Chop etishdan oldin @page o'lchamini chekning HAQIQIY uzunligiga
@@ -105,8 +114,9 @@ export const ThermalReceiptModal = ({
           id="thermal-receipt-print-area"
           className="receipt-print"
           data-paper={paperWidth >= 80 ? '80' : '58'}
+          style={{ fontSize: `${printFontMm}mm` }}
         >
-          {rawText}
+          <ReceiptText text={rawText} />
         </div>,
         printRoot
       )}
@@ -153,9 +163,9 @@ export const ThermalReceiptModal = ({
         <div className="p-4 overflow-y-auto flex-1 bg-slate-950/70 flex justify-center">
           <div
             className="w-full bg-white text-black p-5 rounded shadow-lg font-mono text-[12px] leading-tight select-text whitespace-pre overflow-x-auto border-t-4 border-dashed border-slate-300"
-            style={{ maxWidth: paperWidth >= 80 ? '340px' : '260px' }}
+            style={{ maxWidth: paperWidth >= 80 ? '340px' : '260px', fontSize: `${previewFontPx}px` }}
           >
-            {rawText}
+            <ReceiptText text={rawText} />
           </div>
         </div>
 

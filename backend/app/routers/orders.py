@@ -17,7 +17,7 @@ from app.core.database import get_db
 from app.core.transactions import lock_rows
 from app.core.rate_limit import RateLimiter, get_client_ip
 from app.core.security import get_current_user, get_optional_current_user, require_role
-from app.core.kitchen_permissions import kitchen_sent_quantity, require_kitchen_admin
+from app.core.kitchen_permissions import kitchen_sent_quantity, require_kitchen_admin, require_kitchen_item_editor
 from app.models.order import Order, OrderItem, OrderStatus, CallStatus
 from app.models.menu import MenuItem, Category
 from app.models.table import Table, TableStatus
@@ -141,6 +141,7 @@ async def _send_cancellation_receipt(
         raise HTTPException(400, "Bekor qilish chekini yuborish uchun oshxona printerini sozlang")
     dish_name = getattr(menu_item, 'name_cyrillic', None) or getattr(menu_item, 'name', 'Taom')
     text = ("*** BEKOR QILINDI (OTMENA) ***\n"
+            f"Zona: {order.table.room if order.table else '—'}\n"
             f"Stol: #{order.table.number if order.table else order.order_number}\n"
             f"Ofitsiant: {waiter_name}\nTaom: {dish_name} (-{cancelled_qty} ta)\n"
             f"Vaqt: {datetime.now(UZ_TZ).strftime('%d.%m.%Y %H:%M')}\n\n\n")
@@ -1260,7 +1261,7 @@ async def update_item_quantity(
     # Oshxonaga ketgan taom tekshiruvi:
     sent_qty = kitchen_sent_quantity(order_item)
     if payload.quantity < sent_qty:
-        require_kitchen_admin(current_user)
+        require_kitchen_item_editor(current_user)
 
         # Admin oshxonaga ketgan taom sonini kamaytirsa
         cancelled_qty = sent_qty - payload.quantity
@@ -1375,7 +1376,7 @@ async def update_item_delta(
     # Natija 0 yoki undan kam bo'lsa -> delete_order_item mantiqi
     if new_quantity <= 0:
         if kitchen_sent_quantity(order_item):
-            require_kitchen_admin(current_user)
+            require_kitchen_item_editor(current_user)
 
             cancelled_qty = kitchen_sent_quantity(order_item)
             from app.core.audit import log_audit_event
@@ -1426,7 +1427,7 @@ async def update_item_delta(
 
         sent_qty = kitchen_sent_quantity(order_item)
         if new_quantity < sent_qty:
-            require_kitchen_admin(current_user)
+            require_kitchen_item_editor(current_user)
 
             cancelled_qty = sent_qty - new_quantity
             from app.core.audit import log_audit_event
@@ -1668,7 +1669,7 @@ async def delete_order_item(
         raise HTTPException(status_code=404, detail="Taom topilmadi")
 
     if kitchen_sent_quantity(order_item):
-        require_kitchen_admin(current_user)
+        require_kitchen_item_editor(current_user)
 
         cancelled_qty = kitchen_sent_quantity(order_item)
         from app.core.audit import log_audit_event
@@ -1830,7 +1831,7 @@ async def print_order_bill(
     restaurant = rest_res.scalar_one_or_none()
 
     rest_name = receipt_title(settings, restaurant)
-    table_disp = f"Stol #{order.table.number}" if order.table else (order.hall_name or "Olib ketish / Dastavka")
+    table_disp = f"{order.table.room or ''} #{order.table.number}".strip() if order.table else (order.hall_name or "Olib ketish / Dastavka")
     waiter_disp = (order.waiter.full_name or order.waiter.username) if order.waiter else (current_user.full_name or current_user.username)
 
     bill_text = format_pre_check(

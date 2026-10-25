@@ -13,6 +13,7 @@ import { useWebSocket } from '../../context/WebSocketContext';
 import { ThermalReceiptModal } from '../../components/ThermalReceiptModal';
 import CheckoutModal from '../../components/CheckoutModal';
 import PrinterStatusBanner from '../../components/PrinterStatusBanner';
+import WaiterTablePicker from '../../components/WaiterTablePicker';
 import confetti from 'canvas-confetti';
 import {
   UtensilsCrossed,
@@ -49,7 +50,7 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
   const { lang, getLocalizedName } = useLanguage();
   const label = text => posLabel(text, lang);
   const { user, isAdmin, isCashier, canCheckout: authCanCheckout } = useAuth();
-  const { addEventListener, playChime, connected, addNotification } = useWebSocket() || {};
+  const { addEventListener, playChime, connected, connectionError, addNotification } = useWebSocket() || {};
   const restaurantId = propRestaurantId || user?.restaurant_id || 1;
 
   // 7. Toast xabarlari (alert o'rniga)
@@ -97,7 +98,10 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
   // Stol zonasi (Zal / Terrassa / Ko'cha / VIP). '' — hammasi.
   const [selectedZone, setSelectedZone] = useState('');
   const [tableSearch, setTableSearch] = useState('');
+  const [transferZone, setTransferZone] = useState('');
+  const [transferSearch, setTransferSearch] = useState('');
   const [showTableBrowser, setShowTableBrowser] = useState(false);
+  const [browsingTables, setBrowsingTables] = useState(!isPrivileged);
   const [customerDetailsOpen, setCustomerDetailsOpen] = useState(false);
   const [showOrderPicker, setShowOrderPicker] = useState(false);
   const [orderSearch, setOrderSearch] = useState('');
@@ -210,26 +214,6 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
   // Waiter KPI today
   const [waiterKpi, setWaiterKpi] = useState({ sales: 0, orders: 0, share: 0 });
 
-  // ─── Stol zonalari (Zal / Terrassa / Ko'cha / VIP) ───────────
-  // Ilgari hamma stollar bitta ro'yxatda aralashib yotardi.
-  // Endi zonani bossangiz faqat o'sha zonaning stollari chiqadi.
-  const zoneNames = React.useMemo(() => {
-    const seen = [];
-    (tables || []).forEach((t) => {
-      const z = (t.room || '').trim();
-      if (z && !seen.includes(z)) seen.push(z);
-    });
-    return seen.sort((a, b) => a.localeCompare(b, 'uz'));
-  }, [tables]);
-
-  const zoneTables = React.useMemo(() => {
-    return (tables || []).filter(t => (!selectedZone || (t.room || '').trim() === selectedZone) &&
-      (!tableSearch.trim() || `${t.number} ${t.name || ''} ${t.room || ''}`.toLowerCase().includes(tableSearch.trim().toLowerCase())));
-  }, [tables, selectedZone, tableSearch]);
-
-  const zoneCount = (z) =>
-    z ? (tables || []).filter((t) => (t.room || '').trim() === z).length : (tables || []).length;
-
   // Har 30 soniyada stol bandlik vaqtini qayta hisoblash (jonli daqiqa oshishi)
   useEffect(() => {
     const timer = setInterval(() => setTick((t) => t + 1), 30000);
@@ -312,7 +296,7 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
       setReadyOrders(readyData || []);
 
       // Select first table if none selected
-      if (tablesData && tablesData.length > 0) {
+      if (isPrivileged && tablesData && tablesData.length > 0) {
         setSelectedTable(previous => previous || tablesData[0]);
       }
       setLoadError(null);
@@ -727,7 +711,7 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
     if (!activeOrder || !item || delta === 0) return;
     const newQty = item.quantity + delta;
     if (delta < 0 && !canDecreaseOrderItem(user, item)) {
-      showToast('Oshxonaga yuborilgan taomni faqat admin kamaytiradi.', 'warning'); return;
+      showToast('Oshxonaga yuborilgan taomni ofitsiant yoki admin kamaytiradi.', 'warning'); return;
     }
 
     // 1. Darhol ekranni yangilaymiz (0ms kechikish)
@@ -793,7 +777,7 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
     if (!activeOrder) return;
     const item = activeOrder.items?.find(line => line.id === itemId);
     if (!item || !canDeleteOrderItem(user, item)) {
-      showToast('Oshxonaga yuborilgan taomni faqat admin o‘chiradi.', 'warning'); return;
+      showToast('Oshxonaga yuborilgan taomni ofitsiant yoki admin o‘chiradi.', 'warning'); return;
     }
     const orderId = activeOrder.id;
 
@@ -1099,7 +1083,7 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
       {connected === false && (
         <div className="bg-amber-500/95 text-slate-950 font-bold px-4 py-2 text-center text-xs sm:text-sm flex items-center justify-center gap-2 shadow-md shrink-0 z-50">
           <RefreshCw className="w-4 h-4 animate-spin text-slate-950 shrink-0" />
-          <span>{label("Aloqa yo'q, qayta ulanmoqda...")}</span>
+          <span>{connectionError || label("Aloqa yo'q, qayta ulanmoqda...")}</span>
         </div>
       )}
 
@@ -1132,8 +1116,9 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
             onClick={() => {
               setActiveTab('pos');
               setOrderType('table');
+              setBrowsingTables(true);
             }}
-            className={`min-h-[44px] ${activeTab === 'pos' ? 'hidden lg:flex' : 'flex'} items-center gap-2 px-4 py-2 rounded-xl text-sm font-black transition-all active:scale-95 ${activeTab === 'pos'
+            className={`min-h-[44px] ${activeTab === 'pos' && browsingTables ? 'hidden lg:flex' : 'flex'} items-center gap-2 px-4 py-2 rounded-xl text-sm font-black transition-all active:scale-95 ${activeTab === 'pos'
                 ? 'bg-emerald-600 text-white shadow-md'
                 : 'bg-black/40 border border-emerald-800/40 text-slate-300 hover:text-white'
               }`}
@@ -1141,10 +1126,7 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
             <UtensilsCrossed className="w-4 h-4" />
             <span>{label("Stollar")}</span>
           </button>
-          {activeTab === 'pos' && <div className="lg:hidden flex gap-1.5">
-            <button onClick={() => setMobileTab('menu')} aria-pressed={mobileTab === 'menu'} className={`min-h-[44px] px-3 rounded-xl text-xs sm:text-sm font-bold ${mobileTab === 'menu' ? 'bg-emerald-600 text-white' : 'bg-slate-900 text-slate-400'}`}>{label('Taomlar')}</button>
-            <button onClick={() => setMobileTab('cart')} aria-pressed={mobileTab === 'cart'} className={`min-h-[44px] px-3 rounded-xl text-xs sm:text-sm font-bold ${mobileTab === 'cart' ? 'bg-emerald-600 text-white' : 'bg-slate-900 text-slate-400'}`}>{label('Savat')}{activeOrder?.items?.length ? `(${activeOrder.items.length})` : ''}</button>
-          </div>}
+
         </div>
 
         {/* Right Info: Chaqiruvlar badgi, Waiter Name, Sound toggle */}
@@ -1210,6 +1192,10 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
           </div>
         </div>
       </header>
+          {activeTab === 'pos' && !browsingTables && <div className="lg:hidden flex gap-2 px-3 py-2 bg-slate-900 border-b border-slate-800 shrink-0">
+            <button onClick={() => setMobileTab('menu')} aria-pressed={mobileTab === 'menu'} className={`flex-1 min-h-[44px] px-3 rounded-xl text-xs sm:text-sm font-bold ${mobileTab === 'menu' ? 'bg-emerald-600 text-white' : 'bg-slate-900 text-slate-400'}`}>{label('Taomlar')}</button>
+            <button onClick={() => setMobileTab('cart')} aria-pressed={mobileTab === 'cart'} className={`flex-1 min-h-[44px] px-3 rounded-xl text-xs sm:text-sm font-bold ${mobileTab === 'cart' ? 'bg-emerald-600 text-white' : 'bg-slate-900 text-slate-400'}`}>{label('Savat')}{activeOrder?.items?.length ? `(${activeOrder.items.length})` : ''}</button>
+          </div>}
 
       {/* ─── Main Content Tabs ───────────────────────────────────────── */}
       {activeTab === 'calls' ? (
@@ -1315,6 +1301,18 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
             </div>
           )}
         </div>
+      ) : browsingTables && orderType === 'table' ? (
+        <WaiterTablePicker tables={tables} zone={selectedZone} onZone={setSelectedZone} query={tableSearch} onQuery={setTableSearch} label={label} loading={loading} onSelect={table => {
+          latestRequestIdRef.current += 1;
+          selectionKeyRef.current = `table:${table.id}`;
+          setActiveOrder(null);
+          setSelectedTable(table);
+          setBrowsingTables(false);
+          setMobileTab('menu');
+          setSearchItemQuery('');
+          // Reopening the same table must also refresh its bill.
+          if (selectedTable?.id === table.id) fetchTableActiveOrder(table);
+        }} />
       ) : (
         /* ── POS EKRANI (stol zakazi) ──────────────────────────────── */
         <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
@@ -1446,7 +1444,7 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
                               </span>
                             );
                           })()}
-                          {kitchenSentQuantity(it) > 0 && !canDeleteOrderItem(user, it) && <span className="text-[10px] text-slate-400">{label('O‘chirish: faqat admin')}</span>}
+                          {kitchenSentQuantity(it) > 0 && !canDeleteOrderItem(user, it) && <span className="text-[10px] text-slate-400">{label('O‘chirish: ofitsiant yoki admin')}</span>}
                         </div>
                       </div>
 
@@ -1457,7 +1455,7 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
                           onClick={() => handleQtyChange(it, -1)}
                           disabled={!canDecreaseOrderItem(user, it)}
                           className="min-w-[36px] min-h-[44px] rounded-xl bg-emerald-700 hover:bg-emerald-600 text-white flex items-center justify-center font-black text-base active:scale-90 shadow-sm disabled:opacity-30 disabled:cursor-not-allowed"
-                          title={canDecreaseOrderItem(user, it) ? label('Kamaytirish') : label('Oshxonaga yuborilgan: faqat admin kamaytiradi')}
+                          title={canDecreaseOrderItem(user, it) ? label('Kamaytirish') : label('Oshxonaga yuborilgan: ofitsiant yoki admin kamaytiradi')}
                         >
                           -
                         </button>
@@ -1486,7 +1484,7 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
                           onClick={() => handleDeleteItem(it.id)}
                           disabled={!canDeleteOrderItem(user, it)}
                           className="min-w-[40px] min-h-[44px] rounded-xl text-slate-500 hover:text-red-400 hover:bg-red-500/10 active:scale-90 transition-all flex items-center justify-center disabled:opacity-30 disabled:cursor-not-allowed"
-                          title={canDeleteOrderItem(user, it) ? label("Taomni o'chirish") : label('Oshxonaga yuborilgan: faqat admin o‘chiradi')}
+                          title={canDeleteOrderItem(user, it) ? label("Taomni o'chirish") : label('Oshxonaga yuborilgan: ofitsiant yoki admin o‘chiradi')}
                         >
                           <Trash2 className="w-4 h-4" />
                         </button>
@@ -1548,20 +1546,7 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
                 </span>
               </div>
 
-              <select
-                value={selectedTable?.id || ''}
-                onChange={(e) => {
-                  const t = tables.find((x) => x.id === parseInt(e.target.value));
-                  if (t) setSelectedTable(t);
-                }}
-                className="min-h-[44px] bg-slate-800 text-sm font-bold text-white rounded-xl px-3 py-2 border border-slate-700 focus:outline-none focus:border-emerald-500"
-              >
-                {tables.map((tbl) => (
-                  <option key={tbl.id} value={tbl.id}>
-                    {tbl.room ? `${tbl.room} ` : ''}#{tbl.number} ({tbl.status === 'occupied' ? label("Band") : label("Bo'sh")})
-                  </option>
-                ))}
-              </select>
+              <button type="button" onClick={() => setBrowsingTables(true)} className="min-h-[48px] px-3 ml-2 shrink-0 rounded-xl bg-slate-800 border border-slate-600 text-sm font-bold">{label('Stolni almashtirish')}</button>
             </div>
 
             {/* Top Categories Strip */}
@@ -1642,7 +1627,7 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
                       }`}
                     >
                       {/* Thumbnail: Kattaroq rasm */}
-                      <div className="h-28 sm:h-32 xl:h-36 w-full rounded-2xl bg-slate-950 overflow-hidden relative mb-2.5 flex items-center justify-center border border-slate-800/80">
+                      <div className="h-20 sm:h-32 xl:h-36 w-full rounded-2xl bg-slate-950 overflow-hidden relative mb-2.5 flex items-center justify-center border border-slate-800/80">
                         {item.image_url ? (
                           <img
                             src={item.image_url}
@@ -1673,8 +1658,8 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
                       </h4>
 
                       {/* Price Badge and Plus button: Kattaroq, aniq ko'rinuvchi narx */}
-                      <div className="mt-3 flex items-center justify-between gap-2">
-                        <span className="px-3 py-1.5 rounded-xl bg-emerald-600 text-white font-black text-sm shadow-md font-mono">
+                      <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+                        <span className="px-2 py-1.5 rounded-xl bg-emerald-600 text-white font-bold text-xs sm:text-sm shadow-md font-mono break-words max-w-full">
                           {Math.round(item.price || 0).toLocaleString('uz-UZ')}{label("so'm")}</span>
                         <span className="w-11 h-11 min-h-[44px] rounded-xl bg-emerald-500/20 text-emerald-400 flex items-center justify-center text-lg font-black group-hover:bg-emerald-500 group-hover:text-slate-950 transition-colors shadow-sm shrink-0">
                           +
@@ -1755,23 +1740,11 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
             <h2 id="pos-table-picker-title" className="text-xl font-bold">{label('Stol tanlash')}</h2>
             <button type="button" aria-label={label('Yopish')} onClick={() => setShowTableBrowser(false)} className="w-11 h-11 flex items-center justify-center rounded-xl hover:bg-slate-800"><X size={22} /></button>
           </div>
-          <div className="px-4 pt-3 shrink-0">
-            <div className="relative"><Search className="absolute left-3 top-3.5 text-slate-400" size={19} /><input autoFocus aria-label={label('Stol qidirish')} placeholder={label('Stol raqami yoki zal...')} value={tableSearch} onChange={event => setTableSearch(event.target.value)} className="w-full h-12 pl-10 pr-3 rounded-xl bg-slate-900 border border-slate-700 focus:border-amber-500 outline-none text-base" /></div>
-            <div className="flex gap-2 overflow-x-auto py-3">
-              {['',...zoneNames].map(zone => <button key={zone} onClick={() => setSelectedZone(zone)} className={`min-h-[44px] shrink-0 px-4 rounded-xl text-sm font-bold ${selectedZone===zone ? 'bg-amber-500 text-black' : 'bg-slate-800 text-slate-200'}`}>{zone || label('Hammasi')} <span className="opacity-60">{zoneCount(zone)}</span></button>)}
-            </div>
-          </div>
-          <div className="grid grid-cols-3 sm:grid-cols-4 lg:grid-cols-6 gap-2 p-4 pt-0 overflow-y-auto min-h-0 overscroll-contain" data-testid="pos-table-grid">
-            {zoneTables.map(table => {
-              const busy = table.status==='occupied' || table.is_occupied;
-              const info = getTableOccupiedInfo(table);
-              return <button key={table.id} onClick={() => { setSelectedTable(table); fetchTableActiveOrder(table); setShowTableBrowser(false); }} className={`min-h-[88px] p-3 rounded-xl border-2 text-left ${selectedTable?.id===table.id ? 'bg-amber-500/15 border-amber-400' : busy ? 'bg-rose-950/30 border-rose-800' : 'bg-slate-900 border-slate-700 hover:border-emerald-500'}`}>
-                <div className="flex justify-between items-center"><strong className="text-xl">#{table.number}</strong>{info.unsentCount > 0 && <span className="text-xs text-amber-300">+{info.unsentCount}</span>}</div>
-                <p className="text-xs text-slate-400 truncate mt-1">{table.room}</p><p className={`text-xs font-semibold mt-1 ${busy ? 'text-amber-300' : 'text-emerald-400'}`}>{busy ? info.durationStr || label('Band') : label("Bo'sh")}</p>
-              </button>;
-            })}
-            {zoneTables.length===0 && <p className="col-span-full text-center text-slate-400 py-8">{label("Bu zonada stol yo'q")}</p>}
-          </div>
+          <WaiterTablePicker tables={tables} zone={selectedZone} onZone={setSelectedZone} query={tableSearch} onQuery={setTableSearch} label={label} loading={loading} onSelect={table => {
+            latestRequestIdRef.current += 1; selectionKeyRef.current = `table:${table.id}`;
+            setActiveOrder(null); setSelectedTable(table); setShowTableBrowser(false); setMobileTab('menu');
+            if (selectedTable?.id === table.id) fetchTableActiveOrder(table);
+          }} />
         </section>
       </div>}
 
@@ -1992,7 +1965,7 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
       {/* ─── Stolni ko'chirish modali (Aliposter 1.0.0.0 andozasi) ─── */}
       {transferModalOpen && selectedTable && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in">
-          <div className="bg-slate-900 border border-slate-800 rounded-3xl max-w-md w-full p-5 shadow-2xl">
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl max-w-4xl w-full p-4 shadow-2xl h-[85dvh] flex flex-col min-h-0">
             <div className="flex items-center justify-between pb-2 border-b border-slate-800 mb-3">
               <div className="flex items-center gap-2">
                 <ArrowRightLeft className="w-4 h-4 text-amber-400" />
@@ -2009,29 +1982,7 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
 
             <p className="text-sm text-slate-300 mb-3">{label("Buyurtmani qaysi stolga ko'chirmoqchisiz? Kerakli stolni tanlang:")}</p>
 
-            <div className="grid grid-cols-3 sm:grid-cols-4 gap-2 max-h-64 overflow-y-auto custom-scrollbar p-1 mb-4">
-              {tables
-                .filter((t) => t.id !== selectedTable.id)
-                .map((t) => (
-                  <button
-                    key={t.id}
-                    type="button"
-                    disabled={transferLoading}
-                    onClick={() => handleTransferTable(t.id)}
-                    className={`min-h-[48px] p-2.5 rounded-xl text-center border font-black text-xs transition-all active:scale-95 flex flex-col items-center justify-center gap-1 ${
-                      t.status === 'occupied'
-                        ? 'bg-amber-950/40 border-amber-800/60 text-amber-300 hover:bg-amber-900/60'
-                        : 'bg-emerald-950/40 border-emerald-800/60 text-emerald-300 hover:bg-emerald-900/60'
-                    }`}
-                  >
-                    <span className="font-extrabold text-sm sm:text-base text-white">#{t.number}</span>
-                    <span className="text-xs text-slate-300 truncate max-w-full">{t.room || 'Zal'}</span>
-                    <span className="text-xs uppercase font-bold opacity-80">
-                      {t.status === 'occupied' ? 'Bandga qo\'shish' : 'Bo\'sh stol'}
-                    </span>
-                  </button>
-                ))}
-            </div>
+            <WaiterTablePicker tables={tables.filter(table => table.id !== selectedTable.id)} zone={transferZone} onZone={setTransferZone} query={transferSearch} onQuery={setTransferSearch} label={label} loading={false} disabled={transferLoading} transfer onSelect={table => handleTransferTable(table.id)} />
 
             <div className="flex justify-end">
               <button

@@ -1,17 +1,17 @@
-"""Sent item deletion is restricted; weighed price/weight corrections are allowed."""
+"""Sent item corrections: waiters/admins allowed, cashier restricted, audit and cancel tickets required."""
 import asyncio
 from datetime import datetime, timezone
 import pytest
 from sqlalchemy import select, func
 from test_audit_regressions import env
 from app.core.database import AsyncSessionLocal
-from app.models import OrderItem, PrintJob
+from app.models import OrderItem, PrintJob, Table, User
 from app.models.audit_log import AuditLog
 
 pytestmark = pytest.mark.anyio
 
 
-@pytest.mark.parametrize('role', ['waiter', 'cashier'])
+@pytest.mark.parametrize('role', ['cashier'])
 @pytest.mark.parametrize('operation', ['delete', 'delta_delete', 'delta_reduce', 'quantity', 'cancel'])
 async def test_sent_bill_cannot_be_reduced(env, role, operation):
     rid, req, create = env
@@ -45,23 +45,23 @@ async def test_legacy_sent_markers_cannot_bypass_permission(env, marker):
         item.sent_to_kitchen_at = datetime.now(timezone.utc) if marker == 'timestamp_only' else None
         item.prepared_quantity = 2 if marker == 'prepared_only' else 0
         await db.commit()
-    assert (await req('DELETE', path, role='waiter')).status_code == 403
-    assert (await req('PATCH', path+'/quantity', {'quantity': 1}, 'waiter')).status_code == 403
-    assert (await req('PATCH', path+'/delta', {'delta': -2}, 'waiter')).status_code == 403
+    assert (await req('DELETE', path, role='cashier')).status_code == 403
+    assert (await req('PATCH', path+'/quantity', {'quantity': 1}, 'cashier')).status_code == 403
+    assert (await req('PATCH', path+'/delta', {'delta': -2}, 'cashier')).status_code == 403
 
 
-async def test_waiter_can_remove_only_unsent_additions(env):
+async def test_cashier_can_remove_only_unsent_additions(env):
     rid, req, create = env
     order = await create([{'menu_item_id': rid, 'quantity': 2}]); oid = order['id']; iid = order['items'][0]['id']
     assert (await req('POST', f'/orders/{oid}/send-to-kitchen', {})).status_code == 200
-    assert (await req('POST', f'/orders/{oid}/add-items', {'items': [{'menu_item_id': rid, 'quantity': 1}, {'menu_item_id': rid+3, 'quantity': 1}]}, 'waiter')).status_code == 200
-    reduced = await req('PATCH', f'/orders/{oid}/items/{iid}/delta', {'delta': -1}, 'waiter')
+    assert (await req('POST', f'/orders/{oid}/add-items', {'items': [{'menu_item_id': rid, 'quantity': 1}, {'menu_item_id': rid+3, 'quantity': 1}]}, 'cashier')).status_code == 200
+    reduced = await req('PATCH', f'/orders/{oid}/items/{iid}/delta', {'delta': -1}, 'cashier')
     assert reduced.status_code == 200, reduced.text
     sent = next(item for item in reduced.json()['items'] if item['id'] == iid)
     assert sent['quantity'] == sent['sent_quantity'] == 2
-    assert (await req('PATCH', f'/orders/{oid}/items/{iid}/delta', {'delta': -1}, 'waiter')).status_code == 403
+    assert (await req('PATCH', f'/orders/{oid}/items/{iid}/delta', {'delta': -1}, 'cashier')).status_code == 403
     fresh = next(item for item in reduced.json()['items'] if item['id'] != iid)
-    assert (await req('DELETE', f"/orders/{oid}/items/{fresh['id']}", role='waiter')).status_code == 200
+    assert (await req('DELETE', f"/orders/{oid}/items/{fresh['id']}", role='cashier')).status_code == 200
 
 
 @pytest.mark.parametrize('operation,action', [('delete','delete_kitchen_item'), ('delta','cancel_kitchen_item_qty'), ('quantity','cancel_kitchen_item_qty'), ('cancel','order_cancelled'), ('bill','remove_kitchen_bill_item'), ('price','edit_kitchen_item_price')])
@@ -108,8 +108,9 @@ async def test_sent_weighed_food_can_be_corrected_in_both_directions(env, role, 
     assert item['total_price'] == expected_price
     assert item['quantity'] == item['sent_quantity'] == quantity
     assert data['subtotal'] == expected_price and data['total'] == round(expected_price * 1.1, 2)
-    assert (await req('DELETE', path, role=role)).status_code == 403
-    assert (await req('PATCH', path+'/delta', {'delta':-1}, role)).status_code == 403
+    if role == 'cashier':
+        assert (await req('DELETE', path, role=role)).status_code == 403
+        assert (await req('PATCH', path+'/delta', {'delta':-1}, role)).status_code == 403
     async with AsyncSessionLocal() as db:
         audit = await db.scalar(select(AuditLog).where(AuditLog.restaurant_id==rid, AuditLog.action=='edit_kitchen_item_price'))
         assert audit is not None and audit.user_id == rid + (1 if role=='waiter' else 2)
@@ -140,9 +141,95 @@ async def test_paid_weighed_bill_stays_immutable(env):
 async def test_concurrent_send_and_delete_cannot_erase_sent_food(env):
     rid, req, create = env
     order = await create(); oid = order['id']; iid = order['items'][0]['id']
-    sent, deleted = await asyncio.gather(req('POST', f'/orders/{oid}/send-to-kitchen', {}), req('DELETE', f'/orders/{oid}/items/{iid}', role='waiter'))
+    sent, deleted = await asyncio.gather(req('POST', f'/orders/{oid}/send-to-kitchen', {}), req('DELETE', f'/orders/{oid}/items/{iid}', role='cashier'))
     if sent.status_code == 200 and sent.json().get('items_count', 0):
         assert deleted.status_code == 403
         assert len((await req('GET', f'/orders/{oid}')).json()['items']) == 1
     else:
         assert deleted.status_code == 200 and sent.status_code in (200, 409)
+
+
+@pytest.mark.parametrize('operation,action', [('delete','delete_kitchen_item'), ('delta_delete','delete_kitchen_item'), ('delta','cancel_kitchen_item_qty'), ('quantity','cancel_kitchen_item_qty')])
+async def test_waiter_can_cancel_sent_items_with_durable_ticket_and_audit(env, operation, action):
+    rid, req, create = env
+    order = await create([{'menu_item_id':rid,'quantity':2}])
+    oid = order['id']; iid = order['items'][0]['id']; path = f'/orders/{oid}/items/{iid}'
+    assert (await req('POST', f'/orders/{oid}/send-to-kitchen', {})).status_code == 200
+    if operation == 'delete': result = await req('DELETE', path, role='waiter')
+    elif operation.startswith('delta'): result = await req('PATCH', path+'/delta', {'delta':-2 if operation == 'delta_delete' else -1}, 'waiter')
+    else: result = await req('PATCH', path+'/quantity', {'quantity':1}, 'waiter')
+    assert result.status_code == 200, result.text
+    data = result.json()
+    removed = operation in ('delete', 'delta_delete')
+    assert len(data['items']) == (0 if removed else 1)
+    assert data['subtotal'] == (0 if removed else 10000)
+    if not removed: assert data['items'][0]['sent_quantity'] == 1
+    async with AsyncSessionLocal() as db:
+        audit = await db.scalar(select(AuditLog).where(AuditLog.restaurant_id==rid, AuditLog.action==action))
+        assert audit is not None and audit.user_id == rid+1
+        jobs = (await db.scalars(select(PrintJob).where(PrintJob.order_id==oid, PrintJob.ticket_type=='cancel'))).all()
+        assert len(jobs) == 1 and 'Osh' in jobs[0].raw_text
+        assert audit.details['cancelled_qty'] == (2 if removed else 1)
+
+
+async def test_waiter_still_cannot_cancel_whole_order_or_edit_paid_order(env):
+    rid, req, create = env
+    order = await create(); oid = order['id']; iid = order['items'][0]['id']
+    assert (await req('PATCH', f'/orders/{oid}/status', {'status':'cancelled','note':'Sinov'}, 'waiter')).status_code == 403
+    assert (await req('POST', f'/orders/{oid}/checkout', {'print_receipt':False})).status_code == 200
+    assert (await req('DELETE', f'/orders/{oid}/items/{iid}', role='waiter')).status_code == 400
+
+
+async def test_simultaneous_waiter_deletions_emit_one_cancellation(env):
+    rid, req, create = env
+    order = await create(); oid = order['id']; iid = order['items'][0]['id']
+    assert (await req('POST', f'/orders/{oid}/send-to-kitchen', {})).status_code == 200
+    results = await asyncio.gather(*[req('DELETE', f'/orders/{oid}/items/{iid}', role='waiter') for _ in range(5)])
+    assert sum(result.status_code == 200 for result in results) == 1
+    assert all(result.status_code in (200,400,404) for result in results)
+    async with AsyncSessionLocal() as db:
+        assert await db.scalar(select(func.count(PrintJob.id)).where(PrintJob.order_id==oid, PrintJob.ticket_type=='cancel')) == 1
+        assert await db.scalar(select(func.count(AuditLog.id)).where(AuditLog.restaurant_id==rid, AuditLog.action=='delete_kitchen_item')) == 1
+
+
+async def test_waiter_cannot_delete_foreign_restaurant_sent_item(env):
+    from app.core.security import create_access_token
+    from httpx import AsyncClient, ASGITransport
+    from app.main import app
+    rid, req, create = env
+    order = await create(); oid = order['id']; iid = order['items'][0]['id']
+    assert (await req('POST', f'/orders/{oid}/send-to-kitchen', {})).status_code == 200
+    async with AsyncSessionLocal() as db:
+        db.add(User(id=rid+8, restaurant_id=rid+1, username=f'foreign-{rid}', full_name='Foreign test waiter', role='waiter', is_active=True, is_approved=True, hashed_password='test'))
+        await db.commit()
+    token = create_access_token({'sub':str(rid+8), 'role':'waiter'})
+    async with AsyncClient(transport=ASGITransport(app=app), base_url='http://test') as client:
+        result = await client.delete(f'/api/v1/orders/{oid}/items/{iid}', headers={'Authorization':'Bearer '+token})
+    assert result.status_code in (403,404)
+    assert len((await req('GET', f'/orders/{oid}')).json()['items']) == 1
+
+
+async def test_missing_cancellation_printer_rolls_back_waiter_deletion(env):
+    from app.models import RestaurantSettings
+    rid, req, create = env
+    order = await create(); oid = order['id']; iid = order['items'][0]['id']
+    assert (await req('POST', f'/orders/{oid}/send-to-kitchen', {})).status_code == 200
+    async with AsyncSessionLocal() as db:
+        settings = await db.scalar(select(RestaurantSettings).where(RestaurantSettings.restaurant_id==rid))
+        settings.printer_kitchen1_name = ''
+        await db.commit()
+    assert (await req('DELETE', f'/orders/{oid}/items/{iid}', role='waiter')).status_code == 400
+    assert len((await req('GET', f'/orders/{oid}')).json()['items']) == 1
+    async with AsyncSessionLocal() as db:
+        assert await db.scalar(select(func.count(AuditLog.id)).where(AuditLog.restaurant_id==rid, AuditLog.action=='delete_kitchen_item')) == 0
+
+
+async def test_bill_identifies_zone_when_table_numbers_repeat(env):
+    rid, req, create = env
+    order = await create()
+    async with AsyncSessionLocal() as db:
+        table = await db.get(Table, rid); table.room = 'Terrassa'
+        await db.commit()
+    response = await req('POST', f"/orders/{order['id']}/print-bill", {})
+    assert response.status_code == 200, response.text
+    assert 'Террасса' in response.json()['raw_text']

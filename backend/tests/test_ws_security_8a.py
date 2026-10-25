@@ -99,8 +99,8 @@ async def test_invalid_token_closes_4401():
     client = TestClient(app)
     # 1a. Noto'g'ri token
     with pytest.raises(WebSocketDisconnect) as exc_info:
-        with client.websocket_connect("/api/v1/ws/1?token=invalid_jwt_token_123"):
-            pass
+        with client.websocket_connect("/api/v1/ws/1?token=invalid_jwt_token_123") as rejected:
+            rejected.receive_json()
     assert exc_info.value.code == 4401
 
     # 1b. Muddati o'tgan token
@@ -109,8 +109,8 @@ async def test_invalid_token_closes_4401():
         expires_delta=timedelta(seconds=-10),
     )
     with pytest.raises(WebSocketDisconnect) as exc_info:
-        with client.websocket_connect(f"/api/v1/ws/1?token={expired_token}"):
-            pass
+        with client.websocket_connect(f"/api/v1/ws/1?token={expired_token}") as rejected:
+            rejected.receive_json()
     assert exc_info.value.code == 4401
 
 
@@ -119,8 +119,8 @@ async def test_guest_missing_table_id_closes_4403():
     """3: Guest uchun table_id majburiy, aks holda 4403 bilan yopilishi"""
     client = TestClient(app)
     with pytest.raises(WebSocketDisconnect) as exc_info:
-        with client.websocket_connect("/api/v1/ws/1"):
-            pass
+        with client.websocket_connect("/api/v1/ws/1") as rejected:
+            rejected.receive_json()
     assert exc_info.value.code == 4403
 
 
@@ -130,14 +130,14 @@ async def test_guest_wrong_restaurant_table_closes_4403():
     client = TestClient(app)
     # Stol 201 restoran 2 ga tegishli, lekin restoran 1 ga ulanmoqchi
     with pytest.raises(WebSocketDisconnect) as exc_info:
-        with client.websocket_connect("/api/v1/ws/1?table_id=201"):
-            pass
+        with client.websocket_connect("/api/v1/ws/1?table_id=201") as rejected:
+            rejected.receive_json()
     assert exc_info.value.code == 4403
 
     # Mavjud bo'lmagan stol
     with pytest.raises(WebSocketDisconnect) as exc_info:
-        with client.websocket_connect("/api/v1/ws/1?table_id=9999"):
-            pass
+        with client.websocket_connect("/api/v1/ws/1?table_id=9999") as rejected:
+            rejected.receive_json()
     assert exc_info.value.code == 4403
 
 
@@ -152,8 +152,8 @@ async def test_staff_restaurant_mismatch_closes_4403():
     client = TestClient(app)
     # Restoran 2 ga ulanishga urinadi (xodim esa restoran 1 da)
     with pytest.raises(WebSocketDisconnect) as exc_info:
-        with client.websocket_connect(f"/api/v1/ws/2?token={token}"):
-            pass
+        with client.websocket_connect(f"/api/v1/ws/2?token={token}") as rejected:
+            rejected.receive_json()
     assert exc_info.value.code == 4403
 
     # O'z restoraniga ulanish muvaffaqiyatli

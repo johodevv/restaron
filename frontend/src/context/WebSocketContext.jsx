@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useRef, useCallback } from 'react';
 import { useAuth } from './AuthContext';
+import { openSocketConnection } from '../utils/socketConnection';
 
 const WebSocketContext = createContext(null);
 
@@ -8,7 +9,7 @@ export const WebSocketProvider = ({ children, restaurantId = 1, tableId = null }
   const [connected, setConnected] = useState(false);
   const [notifications, setNotifications] = useState([]);
   const [lastEvent, setLastEvent] = useState(null);
-  const wsRef = useRef(null);
+  const [connectionError, setConnectionError] = useState(null);
   const listenersRef = useRef(new Map());
   const audioCtxRef = useRef(null);
 
@@ -109,7 +110,9 @@ export const WebSocketProvider = ({ children, restaurantId = 1, tableId = null }
 
   useEffect(() => {
     const targetRestId = user?.restaurant_id || restaurantId;
-    if (!targetRestId) return;
+    setConnected(false);
+    setConnectionError(null);
+    if (!targetRestId || (!token && !tableId) || (token && !user)) return;
 
     let wsUrl = '';
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -130,67 +133,29 @@ export const WebSocketProvider = ({ children, restaurantId = 1, tableId = null }
     if (token) params.append('token', token);
     if (tableId) params.append('table_id', tableId);
 
-    wsUrl = `${baseWs}/${targetRestId}?${params.toString()}`;
+    wsUrl = `${baseWs.replace(/\/+$/, '')}/${targetRestId}?${params.toString()}`;
 
-    // 1. Cleanup'da 'disposed' bayrog'i
-    let disposed = false;
-    let socket = null;
-    let pingInterval = null;
-    let reconnectTimeout = null;
-    let reconnectAttempts = 0;
-
-    // 2. Qayta ulanish: 1s, 2s, 4s ... max 15s + tasodifiy 0-500ms
-    const scheduleReconnect = () => {
-      if (disposed) return;
-      if (reconnectTimeout) clearTimeout(reconnectTimeout);
-
-      const baseDelay = Math.min(1000 * Math.pow(2, reconnectAttempts), 15000);
-      const jitter = Math.floor(Math.random() * 500);
-      const delay = baseDelay + jitter;
-      reconnectAttempts += 1;
-
-      reconnectTimeout = setTimeout(() => {
-        if (!disposed) {
-          connect();
-        }
-      }, delay);
-    };
-
-    const connect = () => {
-      if (disposed) return;
-      try {
-        socket = new WebSocket(wsUrl);
-        wsRef.current = socket;
-
-        socket.onopen = () => {
-          if (disposed) {
-            socket.close();
-            return;
-          }
-          // Qayta ulanish urinishlarini nollash
-          reconnectAttempts = 0;
-          setConnected(true);
-
-          // 4. Har ochilishda (qayta ulanish ham) restaron:ws-open hodisasini tarqatish
+    const connection = openSocketConnection({
+      url: wsUrl,
+      onState: value => {
+        setConnected(value);
+        if (value) {
+          setConnectionError(null);
           window.dispatchEvent(new Event('restaron:ws-open'));
-
-          // Ping/pong keepalive
-          if (pingInterval) clearInterval(pingInterval);
-          pingInterval = setInterval(() => {
-            if (socket && socket.readyState === WebSocket.OPEN) {
-              socket.send(JSON.stringify({ type: 'ping' }));
-            }
-          }, 25000);
-        };
-
-        socket.onmessage = (event) => {
-          if (disposed) return;
-          try {
-            const data = JSON.parse(event.data);
-            setLastEvent(data);
-
+        }
+      },
+      onDenied: code => {
+        if (code === 4401) window.dispatchEvent(new Event('restaron:unauthorized'));
+        else setConnectionError('Bu restoran uchun ulanishga ruxsat yo‘q. Qayta kiring.');
+      },
+      onMessage: data => {
+        if (data.type === 'session_revoked' && data.user_id === user?.id) {
+          window.dispatchEvent(new Event('restaron:unauthorized'));
+          return;
+        }
+        setLastEvent(data);
             // Audio & Toast triggers
-            if (data.type === 'new_order') {
+            if (data.type === 'new_order' && !(user?.role === 'waiter' && data.waiter_id === user.id)) {
               playChime('urgent');
               addNotification({
                 type: 'urgent',
@@ -239,86 +204,18 @@ export const WebSocketProvider = ({ children, restaurantId = 1, tableId = null }
 
             const anyListeners = listenersRef.current.get('*') || [];
             anyListeners.forEach((cb) => cb(data));
-          } catch (err) {
-            console.error('WS parse error:', err);
-          }
-        };
-
-        socket.onclose = (event) => {
-          setConnected(false);
-          if (pingInterval) clearInterval(pingInterval);
-          if (disposed) return;
-
-          // 3. Yopilish kodi 4401 bo'lsa window.dispatchEvent(restaron:unauthorized) va qayta ulanma
-          if (event && event.code === 4401) {
-            console.warn('WS sessiyasi yaroqsiz (4401). Qayta ulanish to\'xtatildi.');
-            window.dispatchEvent(new Event('restaron:unauthorized'));
-            return;
-          }
-
-          scheduleReconnect();
-        };
-
-        socket.onerror = () => {
-          if (!disposed && socket) {
-            try {
-              socket.close();
-            } catch (e) {}
-          }
-        };
-      } catch (err) {
-        console.error('WS Connection error:', err);
-        scheduleReconnect();
-      }
-    };
-
-    // 4. document 'visibilitychange' va window 'online' hodisalarida socket yopiq bo'lsa darhol qayta ulan
-    const handleImmediateReconnect = () => {
-      if (disposed) return;
-      if (!socket || socket.readyState === WebSocket.CLOSED || socket.readyState === WebSocket.CLOSING) {
-        if (reconnectTimeout) clearTimeout(reconnectTimeout);
-        reconnectAttempts = 0;
-        connect();
-      }
-    };
-
-    const handleVisibilityChange = () => {
-      if (document.visibilityState === 'visible') {
-        handleImmediateReconnect();
-      }
-    };
-
-    const handleOnline = () => {
-      handleImmediateReconnect();
-    };
-
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-    window.addEventListener('online', handleOnline);
-
-    connect();
-
+      },
+    });
+    const resume = () => connection.resume();
+    const onVisible = () => { if (document.visibilityState === 'visible') resume(); };
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('online', resume);
     return () => {
-      // 1. Cleanup: 'disposed' = true, timeout'lar tozalansin va qayta ulanmasin
-      disposed = true;
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
-      window.removeEventListener('online', handleOnline);
-
-      if (pingInterval) clearInterval(pingInterval);
-      if (reconnectTimeout) clearTimeout(reconnectTimeout);
-
-      if (socket) {
-        socket.onclose = null;
-        socket.onerror = null;
-        socket.onmessage = null;
-        socket.onopen = null;
-        try {
-          socket.close();
-        } catch (e) {}
-        socket = null;
-      }
-      wsRef.current = null;
+      document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('online', resume);
+      connection.dispose();
     };
-  }, [token, user?.restaurant_id, restaurantId, tableId, playChime, addNotification]);
+  }, [token, user?.id, user?.role, user?.restaurant_id, restaurantId, tableId, playChime, addNotification]);
 
   const addEventListener = useCallback((type, callback) => {
     if (!listenersRef.current.has(type)) {
@@ -336,6 +233,7 @@ export const WebSocketProvider = ({ children, restaurantId = 1, tableId = null }
     <WebSocketContext.Provider
       value={{
         connected,
+        connectionError,
         notifications,
         addNotification,
         removeNotification,

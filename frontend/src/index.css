@@ -213,6 +213,14 @@ button, input, select, textarea, a {
   overflow: visible;
 }
 
+.receipt-total-line {
+  font-weight: 900;
+  text-shadow: .25px 0 currentColor, -.25px 0 currentColor;
+  text-decoration: underline;
+  line-height: 1.7;
+}
+.receipt-table-line { line-height: 1; letter-spacing: 0; }
+
 .receipt-print[data-paper='58'] {
   width: 48mm;
 }

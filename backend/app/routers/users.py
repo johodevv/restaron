@@ -1,4 +1,5 @@
 import time
+import logging
 """
 Foydalanuvchilar API — Admin va Developer tomonidan boshqarish
 VAZIFA 10A: foydalanuvchilar boshqaruvi va xavfsizlik cheklovlari
@@ -11,10 +12,20 @@ from typing import List, Optional
 from app.core.database import get_db
 from app.core.security import get_password_hash, require_role, get_current_user, revoke_user_tokens
 from app.core.audit import log_audit_event
+from app.core.transactions import lock_rows
 from app.models.user import User, UserRole
 from app.schemas.user import UserCreate, UserUpdate, UserResponse, UserPasswordReset
 
 router = APIRouter(prefix="/users", tags=["👤 Foydalanuvchilar"])
+
+
+async def notify_session_revoked(user):
+    # Delivery is best-effort after commit. HTTP and WS auth also check persisted state.
+    from app.websockets.manager import manager
+    try:
+        await manager.send_to_user(user.restaurant_id or 1, user.id, {"type":"session_revoked", "user_id":user.id})
+    except Exception:
+        logging.getLogger(__name__).warning("Staff session notification could not be delivered", exc_info=True)
 
 
 def check_user_access(current_user: User, target_user: User) -> None:
@@ -148,6 +159,7 @@ async def update_user(
     current_user: User = Depends(require_role("admin", "developer")),
 ):
     """Xodim ma'lumotlarini yangilash"""
+    await lock_rows(db, User, [user_id])
     result = await db.execute(select(User).where(User.id == user_id))
     user = result.scalar_one_or_none()
     if not user:
@@ -187,14 +199,10 @@ async def update_user(
 
     # Agar foydalanuvchi faolsizlantirilsa, uning barcha tokenlarini bekor qilish
     if update_data.get("is_active") is False:
-        revoke_user_tokens(user.id)
         user.tokens_valid_after = time.time()
 
     await db.flush()
-    await db.commit()
-    await db.refresh(user)
-
-    await log_audit_event(
+    audit = await log_audit_event(
         db=db,
         restaurant_id=user.restaurant_id or 1,
         action="user_updated",
@@ -203,7 +211,13 @@ async def update_user(
         entity_id=user.id,
         details={"updated_fields": list(update_data.keys()), "target_username": user.username},
     )
+    if audit is None:
+        raise HTTPException(503, "Xodim o‘zgarishini tarixga saqlab bo‘lmadi. O‘zgarish bekor qilindi; qayta urinib ko‘ring.")
     await db.commit()
+    await db.refresh(user)
+    if update_data.get("is_active") is False:
+        revoke_user_tokens(user.id)
+        await notify_session_revoked(user)
 
     return UserResponse.model_validate(user)
 
@@ -267,6 +281,7 @@ async def delete_user(
     - Restoranning oxirgi faol admin'ini nofaol qilishga yo'l qo'yilmaydi (400);
     - Javob: Foydalanuvchi nofaol qilindi.
     """
+    await lock_rows(db, User, [user_id])
     result = await db.execute(select(User).where(User.id == user_id))
     user = result.scalar_one_or_none()
     if not user:
@@ -299,15 +314,15 @@ async def delete_user(
                 detail="Restoranning oxirgi faol adminini nofaol qilib bo'lmaydi",
             )
 
-    # is_active=False va tokenlarni bekor qilish
+    if not user.is_active:
+        return {"message":"Foydalanuvchi nofaol qilindi", "detail":"Foydalanuvchi nofaol qilindi", "user_id":user.id, "is_active":False, "already_inactive":True}
+
+    # Save deactivation and its audit together; preserve historical foreign keys.
     user.is_active = False
-    revoke_user_tokens(user.id)
     user.tokens_valid_after = time.time()
 
     await db.flush()
-    await db.commit()
-
-    await log_audit_event(
+    audit = await log_audit_event(
         db=db,
         restaurant_id=user.restaurant_id or 1,
         action="user_deactivated",
@@ -316,9 +331,13 @@ async def delete_user(
         entity_id=user.id,
         details={"deactivated_username": user.username},
     )
+    if audit is None:
+        raise HTTPException(503, "Bo‘shatishni tarixga saqlab bo‘lmadi. Xodim bo‘shatilmadi; qayta urinib ko‘ring.")
     await db.commit()
+    revoke_user_tokens(user.id)
+    await notify_session_revoked(user)
 
-    return {"message": "Foydalanuvchi nofaol qilindi", "detail": "Foydalanuvchi nofaol qilindi"}
+    return {"message": "Foydalanuvchi nofaol qilindi", "detail": "Foydalanuvchi nofaol qilindi", "user_id":user.id, "is_active":False}
 
 
 @router.patch("/{user_id}/approve", response_model=UserResponse, summary="Xodimni tasdiqlash yoki rad etish")

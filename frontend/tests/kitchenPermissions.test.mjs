@@ -2,18 +2,20 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { canDeleteOrderItem, canDecreaseOrderItem, kitchenSentQuantity } from '../src/utils/kitchenPermissions.js';
 
-test('waiter and cashier cannot remove sent items; administrator can', () => {
+test('waiter and administrator can remove sent items; cashier stays restricted', () => {
   const item = { quantity: 2, sent_quantity: 2, sent_to_kitchen: true };
-  for (const role of ['waiter', 'cashier']) {
+  for (const role of ['cashier']) {
     assert.equal(canDeleteOrderItem({ role }, item), false);
     assert.equal(canDecreaseOrderItem({ role }, item), false);
   }
+  assert.equal(canDeleteOrderItem({ role: 'waiter' }, item), true);
+  assert.equal(canDecreaseOrderItem({ role: 'waiter' }, item), true);
   assert.equal(canDeleteOrderItem({ role: 'admin' }, item), true);
   assert.equal(canDecreaseOrderItem({ role: 'admin' }, item), true);
 });
 
 test('unsent additions can be reduced while the sent quantity remains protected', () => {
-  const user = { role: 'waiter' };
+  const user = { role: 'cashier' };
   assert.equal(canDecreaseOrderItem(user, { quantity: 3, sent_quantity: 2 }), true);
   assert.equal(canDeleteOrderItem(user, { quantity: 3, sent_quantity: 2 }), false);
   assert.equal(canDeleteOrderItem(user, { quantity: 1, sent_quantity: 0 }), true);

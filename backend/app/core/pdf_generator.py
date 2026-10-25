@@ -247,7 +247,7 @@ def generate_checkout_receipt_pdf_sync(data: Dict[str, Any]) -> str:
             total_p = it.get("total_price") if it.get("total_price") is not None else (qty * unit_price)
             weight = it.get("weight")
 
-            qty_str = f"{weight}{it.get('unit') or 'kg'}" if weight else f"{qty} dona"
+            qty_str = f"{float(weight) * qty:g}{it.get('unit') or 'kg'}" if weight else f"{qty} dona"
 
             # 1-qator: Taom nomi
             name_lines = wrapped(name, 96) or ['Taom']
