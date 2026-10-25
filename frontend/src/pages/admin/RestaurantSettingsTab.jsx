@@ -1275,6 +1275,12 @@ export const RestaurantSettingsTab = ({ restaurantId }) => {
             </div>
           </div>
 
+          <div className="rounded-2xl border border-emerald-600/50 bg-emerald-950/20 p-4 space-y-2">
+            <h3 className="text-base font-bold text-white">O‘qishga qulay chek</h3>
+            <p className="text-sm text-theme-muted">Yirik harflar va kengroq qator oralig‘ini birga tanlash. So‘ng sozlamalarni saqlang. Qog‘ozdagi tiniqlikni bir dona namuna chek bilan tekshiring.</p>
+            <button type="button" onClick={() => { setPrinterFontSize('katta'); setPrinterCharSpacing(1); setPrinterLineSpacing('keng'); }} className="min-h-[48px] px-4 rounded-xl bg-emerald-700 hover:bg-emerald-600 text-white font-bold text-sm">Yirik shriftni tanlash</button>
+          </div>
+
           {/* Chek shrifti o'lchami — keksa odamlar uchun */}
           <div className="pt-3 border-t border-theme-border/50">
             <label className="block text-xs font-bold text-white mb-1">

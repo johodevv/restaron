@@ -48,4 +48,19 @@ Rasmlar: scratch/waiter_zones_mobile.png, scratch/waiter_cart_mobile.png, scratc
 
 Dalillar: scratch/waiter_verified_suite.log, scratch/waiter_frontend_tests.log, scratch/waiter_browser_results.json, scratch/waiter_ws_results.json, scratch/waiter_transfer_results.json va scratch/waiter_admin_regression.json.
 
-Haqiqiy printerdagi qog‘oz sifatini tasdiqlash uchun keyin o‘sha printerdan bitta namuna chek chiqarish kerak. O‘zgarishlar bu safar GitHub’ga push qilinmadi va boshqa kompyuterga qo‘llanmadi.
+Haqiqiy printerdagi qog‘oz sifatini tasdiqlash uchun keyin o‘sha printerdan bitta namuna chek chiqarish kerak. O‘zgarishlarni ishchi kompyuterga yangilash orqali alohida qo‘llash kerak.
+
+
+## Qo‘shimcha tekshiruv: xodimlar va lokal ko‘rish
+
+Xodimni bo‘shatish lokal API’da bajarilgan, biroq nofaol xodim ham eski ro‘yxatda va yana bo‘shatish tugmasi bilan ko‘ringan. Faol/Nofaol bo‘limlari, tushunarli tasdiqlash oynasi va natija xabari qo‘shildi. Amal xato bo‘lsa oyna yopilmaydi va qayta urinish mumkin. O‘z hisobini bo‘shatish tugmasi ko‘rsatilmaydi.
+
+Bo‘shatish va audit bir tranzaksiyada saqlanadi; audit saqlanmasa o‘zgarish ham bekor qilinadi. Takroriy parallel bo‘shatish bir audit qaydini yaratadi. Xodimning oldingi ochiq/to‘langan hisoblari saqlanadi. Ulangan qurilmaga sessiya bekor qilingani darhol yuboriladi; qayta faollashtirish eski tokenni qayta ishlatishga yo‘l qo‘ymaydi.
+
+Printer sozlamalariga “Yirik shriftni tanlash” tugmasi qo‘shildi: katta shrift, 1 nuqta belgi oralig‘i, keng qator oralig‘i. Keyin “Saqlash” bosiladi. Shu kompyuterdagi asl bazada avval normal/kichik shrift saqlangani faqat o‘qib tekshirildi; asl baza sozlamasi o‘zgartirilmadi. Tavsiya etilgan sozlama faqat sun’iy sinov bazasida qo‘llandi. Haqiqiy qog‘ozdagi tiniqlik namuna bilan tasdiqlanadi.
+
+Yakuniy tekshiruv: **218 backend testi, 23 frontend testi va frontend build o‘tdi.** Brauzerda bo‘shatishni bekor qilish, xato va qayta urinish, faol ro‘yxatdan nofaolga o‘tish, qayta faollashtirish, xodimning darhol chiqishi va shrift sozlamasining saqlanishi tekshirildi.
+
+Dalillar: scratch/staff_full_tests.log, scratch/staff_frontend_tests.log, scratch/staff_browser_results.json, scratch/staff_build_final.log.
+
+Lokal server 8028 portda ishlayapti. Telefon hotspotidan Wi-Fi manzili telefonning o‘zida ERR_ADDRESS_UNREACHABLE berdi; USB modem manzili kompyuterda javob berdi, ammo haqiqiy telefonda kirish tasdiqlanmadi. Foydalanuvchi kompyuterdagi telefon ko‘rinishiga o‘tdi. In-app brauzerda ofitsiant sinov paneli 390×844 ko‘rinishda ochilib qoldirildi. Cloudflare yoqilmadi va onlayn serverga qo‘llanmadi. GitHub’dagi yangi o‘zgarishlar ishchi kompyuterga alohida yangilash orqali olinadi.
