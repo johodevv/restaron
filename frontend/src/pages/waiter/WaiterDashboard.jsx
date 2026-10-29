@@ -2,6 +2,7 @@ import { createPortal } from 'react-dom';
 import { useLanguage } from '../../context/LanguageContext';
 import { previewOrderTotals } from '../../utils/posTotals';
 import { useDialogFocus } from '../../hooks/useDialogFocus';
+import { usePanelHistory } from '../../hooks/usePanelHistory';
 import { posLabel } from '../../utils/posLabels';
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import api from '../../utils/api';
@@ -210,6 +211,37 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
 
   // Sound toggle
   const [soundEnabled, setSoundEnabled] = useState(true);
+
+  // Back/Forward navigates the panel; it must never send, delete or pay for an order.
+  const navigationDialog = receiptModalOpen ? 'receipt' : checkoutModalOpen ? 'checkout'
+    : weightModalItem ? 'weight' : sizeModalItem ? 'size' : transferModalOpen ? 'transfer'
+    : kitchenNoteModalOpen ? 'note' : showTableBrowser ? 'tables'
+    : showOrderPicker ? 'orders' : customerDetailsOpen ? 'customer' : null;
+  usePanelHistory(!isPrivileged, {
+    tab: activeTab, browsing: browsingTables,
+    mobile: browsingTables ? 'menu' : mobileTab,
+    table: browsingTables ? null : selectedTable?.id || null,
+    dialog: navigationDialog,
+    item: navigationDialog === 'weight' ? weightModalItem?.id : navigationDialog === 'size' ? sizeModalItem?.id : null,
+  }, state => {
+    if (state.table && selectedTable?.id !== state.table) {
+      const table = tables.find(table => table.id === state.table);
+      if (!table) { setBrowsingTables(true); return; }
+      setSelectedTable(table);
+    }
+    setActiveTab(state.tab);
+    setBrowsingTables(state.browsing);
+    setMobileTab(state.mobile);
+    setReceiptModalOpen(state.dialog === 'receipt');
+    setCheckoutModalOpen(state.dialog === 'checkout');
+    setTransferModalOpen(state.dialog === 'transfer');
+    setKitchenNoteModalOpen(state.dialog === 'note');
+    setShowTableBrowser(state.dialog === 'tables');
+    setShowOrderPicker(state.dialog === 'orders');
+    setCustomerDetailsOpen(state.dialog === 'customer');
+    setWeightModalItem(state.dialog === 'weight' ? activeOrder?.items?.find(item => item.id === state.item) || null : null);
+    setSizeModalItem(state.dialog === 'size' ? activeOrder?.items?.find(item => item.id === state.item) || null : null);
+  }, () => !weightSaveLock.current && !savingSize && !transferLoading && !sendingToKitchen);
 
   // Waiter KPI today
   const [waiterKpi, setWaiterKpi] = useState({ sales: 0, orders: 0, share: 0 });
