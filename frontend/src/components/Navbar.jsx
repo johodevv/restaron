@@ -35,7 +35,7 @@ export const Navbar = ({
 
   return (
     <>
-      <header className="app-navbar sticky top-0 z-40 w-full backdrop-blur-xl bg-theme-surface/80 border-b border-theme-border/60 transition-colors">
+      <header className={`app-navbar ${user ? 'staff-navbar' : ''} sticky top-0 z-40 w-full backdrop-blur-xl bg-theme-surface/80 border-b border-theme-border/60 transition-colors`}>
         <div className="max-w-7xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between gap-4">
           {/* Logo & Brand */}
           <div
@@ -45,8 +45,8 @@ export const Navbar = ({
             }}
             className="flex items-center gap-2.5 sm:gap-3 cursor-pointer group min-w-0 shrink"
           >
-            <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-gradient-to-tr from-amber-500 to-amber-600 flex items-center justify-center text-black font-bold shadow-glow group-hover:scale-105 transition-transform shrink-0">
-              <UtensilsCrossed className="w-5 h-5" />
+            <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-full overflow-hidden flex items-center justify-center group-hover:scale-105 transition-transform shrink-0">
+              <img src="/dunyo-logo.png" alt="Dunyo Choyxonasi logotipi" className="w-full h-full object-contain" />
             </div>
             <div className="min-w-0">
               {/* Telefonda nom bitta qatorda qoladi — ilgari ikkiga bo'linib,

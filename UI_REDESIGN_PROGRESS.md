@@ -14,6 +14,14 @@
 
 ## Keyingi qismlar
 
+### 2-qism — POS joylashuvi va Dunyo uslubi
+
+Kompyuterda savat chapdagi taxminan uchdan bir qismda, menyu o‘ngda; telefonda savat yuqorida va menyu pastda birga ko‘rinadi. Savatni yoyish/menyuga qaytish tugmasi bor. Takroriy mobil stol satri va pastki savat tasmasi olib tashlandi. Asosiy oshxonaga yuborish amali hisob yonida. Mavjud transfer, izoh, narx/kg, chop etish va to‘lov amallari hamda vakolatlari saqlandi.
+
+Dunyo logotipi, ko‘k-kulrang yuzalar, yashil asosiy amal va aniqroq jami summa ishlatildi. Qisqa telefon ekranida mahsulot rasmlari yashirilib nom/narx/qo‘shish uchun joy ajratiladi; uzunroq ekran va desktopda rasmlar qoladi.
+
+Tekshiruv: 30 frontend testi; production build; Edge’da 400 px va 360 px mobil emulyatsiya hamda 1536 px desktop. Savatni yoyish va hisob saqlanishi kuzatildi. Sinov bazasida tarozili taomga 180 000 kiritilganda 1.5 kg hisoblandi va saqlandi; umumiy hisob 240 800 bo‘ldi. Physical printer yoki domen ishlatilmadi. Brauzerning AudioContext autoplay ogohlantirishi kuzatildi; bu JavaScript istisnosi emas, ovoz uchun foydalanuvchi harakati talabidir.
+
 2. Ofitsiant va umumiy POS: tanish tugma joylashuvi, Dunyo logosi, ko‘zga qulay ranglar; mobil asosiy amallarni soddalashtirish.
 3. Admin navigatsiyasi va sozlamalar: yuqori asosiy bo‘limlar, chapda sozlamalar guruhlari; barcha mavjud amallar uchun joy.
 4. To‘lov ko‘rinishi va yakuniy regressiya: mavjud hisob-kitob va printer oqimini saqlagan holda lokal tekshiruv.
