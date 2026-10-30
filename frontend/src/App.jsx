@@ -183,7 +183,7 @@ export const App = () => {
   return (
     <WebSocketProvider restaurantId={restaurantId} tableId={tableInfo?.id}>
       <CartProvider>
-        <div className="min-h-screen bg-theme-bg text-theme-text transition-colors duration-300">
+        <div className={`${user ? 'staff-viewport' : 'min-h-screen'} bg-theme-bg text-theme-text transition-colors duration-300`}>
           <ToastContainer />
 
           {/* If user clicked Login */}
@@ -198,7 +198,7 @@ export const App = () => {
 
           {/* If Logged in as Staff */}
           {user && (
-            <div className="staff-app-shell h-[100dvh] flex flex-col overflow-hidden">
+            <div className="staff-app-shell h-full min-h-0 flex flex-col overflow-hidden">
               <div className="shrink-0">
                 <Navbar currentView={currentView} onNavigate={setCurrentView} />
               </div>

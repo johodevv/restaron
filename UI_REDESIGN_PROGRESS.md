@@ -43,3 +43,12 @@ Yakuniy tekshiruvlar: **37 frontend testi**, **218 backend testi** o‘tdi; prod
 1–4 qismlar alohida commit va push qilindi. Domen orqali deploy yoki boshqa kompyuterdagi serverni yangilash bajarilmadi. Real printerdagi bosma sifat, haqiqiy telefon gesture/klaviaturasi va choyxonaning barcha qurilmalaridagi birgalikdagi ish alohida qabul sinovini talab qiladi; ularning hammasi bu dizayn sinovida tekshirildi, degan da’vo qilinmaydi.
 
 Tekshiruvlar cheklangan muhitdagi dalildir; barcha qurilmalarda mutlaq xatosizlik kafolati emas. Yangi aniqlangan muammo bartaraf etilmaguncha tegishli qism tugallangan hisoblanmaydi.
+
+## 2026-10-30 — mobil bo‘shliq va ixcham savat tuzatishi
+
+Keyingi AliPoster bilan birga bir dizayn rejalari va muhokamadagi qo‘shimcha funksiyalar foydalanuvchi tomonidan bekor qilindi. Ushbu tuzatish faqat mavjud interfeysdagi ikkita muammoga tegishli.
+
+- Xodim paneli tashqarisidagi `min-h-screen` (100vh) va ichidagi 100dvh tafovuti bartaraf qilindi: xodimlar uchun yagona dinamik viewport va ichki scroll ishlatiladi. Tashqi hujjatning surilib qora bo‘shliq ochishi cheklangan. Mijoz sahifalarining min-height tartibi saqlandi.
+- Tor savatdagi son tugmalarini ikkinchi qatorga tushirgan container qoidasi almashtirildi. Taom nomi, − / son / + va o‘chirish birinchi qatorda; narx, kg/hajm, vaqt, yuborish holati va jami ikkinchi qatorda. Tugmalar kamida 44 px; buyurtma amallari/vakolatlari o‘zgarmadi.
+- 37 frontend testi, production build va diff tekshiruvi o‘tdi. Chrome’da 400 va 360 px mobil emulyatsiya, stollarni/savatni surish va 1043 px kompyuter ko‘rinishi tekshirildi. Lokal alohida sinov bazasida Osh 1 → 2 → 1: hisob 240 800 → 280 000 → 240 800 qaytdi. Oshxonaga yuborish, to‘lov va fizik chop etish bajarilmadi.
+- Konsoldagi Blackbox brauzer kengaytmasining CORS/fetch xatolari va AudioContext autoplay eslatmasi ushbu sinovda ham bor; ular bu tuzatish bilan bartaraf etildi deb da’vo qilinmaydi. Haqiqiy Android brauzer paneli/klaviaturasi ochilib-yopilishi alohida qabul sinovini talab qiladi. Ishchi server yoki Cloudflare yangilanmadi.

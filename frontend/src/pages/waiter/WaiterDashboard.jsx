@@ -1408,6 +1408,8 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
                         <p className="font-extrabold text-white text-sm sm:text-base leading-tight line-clamp-2">
                           {it.menu_item_name || 'Taom'}
                         </p>
+                      </div>
+                      <div className="pos-line-details min-w-0">
                         <p className="text-xs font-mono text-slate-400 mt-1">{label('Narxi')}: {it.unit_price.toLocaleString('uz-UZ')}</p>
 
                         <div className="flex items-center gap-1.5 flex-wrap mt-0.5 text-xs font-semibold text-slate-400 font-mono leading-none">
@@ -1486,18 +1488,18 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
                           type="button"
                           onClick={() => handleQtyChange(it, -1)}
                           disabled={!canDecreaseOrderItem(user, it)}
-                          className="min-w-[36px] min-h-[44px] rounded-xl bg-emerald-700 hover:bg-emerald-600 text-white flex items-center justify-center font-black text-base active:scale-90 shadow-sm disabled:opacity-30 disabled:cursor-not-allowed"
+                          className="min-w-[44px] min-h-[44px] rounded-xl bg-emerald-700 hover:bg-emerald-600 text-white flex items-center justify-center font-black text-base active:scale-90 shadow-sm disabled:opacity-30 disabled:cursor-not-allowed"
                           title={canDecreaseOrderItem(user, it) ? label('Kamaytirish') : label('Oshxonaga yuborilgan: ofitsiant yoki admin kamaytiradi')}
                         >
                           -
                         </button>
-                        <span className="text-sm sm:text-base font-black text-white w-6 text-center font-mono">
+                        <span className="text-sm sm:text-base font-black text-white min-w-6 text-center font-mono">
                           {it.quantity}
                         </span>
                         <button
                           type="button"
                           onClick={() => handleQtyChange(it, 1)}
-                          className="min-w-[36px] min-h-[44px] rounded-xl bg-emerald-700 hover:bg-emerald-600 text-white flex items-center justify-center font-black text-base active:scale-90 shadow-sm"
+                          className="min-w-[44px] min-h-[44px] rounded-xl bg-emerald-700 hover:bg-emerald-600 text-white flex items-center justify-center font-black text-base active:scale-90 shadow-sm"
                           title={label("Ko'paytirish")}
                         >
                           +
