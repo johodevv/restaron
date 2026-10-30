@@ -1,9 +1,8 @@
 import React, { useMemo, useEffect } from 'react';
-import { Search } from 'lucide-react';
 import { tableDirectory } from '../utils/tableDirectory';
 
-export default function WaiterTablePicker({ tables, zone, onZone, query, onQuery, onSelect, label, loading, disabled = false, transfer = false, headingActions }) {
-  const directory = useMemo(() => tableDirectory(tables, [], { zone, query }), [tables, zone, query]);
+export default function WaiterTablePicker({ tables, zone, onZone, onSelect, label, loading, disabled = false, transfer = false, headingActions }) {
+  const directory = useMemo(() => tableDirectory(tables, [], { zone, query: '' }), [tables, zone]);
   useEffect(() => {
     if (!directory.zoneOptions.length) return;
     if (!directory.zoneOptions.some(option => option.value === zone)) onZone(directory.zoneOptions[0].value);
@@ -15,14 +14,13 @@ export default function WaiterTablePicker({ tables, zone, onZone, query, onQuery
     </div>
     <div className="flex flex-col lg:flex-row flex-1 min-h-0 overflow-hidden">
       <nav aria-label={label('Zonalar')} className="flex lg:flex-col gap-2 px-4 pb-3 overflow-x-auto lg:w-52 lg:overflow-y-auto lg:shrink-0 border-b lg:border-b-0 lg:border-r border-slate-800">
-        {directory.zoneOptions.map(option => <button key={option.value} type="button" aria-pressed={zone === option.value} onClick={() => { onZone(option.value); onQuery(''); }} className={`min-h-[52px] shrink-0 px-4 rounded-xl font-bold text-base flex items-center justify-between gap-3 border ${zone === option.value ? 'bg-emerald-700 border-emerald-400 text-white' : 'bg-slate-800 border-slate-700 text-slate-200'}`}>
+        {directory.zoneOptions.map(option => <button key={option.value} type="button" aria-pressed={zone === option.value} onClick={() => onZone(option.value)} className={`min-h-[52px] shrink-0 px-4 rounded-xl font-bold text-base flex items-center justify-between gap-3 border ${zone === option.value ? 'bg-emerald-700 border-emerald-400 text-white' : 'bg-slate-800 border-slate-700 text-slate-200'}`}>
           <span>{label(option.label)}</span><span className="text-xs opacity-75">{option.count}</span>
         </button>)}
       </nav>
       <div className="flex flex-col flex-1 min-h-0 min-w-0">
         <div className="p-4 pb-2 shrink-0">
-          <label className="relative block"><Search size={20} className="absolute left-3 top-3.5 text-slate-400" /><input type="search" aria-label={label('Stol qidirish')} placeholder={label('Stol raqami yoki nomi')} value={query} onChange={event => onQuery(event.target.value)} className="w-full h-12 pl-10 pr-3 text-base rounded-xl bg-slate-900 border border-slate-600 focus:border-emerald-400 outline-none" /></label>
-          <p className="mt-3 text-sm text-slate-300 font-semibold">{directory.zoneOptions.find(option => option.value === zone)?.label || label('Zonalar')} · {directory.matches.length} {label('ta stol')}</p>
+          <p className="text-sm text-slate-300 font-semibold">{directory.zoneOptions.find(option => option.value === zone)?.label || label('Zonalar')} · {directory.matches.length} {label('ta stol')}</p>
         </div>
         <div className="overflow-y-auto overscroll-contain p-4 pt-2 min-h-0" data-testid="waiter-zone-tables">
           <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-5 gap-3">
@@ -36,7 +34,7 @@ export default function WaiterTablePicker({ tables, zone, onZone, query, onQuery
               </button>;
             })}
           </div>
-          {!directory.matches.length && <p className="py-10 text-center text-slate-400">{label(loading ? 'Yuklanmoqda...' : query ? 'Stol topilmadi' : "Bu zonada stol yo'q")}</p>}
+          {!directory.matches.length && <p className="py-10 text-center text-slate-400">{label(loading ? 'Yuklanmoqda...' : "Bu zonada stol yo'q")}</p>}
         </div>
       </div>
     </div>

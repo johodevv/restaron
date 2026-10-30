@@ -419,6 +419,7 @@ def build_order_response(order: Order, table_number: Optional[int] = None, waite
     )
 
     return OrderResponse(
+        merged_into_order_id=_safe_get_attr(order, 'merged_into_order_id'),
         integrity_warning=("Eski hisob summasi taomlar yig‘indisiga mos emas. Admin tekshiruvi kerak."
                            if order_items is not None and abs(sum(item.total_price or 0 for item in items_response) - (_safe_get_attr(order, 'subtotal', 0) or 0)) > .01 else None),
         id=_safe_get_attr(order, "id"),

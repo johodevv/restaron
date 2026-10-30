@@ -18,6 +18,7 @@ import {
 } from 'lucide-react';
 
 export const STATUS_CONFIG = {
+  merged: { label: 'Birlashtirilgan', bg: 'bg-cyan-500/15', text: 'text-cyan-400', border: 'border-cyan-500/40', dot: 'bg-cyan-400' },
   pending: {
     label: 'Kutilmoqda',
     bg: 'bg-amber-500/15',
@@ -92,7 +93,7 @@ export const OrderCard = ({
 }) => {
   if (!order) return null;
 
-  const stCfg = STATUS_CONFIG[(order.status || '').toLowerCase()] || STATUS_CONFIG.pending;
+  const stCfg = STATUS_CONFIG[order.merged_into_order_id ? 'merged' : (order.status || '').toLowerCase()] || STATUS_CONFIG.pending;
   const isDelivery = order.order_type === 'delivery';
   const isTakeaway = order.order_type === 'takeaway';
   const isDineIn = order.order_type === 'dine_in' || !order.order_type;
@@ -102,7 +103,7 @@ export const OrderCard = ({
     : '--:--';
 
   const items = order.items || [];
-  const itemsCount = items.length > 0 ? items.length : (order.items_count || 1);
+  const itemsCount = order.merged_into_order_id ? 0 : items.length > 0 ? items.length : (order.items_count || 1);
 
   return (
     <div className="p-3.5 sm:p-5 rounded-2xl sm:rounded-3xl glass-card border border-theme-border bg-theme-surface/90 hover:border-theme-primary/40 transition-all flex flex-col justify-between shadow-xl w-full overflow-x-hidden">

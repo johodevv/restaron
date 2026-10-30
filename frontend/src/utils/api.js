@@ -1,4 +1,4 @@
-const rawApiUrl = import.meta.env.VITE_API_URL || '';
+const rawApiUrl = import.meta.env?.VITE_API_URL || '';
 export const BASE_URL = rawApiUrl
   ? (rawApiUrl.endsWith('/api/v1') ? rawApiUrl : `${rawApiUrl.replace(/\/+$/, '')}/api/v1`)
   : '/api/v1';
@@ -225,7 +225,7 @@ async function request(endpoint, options = {}) {
     if (isIdempotent && response.status < 500) saveOperation(null);
     // 401 javobida (login so'rovidan tashqari) tokenni o'chir va restaron:unauthorized hodisasi yubor
     const isLogin = endpoint.includes('/auth/login') || endpoint.endsWith('/login');
-    if (response.status === 401 && !isLogin) {
+    if (response.status === 401 && !isLogin && localStorage.getItem('restaron_token') === token) {
       localStorage.removeItem('restaron_token');
       window.dispatchEvent(new Event('restaron:unauthorized'));
     }

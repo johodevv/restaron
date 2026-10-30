@@ -25,6 +25,7 @@ export const AuthProvider = ({ children }) => {
   });
 
   useEffect(() => {
+    let cancelled = false;
     const fetchUser = async () => {
       if (!token) {
         setUser(null);
@@ -35,9 +36,11 @@ export const AuthProvider = ({ children }) => {
 
       try {
         const userData = await api.get('/auth/me');
+        if (cancelled || localStorage.getItem('restaron_token') !== token) return;
         setUser(userData);
         localStorage.setItem(CACHE_KEY, JSON.stringify(userData));
       } catch (err) {
+        if (cancelled || localStorage.getItem('restaron_token') !== token) return;
         console.error('Auth verification error:', err);
         // Only clear credentials on real 401 unauthorized, not on network timeouts or 5xx
         if (err?.status === 401 || err?.response?.status === 401) {
@@ -47,11 +50,12 @@ export const AuthProvider = ({ children }) => {
           setUser(null);
         }
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     };
 
     fetchUser();
+    return () => { cancelled = true; };
   }, [token]);
 
   const login = async (username, password) => {

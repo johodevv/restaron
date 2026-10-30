@@ -55,7 +55,14 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
   const { lang, getLocalizedName } = useLanguage();
   const label = text => posLabel(text, lang);
   const { user, isAdmin, isCashier, canCheckout: authCanCheckout } = useAuth();
-  const { addEventListener, playChime, connected, connectionError, addNotification } = useWebSocket() || {};
+  const { addEventListener, playChime, connected, connectionError, connectionPhase, reconnect, addNotification } = useWebSocket() || {};
+  const [showConnectionNotice, setShowConnectionNotice] = useState(false);
+  useEffect(() => {
+    setShowConnectionNotice(false);
+    if (connected !== false) return;
+    const timer = setTimeout(() => setShowConnectionNotice(true), 2000);
+    return () => clearTimeout(timer);
+  }, [connected]);
   const restaurantId = propRestaurantId || user?.restaurant_id || 1;
 
   // 7. Toast xabarlari (alert o'rniga)
@@ -102,9 +109,7 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
   const [selectedTable, setSelectedTable] = useState(null);
   // Stol zonasi (Zal / Terrassa / Ko'cha / VIP). '' — hammasi.
   const [selectedZone, setSelectedZone] = useState('');
-  const [tableSearch, setTableSearch] = useState('');
   const [transferZone, setTransferZone] = useState('');
-  const [transferSearch, setTransferSearch] = useState('');
   const [showTableBrowser, setShowTableBrowser] = useState(false);
   const [browsingTables, setBrowsingTables] = useState(!isPrivileged);
   const [customerDetailsOpen, setCustomerDetailsOpen] = useState(false);
@@ -143,6 +148,8 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
   // Table transfer modal (Stolni ko'chirish — Aliposter 1.0.0.0 andozasi)
   const [transferModalOpen, setTransferModalOpen] = useState(false);
   const [transferLoading, setTransferLoading] = useState(false);
+  const [mergePreview, setMergePreview] = useState(null);
+  const transferDialogRef = useDialogFocus(transferModalOpen, () => { if (!transferLoading) setTransferModalOpen(false); });
 
   // Bitta buyurtma uchun ketma-ket so'rovlar navbati va oxirgi so'rov id si
   const orderQueueRef = useRef(Promise.resolve());
@@ -221,6 +228,12 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
     if (!selectedTable || !targetTableId || mutationQueueRef.current.pending) return;
     setTransferLoading(true);
     try {
+      const target = tables.find(table => table.id === targetTableId);
+      if (target?.is_occupied || target?.status === 'occupied') {
+        const preview = await api.get(`/tables/${selectedTable.id}/merge-preview/${targetTableId}`);
+        setMergePreview({ ...preview, source_label: [selectedTable.room, selectedTable.name || `${label('Stol #')}${selectedTable.number}`].filter(Boolean).join(' · '), target_label: [target.room, target.name || `${label('Stol #')}${target.number}`].filter(Boolean).join(' · '), key: crypto.randomUUID?.() || `merge_${Date.now()}` });
+        return;
+      }
       const res = await api.post(`/tables/${selectedTable.id}/transfer/${targetTableId}`);
       showToast(res.message || "Buyurtma muvaffaqiyatli ko'chirildi! ✅", 'success');
       setTransferModalOpen(false);
@@ -232,6 +245,28 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
     } finally {
       setTransferLoading(false);
     }
+  };
+
+  const handleMergeAccounts = async () => {
+    if (!mergePreview || transferLoading || mutationQueueRef.current.pending) return;
+    setTransferLoading(true);
+    try {
+      const payload = Object.fromEntries(['source_order_id', 'target_order_id', 'source_version', 'target_version'].map(key => [key, mergePreview[key]]));
+      const result = await api.post(`/tables/${mergePreview.source_table_id}/merge/${mergePreview.target_table_id}`, payload,
+        { idempotent: true, headers: { 'Idempotency-Key': mergePreview.key } });
+      const target = tables.find(table => table.id === mergePreview.target_table_id);
+      latestRequestIdRef.current += 1;
+      selectionKeyRef.current = `table:${mergePreview.target_table_id}`;
+      if (target) setSelectedTable(target);
+      activeOrderRef.current = result.order;
+      setActiveOrder(result.order);
+      setTransferModalOpen(false); setMergePreview(null);
+      showToast(label('Hisoblar birlashtirildi'), 'success');
+      loadInitialData();
+    } catch (error) {
+      showToast(error.message, 'urgent');
+      if (error.status === 409) { setMergePreview(null); loadInitialData(); }
+    } finally { setTransferLoading(false); }
   };
 
   // Checkout modal
@@ -412,7 +447,8 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
     if (mutationQueueRef.current?.has(`table:${tableIdToFetch}`)) return;
     const version = ++fetchVersionRef.current;
     const mutationVersion = latestRequestIdRef.current;
-    setOrderLoading(true);
+    const hasCachedOrder = activeOrderRef.current?.table_id === tableIdToFetch;
+    if (!hasCachedOrder) setOrderLoading(true);
     try {
       const activeOrders = await api.get(`/orders/table/${tableIdToFetch}/active`);
       if (mutationQueueRef.current?.has(`table:${tableIdToFetch}`) || version !== fetchVersionRef.current || mutationVersion !== latestRequestIdRef.current || selectionKeyRef.current !== `table:${tableIdToFetch}`) return;
@@ -440,7 +476,7 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
 
   useEffect(() => {
     if (selectedTable && orderType === 'table') {
-      setActiveOrder(null);
+      if (activeOrderRef.current?.table_id !== selectedTable.id) setActiveOrder(null);
       fetchTableActiveOrder(selectedTable);
     }
   }, [selectedTable?.id, orderType]);
@@ -996,10 +1032,11 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
   return (
     <div className="dunyo-pos relative h-full min-h-0 overflow-hidden bg-slate-950 text-slate-100 flex flex-col font-sans select-none" data-mobile-view={mobileTab} data-testid="pos-workspace">
       {/* 6. Ulanish yo'q bo'lsa tepada sariq banner: Aloqa yo'q, qayta ulanmoqda */}
-      {connected === false && (
+      {connected === false && (showConnectionNotice || connectionError) && (
         <div className="bg-amber-500/95 text-slate-950 font-bold px-4 py-2 text-center text-xs sm:text-sm flex items-center justify-center gap-2 shadow-md shrink-0 z-50">
           <RefreshCw className="w-4 h-4 animate-spin text-slate-950 shrink-0" />
-          <span>{connectionError || label("Aloqa yo'q, qayta ulanmoqda...")}</span>
+          <span>{connectionError || label(connectionPhase === 'connecting' ? 'Jonli aloqa o‘rnatilmoqda...' : "Aloqa yo'q, qayta ulanmoqda...")}</span>
+          {!connectionError && <button type="button" onClick={reconnect} className="min-h-[36px] px-2 rounded-lg border border-black/30 shrink-0">{label('Qayta urinish')}</button>}
         </div>
       )}
 
@@ -1227,7 +1264,7 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
           )}
         </div>
       ) : browsingTables && orderType === 'table' ? (
-        <WaiterTablePicker headingActions={!isPrivileged && <button type="button" aria-label={`${label('Chaqiruvlar')}${calls.length ? ` (${calls.length})` : ''}`} onClick={() => setActiveTab('calls')} className="relative min-w-[44px] min-h-[44px] rounded-xl bg-slate-800 border border-slate-600 flex items-center justify-center text-slate-200"><BellRing size={20} />{calls.length > 0 && <span className="absolute -top-1 -right-1 bg-red-600 text-white rounded-full px-1.5 text-xs font-bold">{calls.length}</span>}</button>} tables={tables} zone={selectedZone} onZone={setSelectedZone} query={tableSearch} onQuery={setTableSearch} label={label} loading={loading} onSelect={table => {
+        <WaiterTablePicker headingActions={!isPrivileged && <button type="button" aria-label={`${label('Chaqiruvlar')}${calls.length ? ` (${calls.length})` : ''}`} onClick={() => setActiveTab('calls')} className="relative min-w-[44px] min-h-[44px] rounded-xl bg-slate-800 border border-slate-600 flex items-center justify-center text-slate-200"><BellRing size={20} />{calls.length > 0 && <span className="absolute -top-1 -right-1 bg-red-600 text-white rounded-full px-1.5 text-xs font-bold">{calls.length}</span>}</button>} tables={tables} zone={selectedZone} onZone={setSelectedZone} label={label} loading={loading} onSelect={table => {
           latestRequestIdRef.current += 1;
           selectionKeyRef.current = `table:${table.id}`;
           setActiveOrder(null);
@@ -1270,7 +1307,7 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
                 <span className="block text-[11px] text-slate-400 truncate">{orderType === 'table' ? [selectedTable?.room, selectedTable?.is_occupied || selectedTable?.status === 'occupied' ? label('Band') : label("Bo'sh")].filter(Boolean).join(' · ') : customerName || label('Buyurtmalar ro‘yxati')}</span>
               </button>
               {orderType !== 'table' && <button aria-label={label('Mijoz ma’lumotlari')} title={label('Mijoz ma’lumotlari')} onClick={() => setCustomerDetailsOpen(true)} className="w-10 min-h-[44px] shrink-0 flex items-center justify-center rounded-lg text-cyan-300 hover:bg-slate-800"><User size={19} /></button>}
-              {orderType === 'table' && activeOrder && selectedTable && <button disabled={mutationStatus.pending > 0} aria-label={label("Ko'chirish")} title={label("Ko'chirish")} onClick={() => setTransferModalOpen(true)} className="w-10 min-h-[44px] shrink-0 flex items-center justify-center text-amber-300 hover:bg-slate-800 rounded-lg disabled:opacity-30"><ArrowRightLeft size={19} /></button>}
+              {orderType === 'table' && activeOrder && selectedTable && <button disabled={mutationStatus.pending > 0} aria-label={label('Ko‘chirish / hisoblarni qo‘shish')} title={label('Ko‘chirish / hisoblarni qo‘shish')} onClick={() => { setMergePreview(null); setTransferModalOpen(true); }} className="w-10 min-h-[44px] shrink-0 flex items-center justify-center text-amber-300 hover:bg-slate-800 rounded-lg disabled:opacity-30"><ArrowRightLeft size={19} /></button>}
               <button aria-label={label('💬 Izoh')} title={label('💬 Izoh')} onClick={() => setKitchenNoteModalOpen(true)} className="w-10 min-h-[44px] shrink-0 flex items-center justify-center rounded-lg text-slate-300 hover:bg-slate-800"><MessageSquare size={19} />{kitchenNote && <span className="text-emerald-400">•</span>}</button>
               {canCheckout && <button aria-label={label('🧾 Chek')} title={label('🧾 Chek')} disabled={!activeOrder || printingBill} onClick={handlePrintBill} className="w-10 min-h-[44px] shrink-0 flex items-center justify-center rounded-lg text-slate-300 hover:bg-slate-800 disabled:opacity-30"><Receipt size={19} /></button>}
             </div>
@@ -1499,7 +1536,7 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
               )}
 
               {/* Category buttons list */}
-              <div className="flex items-center gap-2 overflow-x-auto no-scrollbar pb-1">
+              <div className="pos-menu-categories flex flex-wrap items-center gap-1.5">
                 {categories.map((cat) => {
                   const active = cat.id === selectedCatId && !searchItemQuery.trim();
                   return (
@@ -1509,12 +1546,14 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
                         setSelectedCatId(cat.id);
                         setSearchItemQuery('');
                       }}
-                      className={`min-h-[44px] px-4 py-2.5 rounded-2xl text-sm font-extrabold shrink-0 transition-all ${active
+                      aria-pressed={active}
+                      className={`min-h-[44px] max-w-full px-3 py-1.5 rounded-xl text-xs sm:text-sm font-extrabold flex items-center gap-2 break-words transition-all ${active
                           ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-600/30 scale-102'
                           : 'bg-slate-850 hover:bg-slate-800 text-slate-300 border border-slate-700/60'
                         }`}
                     >
                       {getLocalizedName(cat)}
+                      <span className="rounded-full px-1.5 py-0.5 text-[10px] bg-black/15 shrink-0">{(cat.items || []).length}</span>
                     </button>
                   );
                 })}
@@ -1541,7 +1580,7 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
                       }`}
                     >
                       {/* Thumbnail: Kattaroq rasm */}
-                      <div className="pos-product-image h-16 sm:h-32 xl:h-36 w-full rounded-2xl bg-slate-950 overflow-hidden relative mb-2.5 flex items-center justify-center border border-slate-800/80">
+                      <div className="pos-product-image h-24 sm:h-32 xl:h-36 w-full rounded-2xl bg-slate-950 overflow-hidden relative mb-2.5 flex items-center justify-center border border-slate-800/80">
                         {item.image_url ? (
                           <img
                             src={item.image_url}
@@ -1575,9 +1614,6 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
                       <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
                         <span className="px-2 py-1.5 rounded-xl bg-emerald-600 text-white font-bold text-xs sm:text-sm shadow-md font-mono break-words max-w-full">
                           {Math.round(item.price || 0).toLocaleString('uz-UZ')}{' '}{label("so'm")}</span>
-                        <span className="w-11 h-11 min-h-[44px] rounded-xl bg-emerald-500/20 text-emerald-400 flex items-center justify-center text-lg font-black group-hover:bg-emerald-500 group-hover:text-slate-950 transition-colors shadow-sm shrink-0">
-                          +
-                        </span>
                       </div>
                     </div>
                   );
@@ -1586,8 +1622,8 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
             </div>
 
             <button type="button" onClick={() => setMobileTab('cart')} className="lg:hidden shrink-0 min-h-[56px] px-4 py-2 bg-emerald-700 text-white flex items-center justify-between gap-3 font-bold border-t border-emerald-500">
-              <span className="flex items-center gap-2"><ShoppingCart size={20} />{label('Buyurtmani ko‘rish')}</span>
-              <span className="text-right font-mono">{(activeOrder?.total || 0).toLocaleString('uz-UZ')} <span className="text-xs">{label("so'm")}</span></span>
+              <span className="flex items-center gap-2"><ShoppingCart size={20} />{label(orderLoading ? 'Hisob yuklanmoqda...' : 'Buyurtmani ko‘rish')}</span>
+              {!orderLoading && <span className="text-right font-mono">{(activeOrder?.total || 0).toLocaleString('uz-UZ')} <span className="text-xs">{label("so'm")}</span></span>}
             </button>
           </div>
         </div>
@@ -1637,7 +1673,7 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
             <h2 id="pos-table-picker-title" className="text-xl font-bold">{label('Stol tanlash')}</h2>
             <button type="button" aria-label={label('Yopish')} onClick={() => setShowTableBrowser(false)} className="w-11 h-11 flex items-center justify-center rounded-xl hover:bg-slate-800"><X size={22} /></button>
           </div>
-          <WaiterTablePicker tables={tables} zone={selectedZone} onZone={setSelectedZone} query={tableSearch} onQuery={setTableSearch} label={label} loading={loading} onSelect={table => {
+          <WaiterTablePicker tables={tables} zone={selectedZone} onZone={setSelectedZone} label={label} loading={loading} onSelect={table => {
             latestRequestIdRef.current += 1; selectionKeyRef.current = `table:${table.id}`;
             setActiveOrder(null); setSelectedTable(table); setShowTableBrowser(false); setMobileTab('menu');
             if (selectedTable?.id === table.id) fetchTableActiveOrder(table);
@@ -1862,14 +1898,15 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
       {/* ─── Stolni ko'chirish modali (Aliposter 1.0.0.0 andozasi) ─── */}
       {transferModalOpen && selectedTable && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in">
-          <div className="bg-slate-900 border border-slate-800 rounded-3xl max-w-4xl w-full p-4 shadow-2xl h-[85dvh] flex flex-col min-h-0">
+          <div ref={transferDialogRef} role="dialog" aria-modal="true" aria-labelledby="table-transfer-title" className="bg-slate-900 border border-slate-800 rounded-3xl max-w-4xl w-full p-4 shadow-2xl h-[85dvh] flex flex-col min-h-0">
             <div className="flex items-center justify-between pb-2 border-b border-slate-800 mb-3">
               <div className="flex items-center gap-2">
                 <ArrowRightLeft className="w-4 h-4 text-amber-400" />
-                <h3 className="text-white font-extrabold text-sm sm:text-base">{label("Stol #")}{selectedTable.number}{label("ni ko'chirish")}</h3>
+                <h3 id="table-transfer-title" className="text-white font-extrabold text-sm sm:text-base">{label('Ko‘chirish / hisoblarni qo‘shish')}</h3>
               </div>
               <button
                 type="button"
+                disabled={transferLoading}
                 onClick={() => setTransferModalOpen(false)}
                 className="min-w-[44px] min-h-[44px] rounded-xl bg-slate-800 text-slate-400 hover:text-white flex items-center justify-center"
               >
@@ -1877,13 +1914,30 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
               </button>
             </div>
 
-            <p className="text-sm text-slate-300 mb-3">{label("Buyurtmani qaysi stolga ko'chirmoqchisiz? Kerakli stolni tanlang:")}</p>
+            {mergePreview ? <div className="flex-1 min-h-0 overflow-y-auto p-3 space-y-4 text-slate-200">
+              <p className="font-bold text-base">{mergePreview.source_label} → {mergePreview.target_label}</p>
+              <p className="text-xs text-slate-400">{mergePreview.source_number} → {mergePreview.target_number}</p>
+              <p>{label('Qabul qiluvchi stolning xizmat foizi va ofitsianti qo‘llanadi.')}</p>
+              <dl className="space-y-3 text-sm">
+                <div className="flex justify-between gap-3"><dt>{label('Ofitsiant')}</dt><dd>{mergePreview.waiter_name || '—'}</dd></div>
+                <div className="flex justify-between gap-3"><dt>{label('Xizmat haqi')}</dt><dd>{mergePreview.service_fee_percent}%</dd></div>
+                <div className="flex justify-between gap-3"><dt>{label('Avvalgi jami')}</dt><dd>{(mergePreview.source_total + mergePreview.target_total).toLocaleString('uz-UZ')}</dd></div>
+                <div className="flex justify-between gap-3 text-xl font-bold text-white"><dt>{label('Yangi jami')}</dt><dd>{mergePreview.total.toLocaleString('uz-UZ')}</dd></div>
+                <div className="flex justify-between gap-3"><dt>{label('Avans')}</dt><dd>{mergePreview.deposit_amount.toLocaleString('uz-UZ')}</dd></div>
+                <div className="flex justify-between gap-3"><dt>{label('To‘lash qoldi')}</dt><dd>{mergePreview.amount_due.toLocaleString('uz-UZ')}</dd></div>
+              </dl>
+              <button type="button" disabled={transferLoading} onClick={handleMergeAccounts} className="w-full min-h-[48px] rounded-xl bg-emerald-700 font-bold disabled:opacity-40">{label(transferLoading ? 'Saqlanmoqda...' : 'Hisoblarni birlashtirish')}</button>
+              <button type="button" disabled={transferLoading} onClick={() => setMergePreview(null)} className="w-full min-h-[44px] underline">{label('Boshqa stol tanlash')}</button>
+            </div> : <>
+            <p className="text-sm text-slate-300 mb-3">{label('Bo‘sh stolga ko‘chiring yoki band stol hisobiga qo‘shing.')}</p>
 
-            <WaiterTablePicker tables={tables.filter(table => table.id !== selectedTable.id)} zone={transferZone} onZone={setTransferZone} query={transferSearch} onQuery={setTransferSearch} label={label} loading={false} disabled={transferLoading} transfer onSelect={table => handleTransferTable(table.id)} />
+            <WaiterTablePicker tables={tables.filter(table => table.id !== selectedTable.id)} zone={transferZone} onZone={setTransferZone} label={label} loading={false} disabled={transferLoading} transfer onSelect={table => handleTransferTable(table.id)} />
+            </>}
 
             <div className="flex justify-end">
               <button
                 type="button"
+                disabled={transferLoading}
                 onClick={() => setTransferModalOpen(false)}
                 className="min-h-[44px] px-5 py-2 rounded-xl bg-slate-800 text-sm text-slate-300 font-bold hover:bg-slate-700 flex items-center"
               >{label("Bekor qilish")}</button>

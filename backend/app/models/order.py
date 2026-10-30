@@ -47,6 +47,7 @@ class Order(Base):
     restaurant_id = Column(Integer, ForeignKey("restaurants.id"), nullable=False)
     table_id = Column(Integer, ForeignKey("tables.id"), nullable=True)  # NULL for delivery/takeaway
     waiter_id = Column(Integer, ForeignKey("users.id"), nullable=True)  # Tayinlangan ofitsiant
+    merged_into_order_id = Column(Integer, ForeignKey("orders.id"), nullable=True)
 
     # Mijoz ma'lumoti (ixtiyoriy)
     customer_name = Column(String(100), nullable=True)

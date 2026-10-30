@@ -158,6 +158,7 @@ def _sync_schema_migrations(sync_conn):
             ("show_on_landing", "BOOLEAN DEFAULT 1"),
         ],
         "orders": [
+            ("merged_into_order_id", "INTEGER"),
             ("version", "INTEGER NOT NULL DEFAULT 1"),
             ("advance_amount", "FLOAT NOT NULL DEFAULT 0"),
             ("order_type", "VARCHAR(50) DEFAULT 'table'"),

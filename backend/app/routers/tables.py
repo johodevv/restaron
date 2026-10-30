@@ -40,6 +40,8 @@ from app.schemas.order import TableBillResponse, BillItemSummary
 from app.websockets.manager import manager
 from app.core.disk_utils import ensure_disk_space
 from app.core.audit import log_audit_event
+from app.core.idempotency import get_idempotency_handler, IdempotencyHandler
+from app.core.table_merge import MergeAccountsRequest, read_merge, merge_accounts
 
 logger = logging.getLogger("tables")
 
@@ -1445,6 +1447,19 @@ async def update_table_status(
     )
 
     return TableResponse.model_validate(table)
+
+
+@router.get('/{from_table_id}/merge-preview/{to_table_id}')
+async def preview_table_merge(from_table_id: int, to_table_id: int, db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_role('waiter', 'admin', 'developer', 'cashier'))):
+    return (await read_merge(db, from_table_id, to_table_id, user))[-1]
+
+
+@router.post('/{from_table_id}/merge/{to_table_id}')
+async def merge_table_accounts(from_table_id: int, to_table_id: int, payload: MergeAccountsRequest,
+    db: AsyncSession = Depends(get_db), user: User = Depends(require_role('waiter', 'admin', 'developer', 'cashier')),
+    idempotency: IdempotencyHandler = Depends(get_idempotency_handler)):
+    return await merge_accounts(db, from_table_id, to_table_id, payload, user, idempotency)
 
 
 @router.post("/{from_table_id}/transfer/{to_table_id}", summary="Stolni boshqa stolga ko'chirish (Transfer)")

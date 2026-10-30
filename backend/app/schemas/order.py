@@ -166,6 +166,7 @@ class OrderDeliverRequest(BaseModel):
 
 
 class OrderResponse(BaseModel):
+    merged_into_order_id: Optional[int] = None
     integrity_warning: Optional[str] = None
     id: int
     version: int = 1

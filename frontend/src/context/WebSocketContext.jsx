@@ -10,6 +10,9 @@ export const WebSocketProvider = ({ children, restaurantId = 1, tableId = null }
   const [notifications, setNotifications] = useState([]);
   const [lastEvent, setLastEvent] = useState(null);
   const [connectionError, setConnectionError] = useState(null);
+  const [connectionPhase, setConnectionPhase] = useState('connecting');
+  const connectionRef = useRef(null);
+  const reconnect = useCallback(() => connectionRef.current?.resume(), []);
   const listenersRef = useRef(new Map());
   const audioCtxRef = useRef(null);
 
@@ -111,6 +114,7 @@ export const WebSocketProvider = ({ children, restaurantId = 1, tableId = null }
   useEffect(() => {
     const targetRestId = user?.restaurant_id || restaurantId;
     setConnected(false);
+    setConnectionPhase('connecting');
     setConnectionError(null);
     if (!targetRestId || (!token && !tableId) || (token && !user)) return;
 
@@ -135,16 +139,20 @@ export const WebSocketProvider = ({ children, restaurantId = 1, tableId = null }
 
     wsUrl = `${baseWs.replace(/\/+$/, '')}/${targetRestId}?${params.toString()}`;
 
+    let established = false;
     const connection = openSocketConnection({
       url: wsUrl,
       onState: value => {
         setConnected(value);
+        setConnectionPhase(value ? 'connected' : established ? 'reconnecting' : 'connecting');
         if (value) {
+          established = true;
           setConnectionError(null);
           window.dispatchEvent(new Event('restaron:ws-open'));
         }
       },
       onDenied: code => {
+        setConnectionPhase('denied');
         if (code === 4401) window.dispatchEvent(new Event('restaron:unauthorized'));
         else setConnectionError('Bu restoran uchun ulanishga ruxsat yo‘q. Qayta kiring.');
       },
@@ -206,6 +214,7 @@ export const WebSocketProvider = ({ children, restaurantId = 1, tableId = null }
             anyListeners.forEach((cb) => cb(data));
       },
     });
+    connectionRef.current = connection;
     const resume = () => connection.resume();
     const onVisible = () => { if (document.visibilityState === 'visible') resume(); };
     document.addEventListener('visibilitychange', onVisible);
@@ -216,6 +225,7 @@ export const WebSocketProvider = ({ children, restaurantId = 1, tableId = null }
       window.removeEventListener('online', resume);
       window.removeEventListener('pageshow', resume);
       connection.dispose();
+      if (connectionRef.current === connection) connectionRef.current = null;
     };
   }, [token, user?.id, user?.role, user?.restaurant_id, restaurantId, tableId, playChime, addNotification]);
 
@@ -236,6 +246,8 @@ export const WebSocketProvider = ({ children, restaurantId = 1, tableId = null }
       value={{
         connected,
         connectionError,
+        connectionPhase,
+        reconnect,
         notifications,
         addNotification,
         removeNotification,
