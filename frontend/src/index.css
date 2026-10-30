@@ -344,6 +344,28 @@ button, input, select, textarea, a {
 .dunyo-pos [data-testid="pos-order-toolbar"] { background: #2a4050; }
 .dunyo-pos [data-testid="pos-order-footer"] { background: #203442; }
 .dunyo-pos [aria-label="Jami hisob:"] { color: #f3faf6; font-size: 22px; font-weight: 800; }
+.dunyo-pos .pos-menu-categories { display: flex; flex-wrap: wrap; gap: 4px; }
+.dunyo-pos .pos-menu-category {
+  flex: 1 1 calc((100% - 8px) / 3); min-width: 0; min-height: 44px;
+  display: flex; align-items: center; justify-content: space-between; gap: 4px;
+  padding: 4px 7px; border: 1px solid #7891a3; border-radius: 8px;
+  background: #2c4151; color: #f1f5f9; font-size: 12px; font-weight: 750; line-height: 15px;
+  text-align: left;
+}
+.dunyo-pos .pos-menu-category:hover { background: #385367; }
+.dunyo-pos .pos-menu-category[aria-pressed="true"] { background: #047857; border-color: #6ee7b7; color: white; }
+.dunyo-pos .pos-menu-category-name { min-width: 0; overflow-wrap: anywhere; }
+.dunyo-pos .pos-menu-category-count {
+  flex-shrink: 0; min-width: 18px; padding: 1px 3px; border-radius: 5px;
+  background: #192734; color: #e2e8f0; text-align: center; font-size: 10px; line-height: 16px;
+}
+.dunyo-pos .pos-menu-category[aria-pressed="true"] .pos-menu-category-count { background: #065f46; color: white; }
+@media (min-width: 640px) {
+  .dunyo-pos .pos-menu-category { flex-basis: calc((100% - 12px) / 4); }
+}
+@media (min-width: 1280px) {
+  .dunyo-pos .pos-menu-category { flex-basis: calc((100% - 16px) / 5); }
+}
 @media (max-width: 1023px) {
   .dunyo-pos[data-mobile-view="menu"] .pos-order-pane { display: none; }
   .dunyo-pos[data-mobile-view="cart"] .pos-order-pane { flex: 1; height: 100%; min-height: 0; }

@@ -93,3 +93,10 @@ Chrome 360 px emulyatsiyada 6 kategoriya 2 qatorga sig‘ishi, stol qidiruvi yo�
 Sinov tayyorlashda qo‘lda qo‘shilgan test taomlarining nullable statistik maydonlari sabab menu/full 500 chiqdi; test fixture defaultlari to‘ldirilib HTTP 200 qayta tekshirildi. Build vaqtida eski ochiq tab o‘chgan eski lazy chunkni so‘rab xato berdi; sahifani yangilash yangi buildni yukladi. Ushbu ikki kuzatuv ishlab turgan saytdagi uzilishning dalili deb olinmadi. Yakuniy yangi tabda ilovaga tegishli shu xatolar qolmadi; Blackbox kengaytmasining CORS/fetch xatolari alohida kuzatildi.
 
 Bu o‘zgarish server kodini ham o‘z ichiga oladi: orders jadvaliga nullable merged_into_order_id migratsiyasi avtomatik qo‘llanadi. Boshqa kompyuterda yangilash BAT orqali backend/frontend birga yangilanishi kerak. Cloudflare yoki ishchi domen serverini bu ish doirasida qayta ishga tushirish bajarilmadi. Haqiqiy Android/4G uzoq seansi va jismoniy printer bu qabul sinovida tekshirilmadi; ulanishlarning yagona ishlab turgan server sababi to‘liq aniqlangan yoki mutlaq xatosizlik kafolatlangan degan da’vo yo‘q.
+
+
+## 2026-10-30 — kategoriya chegaralari va qator bo‘shliqlari
+
+Kategoriya tugmalari 360 px da uch ustun, 640 px dan to‘rt, 1280 px dan besh ustun asosida joylashadi. Flex-grow oxirgi qatordagi qolgan kenglikni ham tugmalarga beradi. Oraliq 4 px, aniq ko‘k-kulrang border, oq matn va tanlangan kategoriyada yashil fon/och border bor; glow va scale olib tashlandi. Uzun nomlar kesilmay qatorga o‘raladi, son belgisi o‘ngda qoladi, bosish balandligi kamida 44 px.
+
+49 frontend testi, production build va diff tekshiruvi o‘tdi. Chrome 360 px mobil emulyatsiyada alohida lokal test bazasidagi 12 kategoriya (Asosiy taomlar, Banichniy ichimliklar va boshqalar) 4 qatorga sig‘di, barcha nom/sonlar va borderlar ko‘rindi; qator oxirida bo‘sh ustun qolmadi. Savdo yoki to‘lov amali bajarilmadi. Oldingi turnda foydalanuvchi Esc bilan to‘xtatgan vizual tekshiruv shu turnda yakunlandi.

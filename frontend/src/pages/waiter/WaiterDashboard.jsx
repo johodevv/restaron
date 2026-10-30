@@ -1536,7 +1536,7 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
               )}
 
               {/* Category buttons list */}
-              <div className="pos-menu-categories flex flex-wrap items-center gap-1.5">
+              <div className="pos-menu-categories">
                 {categories.map((cat) => {
                   const active = cat.id === selectedCatId && !searchItemQuery.trim();
                   return (
@@ -1547,13 +1547,10 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
                         setSearchItemQuery('');
                       }}
                       aria-pressed={active}
-                      className={`min-h-[44px] max-w-full px-3 py-1.5 rounded-xl text-xs sm:text-sm font-extrabold flex items-center gap-2 break-words transition-all ${active
-                          ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-600/30 scale-102'
-                          : 'bg-slate-850 hover:bg-slate-800 text-slate-300 border border-slate-700/60'
-                        }`}
+                      className="pos-menu-category"
                     >
-                      {getLocalizedName(cat)}
-                      <span className="rounded-full px-1.5 py-0.5 text-[10px] bg-black/15 shrink-0">{(cat.items || []).length}</span>
+                      <span className="pos-menu-category-name">{getLocalizedName(cat)}</span>
+                      <span className="pos-menu-category-count">{(cat.items || []).length}</span>
                     </button>
                   );
                 })}
