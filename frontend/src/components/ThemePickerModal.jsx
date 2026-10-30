@@ -1,9 +1,11 @@
 import React from 'react';
 import { useTheme } from '../context/ThemeContext';
 import { X, Check } from 'lucide-react';
+import { useDialogFocus } from '../hooks/useDialogFocus';
 
 export const ThemePickerModal = ({ isOpen, onClose }) => {
   const { currentTheme, setTheme, activeThemes, allThemes } = useTheme();
+  const dialogRef = useDialogFocus(isOpen, onClose);
 
   if (!isOpen) return null;
 
@@ -12,9 +14,9 @@ export const ThemePickerModal = ({ isOpen, onClose }) => {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-fade-in">
-      <div className="w-full max-w-md p-6 rounded-2xl glass-card border border-theme-border bg-theme-surface shadow-2xl text-theme-text">
+      <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="theme-picker-title" className="w-full max-w-md p-6 rounded-2xl glass-card border border-theme-border bg-theme-surface shadow-2xl text-theme-text">
         <div className="flex items-center justify-between mb-4">
-          <h3 className="text-lg font-bold">🎨 Dizayn Temasini Tanlash</h3>
+          <h3 id="theme-picker-title" className="text-lg font-bold">🎨 Dizayn Temasini Tanlash</h3>
           <button
             onClick={onClose}
             className="p-1.5 rounded-lg hover:bg-white/10 text-theme-muted hover:text-white transition-colors"

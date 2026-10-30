@@ -5,6 +5,7 @@ import { useCart } from '../context/CartContext';
 import { useWebSocket } from '../context/WebSocketContext';
 import { useLanguage } from '../context/LanguageContext';
 import ThemePickerModal from './ThemePickerModal';
+import { useNavigationOverlay } from '../hooks/useNavigationOverlay';
 import {
   UtensilsCrossed,
   Palette,
@@ -32,6 +33,7 @@ export const Navbar = ({
   const { connected } = useWebSocket();
   const { lang, setLang, t } = useLanguage();
   const [themeModalOpen, setThemeModalOpen] = useState(false);
+  useNavigationOverlay('theme', themeModalOpen, setThemeModalOpen);
 
   return (
     <>

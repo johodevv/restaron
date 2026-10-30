@@ -4,6 +4,7 @@ import { api } from '../utils/api';
 import { useAuth } from '../context/AuthContext';
 import { createPortal } from 'react-dom';
 import { useDialogFocus } from '../hooks/useDialogFocus';
+import { useNavigationOverlay } from '../hooks/useNavigationOverlay';
 import { useLanguage } from '../context/LanguageContext';
 import { posLabel } from '../utils/posLabels';
 import { AlertTriangle, RefreshCw, X } from 'lucide-react';
@@ -69,6 +70,7 @@ export const PrinterStatusBanner = () => {
   }, [fetchSummary, addEventListener]);
 
   const dialogRef = useDialogFocus(expanded && stuckPrinters.length > 0, () => setExpanded(false));
+  useNavigationOverlay('printer-queue', expanded && stuckPrinters.length > 0, setExpanded);
   const resolve = async (id, action) => {
     const question = action === 'printed' ? `#${id} chek qog'ozda chiqqanini tekshirdingizmi?` : `#${id} chekni TAKROR belgisi bilan qayta yuborilsinmi?`;
     if (!window.confirm(question)) return;

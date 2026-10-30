@@ -10,7 +10,7 @@
 - Stol almashtirish, tez ketma-ket qaytish, oynani ekran tugmasi orqali yopish, saqlash vaqtida qaytish, tinglovchini tozalash uchun regressiya testlari qo‘shildi.
 - 30 ta frontend testi va production build o‘tdi.
 - Microsoft Edge’da haqiqiy lokal backend bilan desktop va 400 px mobil emulyatsiyada tekshirildi: izoh → buyurtma → stollar; mobil savat → menyu; Forward; taom qo‘shilgach Back/Forward orqali 1 ta taom va 39 200 so‘m hisob saqlanishi. Konsolda sinov paytida JavaScript xatosi kuzatilmadi (brauzerning lazy-image eslatmalari bor).
-- Sinov bazasi loyiha tashqarisida, printer sozlamalari o‘chirilgan; ishchi baza ishlatilmadi. Fizik telefondagi Back/gesture va barcha mobil brauzerlar alohida sinov qilinmagan. Global tema/printer oynalari bu qismning tarix boshqaruviga hali kiritilmagan.
+- Sinov bazasi loyiha tashqarisida, printer sozlamalari o‘chirilgan; ishchi baza ishlatilmadi. Fizik telefondagi Back/gesture va barcha mobil brauzerlar alohida sinov qilinmagan. Global tema/printer oynalari tarixga 4-qismda qo‘shildi.
 
 ## 2-qism — POS joylashuvi va Dunyo uslubi
 
@@ -28,8 +28,18 @@ Sozlamalar yetti bo‘limga ajratildi; barcha inputlar mounted qoladi, ichki bo�
 
 30 frontend testi, production build va 142 tanlangan backend regressiya testi o‘tdi. Backend test tayyorlash funksiyasi AnyIO runneriga aniq bog‘landi: pytest 9 oddiy testlaridagi asinxron autouse fixture xatosi tuzatildi. Bu serverning ishchi kodini yoki bazasini o‘zgartirmaydi. Kutubxonalarning 6 ta deprecation ogohlantirishi bor; test xatosi yo‘q.
 
-## Qolgan qism
+## 4-qism — kassa va yakuniy regressiya
 
-4. To‘lov ko‘rinishi va yakuniy regressiya: mavjud hisob-kitob va printer oqimini saqlagan holda lokal tekshiruv.
+2026-10-30. Keng ekranda kassa uch qismga ajratildi: buyurtma tarkibi; qolgan hisob/chegirma/qaytim; to‘lov turlari va katta raqamli tugmalar. Tor ekranda bo‘limlar ketma-ket joylashadi va oyna ichida siljiydi. Mavjud Naqd/Karta/Click/Aralash/Qarz yo‘llari, version va idempotency bilan checkout, serverda hisoblash va printer oqimi saqlandi. Alohida yangi backend savdo funksiyasi qo‘shilmadi. Raqamli tugmalar faqat kiritiladigan summani o‘zgartiradi; ularning o‘zi to‘lov qilmaydi.
+
+Kassa ochilganda fokus chegirmaga emas, naqd maydoniga tushadi. Saqlash paytida oynani yopish cheklangan. Aniq 0 kiritilishi bo‘sh maydonning eski “aniq summa” xatti-harakatiga aylanib ketmasligi uchun yetishmovchilik tekshiruvi tuzatildi; bo‘sh maydonning avvalgi xatti-harakati saqlandi.
+
+Tema va printer navbati oynalari umumiy ofitsiant Back/Forward oqimiga bog‘landi; yopilgan oynalar qayta ochilishi, unmount va tinglovchi tozalash testlari bor. Tema oynasida fokus va Escape boshqaruvi ham qo‘shildi.
+
+Amaliy sinovlar: Chrome’da 1043 px va keng 1536 px ko‘rinish; 240 800 so‘mlik hisobga klaviatura bilan 250 000 kiritilib, 9 200 qaytim ko‘rildi. Aralash to‘lov yetishmaganda tasdiqlash faol bo‘lmadi; karta, Click va qarz maydonlari ochildi. Kassa Escape bilan to‘lovsiz yopildi. Ofitsiant hisobida tema → Back (yopildi) → Forward (qayta ochildi) → Escape (yopildi) tekshirildi; lokal URL saqlandi. Printer navbati oynasi uchun dasturiy test bor, bu sinovda printer navbati bo‘sh bo‘lgani sabab uning oynasi amalda bosilmadi.
+
+Yakuniy tekshiruvlar: **37 frontend testi**, **218 backend testi** o‘tdi; production build va `git diff --check` muvaffaqiyatli. Backend testlarida 7 ta kutubxona deprecation ogohlantirishi bor, xato yo‘q. Chrome/Edge’ning autoplay va lazy-image eslatmalari kuzatilgan; jismoniy ovoz/printer natijasi bu sinov bilan tasdiqlanmaydi.
+
+1–4 qismlar alohida commit va push qilindi. Domen orqali deploy yoki boshqa kompyuterdagi serverni yangilash bajarilmadi. Real printerdagi bosma sifat, haqiqiy telefon gesture/klaviaturasi va choyxonaning barcha qurilmalaridagi birgalikdagi ish alohida qabul sinovini talab qiladi; ularning hammasi bu dizayn sinovida tekshirildi, degan da’vo qilinmaydi.
 
 Tekshiruvlar cheklangan muhitdagi dalildir; barcha qurilmalarda mutlaq xatosizlik kafolati emas. Yangi aniqlangan muammo bartaraf etilmaguncha tegishli qism tugallangan hisoblanmaydi.

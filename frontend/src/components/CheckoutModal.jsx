@@ -1,6 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { CreditCard, X, Printer, Banknote, Sparkles, AlertCircle, Percent } from 'lucide-react';
 import api from '../utils/api';
+import CashKeypad from './CashKeypad';
+import { useDialogFocus } from '../hooks/useDialogFocus';
+import { cashIsInsufficient } from '../utils/cashKeypad';
 
 /**
  * Kassa oynasi — to'lovni qabul qilish va chek chiqarish (Aliposter 1.0.0.0 andozasida)
@@ -12,11 +15,11 @@ import api from '../utils/api';
  * 4. Nasiya (Qarz) rasmiylashtirish
  */
 const PAYMENT_METHODS = [
-  { id: 'cash', label: '💵 Naqd (Наличные)' },
-  { id: 'card', label: '💳 Karta (Uzcard/Humo)' },
-  { id: 'click', label: '📲 Click / Payme' },
-  { id: 'mixed', label: '🔀 Aralash to\'lov' },
-  { id: 'debt', label: '📝 Nasiya / Qarz' },
+  { id: 'cash', label: 'Naqd' },
+  { id: 'card', label: 'Karta' },
+  { id: 'click', label: 'Click / Payme' },
+  { id: 'mixed', label: 'Aralash to\'lov' },
+  { id: 'debt', label: 'Qarz (nasiya)' },
 ];
 
 export const CheckoutModal = ({ isOpen, onClose, order, tableLabel, onPaid }) => {
@@ -37,6 +40,8 @@ export const CheckoutModal = ({ isOpen, onClose, order, tableLabel, onPaid }) =>
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [quote, setQuote] = useState(null);
+  const close = () => { if (!loading) onClose(); };
+  const dialogRef = useDialogFocus(isOpen && Boolean(order), close);
 
   const originalTotal = quote?.total ?? order?.total ?? 0;
   const advance = quote?.advance_amount ?? order?.advance_amount ?? 0;
@@ -65,7 +70,7 @@ export const CheckoutModal = ({ isOpen, onClose, order, tableLabel, onPaid }) =>
   // Naqd hisob-kitob
   const receivedCash = parseFloat(String(cashReceived).replace(/\s/g, '')) || 0;
   const change = paymentMethod === 'cash' && receivedCash > finalTotal ? receivedCash - finalTotal : 0;
-  const cashNotEnough = paymentMethod === 'cash' && receivedCash > 0 && receivedCash < finalTotal;
+  const cashNotEnough = paymentMethod === 'cash' && cashIsInsufficient(cashReceived, finalTotal);
 
   // Aralash hisob-kitob
   const mCash = parseFloat(String(mixedCash).replace(/\s/g, '')) || 0;
@@ -143,7 +148,7 @@ export const CheckoutModal = ({ isOpen, onClose, order, tableLabel, onPaid }) =>
 
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center p-3 sm:p-4 bg-black/80 backdrop-blur-sm animate-in fade-in">
-      <div className="bg-slate-900 border border-slate-800 rounded-3xl max-w-lg w-full p-4 sm:p-6 shadow-2xl max-h-[94vh] overflow-y-auto">
+      <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="checkout-title" className="dunyo-checkout bg-slate-900 border border-slate-800 rounded-2xl w-full p-4 sm:p-5 shadow-2xl max-h-[94dvh] overflow-y-auto">
         {/* Header */}
         <div className="flex items-center justify-between pb-3 border-b border-slate-800 mb-4">
           <div className="flex items-center gap-2.5">
@@ -151,22 +156,38 @@ export const CheckoutModal = ({ isOpen, onClose, order, tableLabel, onPaid }) =>
               <CreditCard className="w-5 h-5" />
             </div>
             <div>
-              <h3 className="text-white font-extrabold text-sm sm:text-base">Kassa: To'lovni qabul qilish</h3>
+              <h3 id="checkout-title" className="text-white font-extrabold text-lg">To‘lovni qabul qilish</h3>
               <p className="text-[11px] text-slate-400 font-medium">
                 {tableLabel} {order?.order_number ? `• ${order.order_number}` : ''}
               </p>
             </div>
           </div>
           <button
-            onClick={onClose}
-            className="w-8 h-8 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white flex items-center justify-center transition-colors"
+            type="button" aria-label="Kassani yopish" disabled={loading} onClick={close}
+            className="w-11 h-11 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white flex items-center justify-center transition-colors disabled:opacity-40"
           >
             <X className="w-5 h-5" />
           </button>
         </div>
 
+        <div className="checkout-grid">
+          <aside className="checkout-order" aria-label="To‘lanayotgan buyurtma">
+            <h4 className="font-bold text-base mb-3">{tableLabel || 'Buyurtma'}</h4>
+            <ul className="space-y-3">
+              {(order.items || []).map(item => <li key={item.id} className="border-b border-slate-700 pb-3">
+                <p className="font-semibold break-words">{item.menu_item_name || item.menu_item?.name || 'Taom'}</p>
+                <div className="flex flex-wrap justify-between gap-2 text-sm mt-1 text-slate-300"><span>{item.quantity} × {Number(item.unit_price || 0).toLocaleString('uz-UZ')}</span><strong>{Number(item.total_price || 0).toLocaleString('uz-UZ')}</strong></div>
+                {item.is_weighted && item.weight && <p className="text-sm text-slate-400 mt-1">{item.weight} kg</p>}
+              </li>)}
+            </ul>
+            <dl className="mt-4 space-y-2 text-sm">
+              <div className="flex justify-between gap-2"><dt>Taomlar</dt><dd>{Number(order.subtotal || 0).toLocaleString('uz-UZ')}</dd></div>
+              <div className="flex justify-between gap-2"><dt>Xizmat ({order.service_fee_percent ?? 0}%)</dt><dd>{Number(order.service_fee_amount || 0).toLocaleString('uz-UZ')}</dd></div>
+            </dl>
+          </aside>
+          <section aria-label="To‘lov hisobi" className="checkout-summary">
         {/* Summa kartochkasi */}
-        <div className="p-3.5 rounded-2xl bg-slate-950 border border-slate-800 mb-4 flex items-center justify-between">
+        <div className="p-4 rounded-xl bg-slate-950 border border-slate-700 mb-4 flex flex-col gap-5">
           <div>
             <span className="text-[11px] uppercase tracking-wider font-bold text-slate-400 block">Qolgan to'lov:</span>
             {advance > 0 && <p className="text-xs text-emerald-400">Avans ayrildi: {advance.toLocaleString('uz-UZ')} so'm</p>}
@@ -185,21 +206,24 @@ export const CheckoutModal = ({ isOpen, onClose, order, tableLabel, onPaid }) =>
               </span>
             )}
           </div>
-          <div className="text-right">
-            <label className="text-[10px] text-amber-300 font-bold block mb-1">Chegirma (so'm):</label>
+          <div className="w-full">
+            <label htmlFor="checkout-discount" className="text-sm text-slate-300 font-bold block mb-2">Chegirma (so'm):</label>
             <input
+              id="checkout-discount"
               type="number"
               min="0"
               max={originalTotal}
               value={discountAmount}
               onChange={(e) => setDiscountAmount(e.target.value)}
               placeholder="0"
-              className="w-24 px-2 py-1 rounded-lg bg-slate-900 border border-slate-700 text-xs text-amber-300 font-mono text-right focus:outline-none focus:border-amber-400"
+              className="w-full min-h-[48px] px-3 rounded-lg bg-slate-900 border border-slate-600 text-lg text-white font-mono text-right focus:outline-none focus:border-emerald-400"
             />
           </div>
         </div>
+        {paymentMethod === 'cash' && <div className="checkout-change"><p className="text-sm text-slate-300">Qaytim</p><p className="text-2xl font-bold mt-2">{change.toLocaleString('uz-UZ')} <span className="text-sm">so‘m</span></p></div>}
+          </section>
 
-        <form onSubmit={handleSubmit} className="space-y-4">
+        <form onSubmit={handleSubmit} className="checkout-payment space-y-4">
           {/* To'lov usullari */}
           <div>
             <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">
@@ -210,6 +234,7 @@ export const CheckoutModal = ({ isOpen, onClose, order, tableLabel, onPaid }) =>
                 <button
                   key={m.id}
                   type="button"
+                  aria-pressed={paymentMethod === m.id}
                   onClick={() => setPaymentMethod(m.id)}
                   className={`py-2 px-2.5 rounded-xl border text-xs font-bold transition-all text-left flex items-center gap-1.5 ${
                     paymentMethod === m.id
@@ -225,7 +250,7 @@ export const CheckoutModal = ({ isOpen, onClose, order, tableLabel, onPaid }) =>
 
           {/* ── 1. NAQD TO'LOV: TEZKOR TUGMALAR VA QAYTIM ── */}
           {paymentMethod === 'cash' && (
-            <div className="p-3.5 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 space-y-3 animate-in fade-in">
+            <div className="p-3 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 space-y-2 animate-in fade-in">
               <div className="flex items-center justify-between">
                 <label className="text-xs text-emerald-300 font-bold flex items-center gap-1.5">
                   <Banknote className="w-4 h-4" />
@@ -244,6 +269,8 @@ export const CheckoutModal = ({ isOpen, onClose, order, tableLabel, onPaid }) =>
 
               {/* Qo'lda kiritish */}
               <input
+                aria-label="Mijozdan olingan naqd pul"
+                data-dialog-autofocus
                 type="number"
                 min="0"
                 step="any"
@@ -256,14 +283,13 @@ export const CheckoutModal = ({ isOpen, onClose, order, tableLabel, onPaid }) =>
 
               {/* Aliposter tezkor pullar */}
               <div>
-                <span className="text-[10px] text-slate-400 font-bold block mb-1.5">Tezkor kupyuralar:</span>
                 <div className="flex flex-wrap gap-1.5">
                   {quickBills.map((b, idx) => (
                     <button
                       key={idx}
                       type="button"
                       onClick={() => setCashReceived(String(b.val))}
-                      className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs font-mono font-bold text-white transition-all active:scale-95"
+                      className="min-h-[44px] px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs font-mono font-bold text-white transition-all active:scale-95"
                     >
                       {b.label}
                     </button>
@@ -271,15 +297,7 @@ export const CheckoutModal = ({ isOpen, onClose, order, tableLabel, onPaid }) =>
                 </div>
               </div>
 
-              {/* Qaytim displeyi */}
-              {change > 0 && (
-                <div className="p-2.5 rounded-xl bg-slate-950 border border-emerald-500/40 flex items-center justify-between">
-                  <span className="text-xs font-bold text-slate-300">Qaytim berilsin:</span>
-                  <span className="text-xl font-black text-amber-300 font-mono">
-                    {change.toLocaleString('uz-UZ')} so'm
-                  </span>
-                </div>
-              )}
+              <CashKeypad value={cashReceived} onChange={setCashReceived} disabled={loading} />
 
               {cashNotEnough && (
                 <p className="text-[11px] text-red-300 font-semibold">
@@ -314,6 +332,7 @@ export const CheckoutModal = ({ isOpen, onClose, order, tableLabel, onPaid }) =>
                   <input
                     type="number"
                     min="0"
+                    aria-label="Aralash naqd summa"
                     value={mixedCash}
                     onChange={(e) => setMixedCash(e.target.value)}
                     placeholder="0"
@@ -335,6 +354,7 @@ export const CheckoutModal = ({ isOpen, onClose, order, tableLabel, onPaid }) =>
                   <input
                     type="number"
                     min="0"
+                    aria-label="Aralash karta summasi"
                     value={mixedCard}
                     onChange={(e) => setMixedCard(e.target.value)}
                     placeholder="0"
@@ -356,6 +376,7 @@ export const CheckoutModal = ({ isOpen, onClose, order, tableLabel, onPaid }) =>
                   <input
                     type="number"
                     min="0"
+                    aria-label="Aralash Click summasi"
                     value={mixedClick}
                     onChange={(e) => setMixedClick(e.target.value)}
                     placeholder="0"
@@ -412,10 +433,10 @@ export const CheckoutModal = ({ isOpen, onClose, order, tableLabel, onPaid }) =>
           )}
 
           {/* Action buttons */}
-          <div className="flex items-center justify-between gap-3 pt-2">
+          <div className="checkout-actions flex items-center justify-between gap-3 pt-2">
             <button
               type="button"
-              onClick={onClose}
+              onClick={close} disabled={loading}
               className="min-h-[44px] px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs sm:text-sm font-semibold text-slate-300 transition-colors"
             >
               Bekor qilish
@@ -430,6 +451,7 @@ export const CheckoutModal = ({ isOpen, onClose, order, tableLabel, onPaid }) =>
             </button>
           </div>
         </form>
+        </div>
       </div>
     </div>
   );

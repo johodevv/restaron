@@ -267,6 +267,29 @@ button, input, select, textarea, a {
 
 /* Staff workspace: quieter blue-grey surfaces; green is reserved for primary actions. */
 .staff-navbar { background: #182632; border-color: #384c5d; }
+.dunyo-checkout { max-width: 1180px; max-height: calc(100dvh - 24px); background: #233645; color: #f1f5f9; font-family: Inter, system-ui, sans-serif; }
+.checkout-grid { display: grid; grid-template-columns: minmax(0,1fr); gap: 20px; }
+.checkout-order, .checkout-summary, .checkout-payment { min-width: 0; }
+.checkout-payment input { min-height: 44px; font-size: 16px; }
+.checkout-payment > div:first-child button { min-height: 44px; }
+.checkout-order { background: #1b2c39; padding: 16px; border: 1px solid #435b6d; border-radius: 12px; }
+.checkout-order ul { max-height: 300px; overflow-y: auto; }
+.checkout-change { border: 1px solid #419981; padding: 16px; background: #143c34; border-radius: 12px; color: #d5f9e8; }
+.cash-keypad { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 6px; }
+.cash-keypad button { min-height: 44px; background: #304958; border: 1px solid #587487; border-radius: 9px; color: #f1f5f9; font-size: 22px; font-weight: 650; }
+.cash-keypad button:hover { background: #3b596b; }
+.cash-keypad button:active { background: #096d52; }
+.cash-keypad button:disabled { opacity: .4; }
+.cash-keypad .cash-backspace { display: flex; align-items: center; justify-content: center; }
+.checkout-actions { position: sticky; bottom: 0; background: #233645; padding-top: 12px; padding-bottom: 6px; }
+.dunyo-checkout button:focus-visible, .dunyo-checkout input:focus-visible { outline: 3px solid #7dd3fc; outline-offset: 2px; }
+@media (min-width: 1024px) {
+  .checkout-grid { grid-template-columns: minmax(0, .9fr) minmax(0, .9fr) minmax(0, 1.7fr); }
+}
+@media (max-width: 1023px) {
+  .dunyo-checkout { max-width: 640px; }
+  .checkout-order ul { max-height: 150px; }
+}
 .staff-navbar .app-navbar-brand { background: none; color: #f2f6fa; -webkit-text-fill-color: #f2f6fa; }
 .admin-shell { --color-bg: #192734; --color-surface: #233645; --color-border: #3d5363; --color-muted: #b7c6d2; --color-primary: #10b981; --color-primary-hover: #059669; }
 .staff-app-shell { background: #192734; }

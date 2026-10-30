@@ -8,7 +8,7 @@ export function useDialogFocus(open, onClose) {
     if (!open) return;
     const previous = document.activeElement;
     const focusable = () => [...(dialogRef.current?.querySelectorAll('button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), a[href], summary, [tabindex="0"]') || [])].filter(node => node.getClientRects().length);
-    const frame = requestAnimationFrame(() => (dialogRef.current?.querySelector('input') || focusable()[0])?.focus());
+    const frame = requestAnimationFrame(() => (dialogRef.current?.querySelector('[data-dialog-autofocus]') || dialogRef.current?.querySelector('input') || focusable()[0])?.focus());
     const onKeyDown = event => {
       if (event.key === 'Escape') { event.preventDefault(); closeRef.current(); }
       if (event.key !== 'Tab') return;
