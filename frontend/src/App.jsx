@@ -35,6 +35,7 @@ export const App = () => {
   const [currentView, setCurrentView] = useState('menu'); // 'menu' | 'tracker' | 'login'
   const [activeOrderId, setActiveOrderId] = useState(null);
   const [reviewOrder, setReviewOrder] = useState(null);
+  const [waiterOrderOpen, setWaiterOrderOpen] = useState(false);
 
   // Table information from QR token in URL
   const [tableInfo, setTableInfo] = useState(null);
@@ -199,13 +200,13 @@ export const App = () => {
           {/* If Logged in as Staff */}
           {user && (
             <div className="staff-app-shell h-full min-h-0 flex flex-col overflow-hidden">
-              <div className="shrink-0">
+              <div className={`shrink-0 ${isWaiter && waiterOrderOpen ? 'hidden' : ''}`}>
                 <Navbar currentView={currentView} onNavigate={setCurrentView} />
               </div>
               <main className="flex-1 min-h-0 overflow-auto">
                 <Suspense fallback={<PageLoader />}>
                   {/* Ofitsiant faqat zaldagi stollarga xizmat ko'rsatish panelini oladi */}
-                  {isWaiter && <WaiterDashboard />}
+                  {isWaiter && <WaiterDashboard onOrderViewChange={setWaiterOrderOpen} />}
                   {isChef && <KitchenDashboard />}
                   {/* Admin va Kassir boshqaruv, kassa, POS, Olib ketish va Dastavka panelini oladi */}
                   {isDev ? <DeveloperDashboard /> : ((isAdmin || isCashier) && <AdminDashboard />)}

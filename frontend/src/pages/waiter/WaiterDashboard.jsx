@@ -7,6 +7,7 @@ import { posLabel } from '../../utils/posLabels';
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import api from '../../utils/api';
 import { latestOrder } from '../../utils/orderSync';
+import { createPosMutationQueue } from '../../utils/posMutationQueue';
 import { canDeleteOrderItem, canDecreaseOrderItem, kitchenSentQuantity } from '../../utils/kitchenPermissions';
 import { convertWeightedInput, weightedUpdatePayload } from '../../utils/weightedItem';
 import { useAuth } from '../../context/AuthContext';
@@ -50,7 +51,7 @@ import {
   ShoppingCart
 } from 'lucide-react';
 
-export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckout: propCanCheckout, restaurantId: propRestaurantId } = {}) => {
+export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckout: propCanCheckout, restaurantId: propRestaurantId, onOrderViewChange } = {}) => {
   const { lang, getLocalizedName } = useLanguage();
   const label = text => posLabel(text, lang);
   const { user, isAdmin, isCashier, canCheckout: authCanCheckout } = useAuth();
@@ -114,6 +115,8 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
   const tablePickerRef = useDialogFocus(showTableBrowser, () => setShowTableBrowser(false));
   const [activeOrder, setActiveOrder] = useState(null);
   const [orderLoading, setOrderLoading] = useState(false);
+  const [orderReadError, setOrderReadError] = useState(null);
+  const initialLoadRef = useRef(false);
 
   // Tortiladigan taom (baliq, go'sht) og'irligini kiritish oynasi
   const [weightModalItem, setWeightModalItem] = useState(null);
@@ -145,8 +148,9 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
   const orderQueueRef = useRef(Promise.resolve());
   const latestRequestIdRef = useRef(0);
   // activeOrder yo'q holatida yangi buyurtma yaratilayotganda qulf (promise)
-  const creatingOrderRef = useRef(null);
-  const creatingOrderScopeRef = useRef(null);
+  const [mutationStatus, setMutationStatus] = useState({ pending: 0, error: null });
+  const mutationQueueRef = useRef(null);
+  const mountedRef = useRef(true);
   const selectionKey = orderType === 'table' ? `table:${selectedTable?.id || ''}` : orderType;
   const selectionKeyRef = useRef(selectionKey);
   selectionKeyRef.current = selectionKey;
@@ -155,16 +159,66 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
   const activeOrderRef = useRef(activeOrder);
   activeOrderRef.current = activeOrder;
   const fetchVersionRef = useRef(0);
+  if (!mutationQueueRef.current) mutationQueueRef.current = createPosMutationQueue({
+    execute: async (intent, base, key) => {
+      if (intent.barrier) await intent.barrier.catch(() => {});
+      if (!mountedRef.current) throw new Error('Panel yopilgan. Hisobni qayta ochib tekshiring.');
+      const options = { idempotent: true, headers: { 'Idempotency-Key': key } };
+      if (intent.kind === 'add') {
+        if (!base || base.status === 'cancelled' || base.is_paid) {
+          return api.post('/orders/waiter-create', {
+            ...intent.context, items: [{ menu_item_id: intent.menu.id, quantity: intent.quantity }],
+          }, options);
+        }
+        return api.post(`/orders/${base.id}/add-items`, {
+          items: [{ menu_item_id: intent.menu.id, quantity: intent.quantity }], send_to_kitchen_immediately: false,
+        }, options);
+      }
+      const item = base?.items?.find(line => line.id === intent.itemId || (String(intent.itemId).startsWith('pending:') && line.menu_item_id === intent.menuId && !line.is_weighted));
+      if (!item) throw new Error('Taom o‘zgargan. Bajarilmagan amallarni bekor qilib, hisobni yangilang.');
+      return api.patch(`/orders/${base.id}/items/${item.id}/delta`, { delta: intent.delta }, options);
+    },
+    onChange: (scope, order, pending, error) => {
+      if (!mountedRef.current) return;
+      setMutationStatus({ pending, error });
+      if (selectionKeyRef.current !== scope) return;
+      const next = order?.status === 'cancelled' ? null : order;
+      activeOrderRef.current = next;
+      setActiveOrder(next);
+    },
+    onConfirmed: (scope, order, intent) => {
+      if (!mountedRef.current) return;
+      if (order?.table_id) {
+        const busy = order.status !== 'cancelled' && !order.is_paid;
+        setTables(previous => previous.map(table => table.id === order.table_id ? { ...table, status: busy ? 'occupied' : 'available', is_occupied: busy } : table));
+      }
+      if (selectionKeyRef.current !== scope) return;
+      if (intent.kind === 'add' && intent.menu.is_weighted) openWeightModalIfNeeded(order, intent.menu.id);
+    },
+  });
+  useEffect(() => { mountedRef.current = true; return () => { mountedRef.current = false; }; }, []);
+  useEffect(() => { onOrderViewChange?.(activeTab === 'pos' && !browsingTables); }, [activeTab, browsingTables, onOrderViewChange]);
+  useEffect(() => () => onOrderViewChange?.(false), [onOrderViewChange]);
+  const queueIntent = intent => {
+    const queue = mutationQueueRef.current;
+    if (queue.error) return;
+    const barrier = queue.pending ? null : orderQueueRef.current;
+    latestRequestIdRef.current += 1;
+    orderQueueRef.current = queue.enqueue(selectionKeyRef.current, activeOrderRef.current, { ...intent, barrier },
+      crypto.randomUUID?.() || `pos_${Date.now()}_${Math.random().toString(36).slice(2)}`);
+  };
+
   useEffect(() => {
     latestRequestIdRef.current += 1;
     fetchVersionRef.current += 1;
+    setOrderReadError(null);
     setWeightModalItem(null);
     setSizeModalItem(null);
   }, [selectionKey]);
 
 
   const handleTransferTable = async (targetTableId) => {
-    if (!selectedTable || !targetTableId) return;
+    if (!selectedTable || !targetTableId || mutationQueueRef.current.pending) return;
     setTransferLoading(true);
     try {
       const res = await api.post(`/tables/${selectedTable.id}/transfer/${targetTableId}`);
@@ -307,6 +361,8 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
 
   // 3. Load initial data (xatoni ushlaydi, bo'sh ro'yxat bilan jimgina davom etmaydi)
   const loadInitialData = async () => {
+    if (initialLoadRef.current) return;
+    initialLoadRef.current = true;
     setLoading(true);
     setLoadError(null);
     try {
@@ -339,6 +395,7 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
       console.error('Waiter load error:', err);
       setLoadError(err?.message || "Ma'lumot yuklanmadi");
     } finally {
+      initialLoadRef.current = false;
       setLoading(false);
     }
   };
@@ -352,17 +409,19 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
     const tableIdToFetch = typeof tblOrId === 'object' ? tblOrId?.id : tblOrId;
     if (!tableIdToFetch) return;
     if (selectionKeyRef.current !== `table:${tableIdToFetch}`) return;
+    if (mutationQueueRef.current?.has(`table:${tableIdToFetch}`)) return;
     const version = ++fetchVersionRef.current;
     const mutationVersion = latestRequestIdRef.current;
     setOrderLoading(true);
     try {
       const activeOrders = await api.get(`/orders/table/${tableIdToFetch}/active`);
-      if (version !== fetchVersionRef.current || mutationVersion !== latestRequestIdRef.current || selectionKeyRef.current !== `table:${tableIdToFetch}`) return;
+      if (mutationQueueRef.current?.has(`table:${tableIdToFetch}`) || version !== fetchVersionRef.current || mutationVersion !== latestRequestIdRef.current || selectionKeyRef.current !== `table:${tableIdToFetch}`) return;
       if (activeOrders?.length > 1) {
         setActiveOrder(null);
         setLoadError("Stolda bir nechta eski hisob bor. Kassir tekshirishi kerak");
         return;
       }
+      setOrderReadError(null);
       if (activeOrders && activeOrders.length > 0) {
         const ord = activeOrders[0];
         setActiveOrder(ord);
@@ -373,7 +432,7 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
       }
     } catch (err) {
       console.error('Fetch table order error:', err);
-      if (selectionKeyRef.current === `table:${tableIdToFetch}`) showToast(err.message, 'urgent');
+      if (version === fetchVersionRef.current && selectionKeyRef.current === `table:${tableIdToFetch}`) setOrderReadError(err.message);
     } finally {
       if (version === fetchVersionRef.current) setOrderLoading(false);
     }
@@ -464,6 +523,9 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
     if (!addEventListener) return;
     const unsub = addEventListener('*', (event) => {
       const eventTableId = event.table_id ?? event.order?.table_id;
+      if (['order_updated', 'new_order', 'order_paid', 'order_cancelled', 'table_status_updated'].includes(event.type)
+          && mutationQueueRef.current?.has(selectionKeyRef.current)
+          && (eventTableId === selectedTable?.id || event.order?.id === activeOrderRef.current?.id)) return;
       if (event.type === 'call_waiter') {
         if (soundEnabled && playChime) playChime('urgent');
         api.get(`/orders/calls?restaurant_id=${restaurantId}`).then((data) => setCalls(data || [])).catch(() => {});
@@ -597,219 +659,38 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
   const isPriced = (it) =>
     (it.manual_price !== null && it.manual_price !== undefined) || it.weight > 0;
 
-  // Add Item to Table (Click on food card)
-  // Add Item to Table (Click on food card) — Tezkor va Optimistik
-  const handleAddItem = async (menuItem) => {
+  // One recoverable queue owns create/add/delta, including rapid first taps.
+  const handleAddItem = menuItem => {
+    if (orderLoading || orderReadError || mutationQueueRef.current.error || sendingToKitchen) return;
     if (menuItem.is_stop_list || menuItem.is_available === false) {
-      showToast(`"${menuItem.name}" hozirda stop-listda (tugagan)`, 'warning');
-      return;
+      showToast(`"${menuItem.name}" hozirda stop-listda (tugagan)`, 'warning'); return;
     }
-
-    if (!selectedTable && orderType === 'table') {
-      showToast('Iltimos, avval stolni tanlang', 'warning');
-      return;
+    if (!selectedTable && orderType === 'table') { showToast('Iltimos, avval stolni tanlang', 'warning'); return; }
+    const existing = activeOrderRef.current?.items?.find(item => item.menu_item_id === menuItem.id && !item.is_weighted);
+    if (existing?.quantity >= 500) { showToast('Taom miqdori 500 dan oshishi mumkin emas', 'warning'); return; }
+    const context = { restaurant_id: restaurantId, order_type: orderType === 'table' ? 'dine_in' : orderType };
+    if (orderType === 'table') { context.table_id = selectedTable.id; context.hall_name = selectedTable.room || 'Zal'; }
+    else {
+      context.customer_name = customerName.trim() || (orderType === 'takeaway' ? 'Olib ketish mijoz' : 'Dastavka mijoz');
+      context.customer_phone = customerPhone.trim() || null;
+      if (orderType === 'delivery') context.delivery_address = deliveryAddress.trim() || 'Manzil';
     }
-
-    try {
-      const scope = selectionKey;
-      let currentOrd = activeOrderRef.current;
-      if (currentOrd && orderType === 'table' && currentOrd.table_id !== selectedTable?.id) currentOrd = null;
-
-      // 3. activeOrder yo'q holatida yangi buyurtma ochilayotganda creatingOrderRef qulfi:
-      // ikkinchi bosish birinchi javob kelguncha kutsin, keyin add-items yo'liga o'tsin.
-      if (!currentOrd && creatingOrderRef.current && creatingOrderScopeRef.current === scope) {
-        try {
-          currentOrd = await creatingOrderRef.current;
-        } catch (_) {
-          currentOrd = null;
-        }
-      }
-
-      if (!currentOrd) {
-        const createPromise = (async () => {
-          const payload = {
-            restaurant_id: restaurantId,
-            order_type: orderType === 'table' ? 'dine_in' : orderType,
-            items: [{ menu_item_id: menuItem.id, quantity: 1 }],
-          };
-          if (orderType === 'table') {
-            payload.table_id = selectedTable?.id;
-            payload.hall_name = selectedTable?.room || 'Zal';
-          } else {
-            payload.customer_name = customerName.trim() || (orderType === 'takeaway' ? 'Olib ketish mijoz' : 'Dastavka mijoz');
-            payload.customer_phone = customerPhone.trim() || null;
-            if (orderType === 'delivery') {
-              payload.delivery_address = deliveryAddress.trim() || "Manzil";
-            }
-          }
-          return await api.post('/orders/waiter-create', payload, { idempotent: true });
-        })();
-
-        creatingOrderRef.current = createPromise;
-        creatingOrderScopeRef.current = scope;
-        let newOrd;
-        try {
-          newOrd = await createPromise;
-        } finally {
-          if (creatingOrderRef.current === createPromise) creatingOrderRef.current = null;
-        }
-
-        if (newOrd && selectionKeyRef.current === scope) {
-          activeOrderRef.current = newOrd;
-          setActiveOrder(newOrd);
-          openWeightModalIfNeeded(newOrd, menuItem.id);
-          if (orderType === 'table') {
-            setTables((prev) =>
-              prev.map((t) => (t.id === selectedTable?.id ? { ...t, status: 'occupied' } : t))
-            );
-            setSelectedTable((prev) => (prev ? { ...prev, status: 'occupied' } : prev));
-          }
-        }
-        return;
-      }
-
-      // Mavjud buyurtmaga taom qo'shish
-      const orderId = currentOrd.id;
-      const existingItem = (currentOrd.items || []).find(
-        (i) => Number(i.menu_item_id) === Number(menuItem.id) && !i.is_weighted
-      );
-
-      if (existingItem) {
-        // 1. Optimistik yangilanish
-        const targetQty = existingItem.quantity + 1;
-        setActiveOrder((prev) => {
-          if (!prev) return prev;
-          const updatedItems = (prev.items || []).map((it) =>
-            it.id === existingItem.id
-              ? {
-                  ...it,
-                  quantity: targetQty,
-                  total_price: (it.unit_price || menuItem.price) * targetQty,
-                }
-              : it
-          );
-          const sub = updatedItems.reduce((acc, it) => acc + (it.total_price || 0), 0);
-          return {
-            ...prev,
-            items: updatedItems,
-            ...previewOrderTotals(prev, sub),
-          };
-        });
-
-        // 2. Yangi PATCH delta endpointini navbat bilan chaqirish
-        const reqId = ++latestRequestIdRef.current;
-        orderQueueRef.current = orderQueueRef.current
-          .catch(() => {})
-          .then(async () => {
-            const updated = await api.patch(
-              `/orders/${orderId}/items/${existingItem.id}/delta`,
-              { delta: 1 }
-            );
-            if (reqId === latestRequestIdRef.current && updated) {
-              setActiveOrder(updated);
-            }
-            return updated;
-          });
-        await orderQueueRef.current;
-      } else {
-        // Yangi taom qo'shish
-        const reqId = ++latestRequestIdRef.current;
-        orderQueueRef.current = orderQueueRef.current
-          .catch(() => {})
-          .then(async () => {
-            const updated = await api.post(
-              `/orders/${orderId}/add-items`,
-              {
-                items: [{ menu_item_id: menuItem.id, quantity: 1 }],
-                send_to_kitchen_immediately: false,
-              },
-              { idempotent: true }
-            );
-            if (reqId === latestRequestIdRef.current && updated) {
-              setActiveOrder(updated);
-              openWeightModalIfNeeded(updated, menuItem.id);
-            }
-            return updated;
-          });
-        await orderQueueRef.current;
-      }
-    } catch (err) {
-      console.warn("Taom qo'shishda xatolik:", err);
-      const errMsg = err?.response?.data?.detail || err?.message || "Taom qo'shishda xatolik yuz berdi";
-      showToast(errMsg, 'urgent');
-      if (selectedTable) fetchTableActiveOrder(selectedTable);
-    }
+    queueIntent({ kind: 'add', menu: menuItem, quantity: 1, context });
   };
 
-  // Change quantity [- 1 +] — Optimistik va sezgir (PATCH /delta orqali)
-  const handleQtyChange = async (item, delta) => {
-    if (!activeOrder || !item || delta === 0) return;
-    const newQty = item.quantity + delta;
-    if (delta < 0 && !canDecreaseOrderItem(user, item)) {
+  const handleQtyChange = (item, delta) => {
+    const current = activeOrderRef.current?.items?.find(line => line.id === item.id);
+    if (!current || mutationQueueRef.current.error || sendingToKitchen) return;
+    if (delta < 0 && !canDecreaseOrderItem(user, current)) {
       showToast('Oshxonaga yuborilgan taomni ofitsiant yoki admin kamaytiradi.', 'warning'); return;
     }
-
-    // 1. Darhol ekranni yangilaymiz (0ms kechikish)
-    setActiveOrder((prev) => {
-      if (!prev) return prev;
-      if (newQty <= 0) {
-        const filtered = (prev.items || []).filter((it) => it.id !== item.id);
-        if (filtered.length === 0) return null;
-        const sub = filtered.reduce((acc, it) => acc + (it.total_price || 0), 0);
-        return {
-          ...prev,
-          items: filtered,
-          ...previewOrderTotals(prev, sub),
-        };
-      }
-      const updatedItems = (prev.items || []).map((it) =>
-        it.id === item.id
-          ? {
-              ...it,
-              quantity: newQty,
-              total_price: (it.unit_price || 0) * newQty,
-            }
-          : it
-      );
-      const sub = updatedItems.reduce((acc, it) => acc + (it.total_price || 0), 0);
-      return {
-        ...prev,
-        items: updatedItems,
-        ...previewOrderTotals(prev, sub),
-      };
-    });
-
-    try {
-      const orderId = activeOrder.id;
-      const reqId = ++latestRequestIdRef.current;
-      orderQueueRef.current = orderQueueRef.current
-        .catch(() => {})
-        .then(async () => {
-          const updated = await api.patch(
-            `/orders/${orderId}/items/${item.id}/delta`,
-            { delta }
-          );
-          if (reqId === latestRequestIdRef.current && updated) {
-            if (updated.status === 'cancelled' || !updated.items || updated.items.length === 0) {
-              setActiveOrder(null);
-            } else {
-              setActiveOrder(updated);
-            }
-          }
-          return updated;
-        });
-      await orderQueueRef.current;
-    } catch (err) {
-      console.warn('Soni yangilashda xatolik:', err);
-      const errMsg = err?.response?.data?.detail || err?.message || "Taom sonini o'zgartirishda xatolik yuz berdi";
-      showToast(errMsg, 'urgent');
-      if (selectedTable) fetchTableActiveOrder(selectedTable);
-    }
+    if (current.quantity + delta > 500) { showToast('Taom miqdori 500 dan oshishi mumkin emas', 'warning'); return; }
+    queueIntent({ kind: 'delta', itemId: current.id, menuId: current.menu_item_id, delta });
   };
 
   // Delete item from order — Darhol ekrandan olib tashlaydi
   const handleDeleteItem = async (itemId) => {
-    if (!activeOrder) return;
+    if (!activeOrder || mutationQueueRef.current.pending) return;
     const item = activeOrder.items?.find(line => line.id === itemId);
     if (!item || !canDeleteOrderItem(user, item)) {
       showToast('Oshxonaga yuborilgan taomni ofitsiant yoki admin o‘chiradi.', 'warning'); return;
@@ -1113,7 +994,7 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
       : allItems;
 
   return (
-    <div className="dunyo-pos h-full min-h-0 overflow-hidden bg-slate-950 text-slate-100 flex flex-col font-sans select-none" data-mobile-view={mobileTab} data-testid="pos-workspace">
+    <div className="dunyo-pos relative h-full min-h-0 overflow-hidden bg-slate-950 text-slate-100 flex flex-col font-sans select-none" data-mobile-view={mobileTab} data-testid="pos-workspace">
       {/* 6. Ulanish yo'q bo'lsa tepada sariq banner: Aloqa yo'q, qayta ulanmoqda */}
       {connected === false && (
         <div className="bg-amber-500/95 text-slate-950 font-bold px-4 py-2 text-center text-xs sm:text-sm flex items-center justify-center gap-2 shadow-md shrink-0 z-50">
@@ -1140,10 +1021,10 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
       )}
 
       {/* Printer statusi (navbat to'lib qolsa yoki printer ishlamasa ogohlantirish) */}
-      <PrinterStatusBanner />
+      {isPrivileged && <PrinterStatusBanner />}
 
       {/* ─── Yuqori panel ──────────────────────────────────────────── */}
-      <header className="min-h-[52px] py-1 bg-emerald-950/80 border-b border-emerald-800/60 px-2 sm:px-4 flex items-center justify-between shadow-lg backdrop-blur-md shrink-0">
+      {(isPrivileged || activeTab !== 'pos') && <header className="min-h-[52px] py-1 bg-emerald-950/80 border-b border-emerald-800/60 px-2 sm:px-4 flex items-center justify-between shadow-lg backdrop-blur-md shrink-0">
         <div className="flex items-center gap-1.5 min-w-0">
           {/* "Stollar" — chaqiruvlar yoki tayyor taomlardan POS ekraniga
               qaytish tugmasi. */}
@@ -1226,7 +1107,20 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
             </div>
           </div>
         </div>
-      </header>
+      </header>}
+
+      {mutationStatus.pending > 0 && <div role={mutationStatus.error ? 'alert' : 'status'} className={`px-3 py-2 text-xs flex flex-wrap items-center gap-2 ${mutationStatus.error ? 'shrink-0 bg-red-950 text-red-200' : 'absolute bottom-16 left-3 z-30 pointer-events-none rounded-lg shadow-lg bg-slate-800 text-slate-200'}`}>
+        <span className="flex-1">{label(mutationStatus.error ? 'Saqlash tasdiqlanmadi. Bajarilmagan amallar navbatda.' : 'Saqlanmoqda...')}{mutationStatus.error?.status ? ` ${mutationStatus.error.message}` : ''}</span>
+        {mutationStatus.error && <><button type="button" className="min-h-[44px] px-3 rounded-lg bg-emerald-700 font-bold" onClick={() => mutationQueueRef.current.retry()}>{label('Qayta urinish')}</button>
+          <button type="button" className="min-h-[44px] px-3 underline" onClick={() => {
+            mutationQueueRef.current.discard();
+            if (selectedTableRef.current) fetchTableActiveOrder(selectedTableRef.current);
+          }}>{label('Navbatni bekor qilish')}</button></>}
+      </div>}
+      {orderReadError && !browsingTables && <div role="alert" className="shrink-0 flex items-center justify-between gap-2 px-3 py-2 bg-red-950 text-red-200 text-xs">
+        <span>{label('Hisob yuklanmadi. Taom qo‘shishdan oldin qayta urining.')}</span>
+        <button type="button" className="min-h-[44px] px-3 font-bold underline" onClick={() => fetchTableActiveOrder(selectedTableRef.current)}>{label('Qayta urinish')}</button>
+      </div>}
 
       {/* ─── Main Content Tabs ───────────────────────────────────────── */}
       {activeTab === 'calls' ? (
@@ -1333,7 +1227,7 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
           )}
         </div>
       ) : browsingTables && orderType === 'table' ? (
-        <WaiterTablePicker tables={tables} zone={selectedZone} onZone={setSelectedZone} query={tableSearch} onQuery={setTableSearch} label={label} loading={loading} onSelect={table => {
+        <WaiterTablePicker headingActions={!isPrivileged && <button type="button" aria-label={`${label('Chaqiruvlar')}${calls.length ? ` (${calls.length})` : ''}`} onClick={() => setActiveTab('calls')} className="relative min-w-[44px] min-h-[44px] rounded-xl bg-slate-800 border border-slate-600 flex items-center justify-center text-slate-200"><BellRing size={20} />{calls.length > 0 && <span className="absolute -top-1 -right-1 bg-red-600 text-white rounded-full px-1.5 text-xs font-bold">{calls.length}</span>}</button>} tables={tables} zone={selectedZone} onZone={setSelectedZone} query={tableSearch} onQuery={setTableSearch} label={label} loading={loading} onSelect={table => {
           latestRequestIdRef.current += 1;
           selectionKeyRef.current = `table:${table.id}`;
           setActiveOrder(null);
@@ -1348,6 +1242,7 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
         /* ── POS EKRANI (stol zakazi) ──────────────────────────────── */
         <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
           <nav aria-label={label('Buyurtma ko‘rinishi')} className="pos-mobile-navigation lg:hidden shrink-0 flex items-center gap-2 px-2 py-1.5 border-b border-slate-700 bg-slate-950">
+            {!isPrivileged && <button type="button" aria-label={label('Stollarga qaytish')} onClick={() => setBrowsingTables(true)} className="min-w-[44px] min-h-[44px] rounded-xl bg-slate-800 flex items-center justify-center"><ArrowLeft size={20} /></button>}
             <span className="flex-1 min-w-0 text-xs font-bold truncate">
               {orderType === 'table' ? [selectedTable?.room, selectedTable?.name || `${label('Stol #')}${selectedTable?.number || ''}`].filter(Boolean).join(' · ') : activeOrder?.order_number || label('+ Yangi zakaz')}
             </span>
@@ -1361,6 +1256,7 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
               className="pos-order-pane w-full lg:w-[35%] lg:min-w-[360px] lg:max-w-[560px] bg-slate-900/95 border-r border-slate-800 flex flex-col shrink-0 h-full pos-order-container overflow-hidden min-h-0"
             >
             <div data-testid="pos-order-toolbar" className="flex items-center gap-1 px-2 py-1.5 shrink-0 border-b border-slate-700 bg-slate-950">
+              {!isPrivileged && <button type="button" aria-label={label('Stollarga qaytish')} onClick={() => setBrowsingTables(true)} className="hidden lg:flex min-w-[44px] min-h-[44px] items-center justify-center rounded-lg bg-slate-800"><ArrowLeft size={20} /></button>}
               {showModeSwitch && canCheckout && <select aria-label={label('Buyurtma turi')} value={orderType} onChange={event => {
                 const next = event.target.value;
                 if (next === orderType) return;
@@ -1374,7 +1270,7 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
                 <span className="block text-[11px] text-slate-400 truncate">{orderType === 'table' ? [selectedTable?.room, selectedTable?.is_occupied || selectedTable?.status === 'occupied' ? label('Band') : label("Bo'sh")].filter(Boolean).join(' · ') : customerName || label('Buyurtmalar ro‘yxati')}</span>
               </button>
               {orderType !== 'table' && <button aria-label={label('Mijoz ma’lumotlari')} title={label('Mijoz ma’lumotlari')} onClick={() => setCustomerDetailsOpen(true)} className="w-10 min-h-[44px] shrink-0 flex items-center justify-center rounded-lg text-cyan-300 hover:bg-slate-800"><User size={19} /></button>}
-              {orderType === 'table' && activeOrder && selectedTable && <button aria-label={label("Ko'chirish")} title={label("Ko'chirish")} onClick={() => setTransferModalOpen(true)} className="w-10 min-h-[44px] shrink-0 flex items-center justify-center text-amber-300 hover:bg-slate-800 rounded-lg"><ArrowRightLeft size={19} /></button>}
+              {orderType === 'table' && activeOrder && selectedTable && <button disabled={mutationStatus.pending > 0} aria-label={label("Ko'chirish")} title={label("Ko'chirish")} onClick={() => setTransferModalOpen(true)} className="w-10 min-h-[44px] shrink-0 flex items-center justify-center text-amber-300 hover:bg-slate-800 rounded-lg disabled:opacity-30"><ArrowRightLeft size={19} /></button>}
               <button aria-label={label('💬 Izoh')} title={label('💬 Izoh')} onClick={() => setKitchenNoteModalOpen(true)} className="w-10 min-h-[44px] shrink-0 flex items-center justify-center rounded-lg text-slate-300 hover:bg-slate-800"><MessageSquare size={19} />{kitchenNote && <span className="text-emerald-400">•</span>}</button>
               {canCheckout && <button aria-label={label('🧾 Chek')} title={label('🧾 Chek')} disabled={!activeOrder || printingBill} onClick={handlePrintBill} className="w-10 min-h-[44px] shrink-0 flex items-center justify-center rounded-lg text-slate-300 hover:bg-slate-800 disabled:opacity-30"><Receipt size={19} /></button>}
             </div>
@@ -1448,6 +1344,7 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
                           {/* O'lchanadigan taom hajmi */}
                           {!it.is_weighted && (
                             <button
+                              disabled={String(it.id).startsWith('pending:')}
                               onClick={() => {
                                 setSizeModalItem(it);
                                 setSizeValue(it.portion_size || '');
@@ -1520,7 +1417,7 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
                         <button
                           type="button"
                           onClick={() => handleDeleteItem(it.id)}
-                          disabled={!canDeleteOrderItem(user, it)}
+                          disabled={mutationStatus.pending > 0 || !canDeleteOrderItem(user, it)}
                           className="min-w-[40px] min-h-[44px] rounded-xl text-slate-500 hover:text-red-400 hover:bg-red-500/10 active:scale-90 transition-all flex items-center justify-center disabled:opacity-30 disabled:cursor-not-allowed"
                           title={canDeleteOrderItem(user, it) ? label("Taomni o'chirish") : label('Oshxonaga yuborilgan: ofitsiant yoki admin o‘chiradi')}
                         >
@@ -1629,17 +1526,18 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
               <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-3 sm:gap-3.5">
                 {displayedItems.map((item) => {
                   const isStop = item.is_stop_list || item.is_available === false;
+                  const unavailable = isStop || orderLoading || Boolean(orderReadError) || Boolean(mutationStatus.error) || sendingToKitchen;
                   return (
                     <div
                       key={item.id}
                       role="button"
-                      tabIndex={isStop ? -1 : 0}
+                      tabIndex={unavailable ? -1 : 0}
                       aria-label={getLocalizedName(item)}
-                      aria-disabled={isStop}
+                      aria-disabled={unavailable}
                       onClick={() => handleAddItem(item)}
-                      onKeyDown={event => { if (!isStop && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); handleAddItem(item); } }}
+                      onKeyDown={event => { if (!unavailable && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); handleAddItem(item); } }}
                       className={`group relative rounded-3xl bg-slate-900 border-2 border-slate-800 p-3 flex flex-col justify-between hover:border-emerald-500 hover:bg-slate-850 transition-all shadow-lg cursor-pointer select-none active:scale-95 ${
-                        isStop ? 'opacity-50 grayscale pointer-events-none' : ''
+                        unavailable ? 'opacity-50 pointer-events-none' : ''
                       }`}
                     >
                       {/* Thumbnail: Kattaroq rasm */}

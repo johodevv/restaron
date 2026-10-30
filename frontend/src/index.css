@@ -353,9 +353,6 @@ button, input, select, textarea, a {
   .dunyo-pos [data-testid="pos-order-footer"] { padding-top: 6px; padding-bottom: 6px; }
   .dunyo-pos .pos-kitchen-action { min-height: 44px; }
 }
-@media (max-height: 740px) and (max-width: 1023px) {
-  .dunyo-pos[data-mobile-view="menu"] .pos-product-image { display: none; }
-}
 .pos-line-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(120px, max-content) 92px 44px; column-gap: 4px; }
 .pos-line-name { grid-column: 1; grid-row: 1; overflow-wrap: anywhere; }
 .pos-line-details { grid-column: 1; grid-row: 2; }
