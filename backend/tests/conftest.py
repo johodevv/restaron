@@ -61,8 +61,15 @@ def manage_test_db():
                 pass
 
 
+@pytest.fixture
+def anyio_backend():
+    # The application and its SQLAlchemy engine use asyncio, including sync tests
+    # whose autouse schema fixture still needs an async test runner.
+    return 'asyncio'
+
+
 @pytest.fixture(autouse=True)
-async def isolate_test_schema(manage_test_db, monkeypatch, tmp_path):
+async def isolate_test_schema(anyio_backend, manage_test_db, monkeypatch, tmp_path):
     """Each test owns an empty schema; fixtures cannot leak roles, settings or orders."""
     from app.core.database import engine, Base
     import app.core.pdf_generator as pdf

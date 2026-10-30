@@ -9,6 +9,7 @@ import ThermalReceiptModal from '../../components/ThermalReceiptModal';
 import PrinterStatusBanner from '../../components/PrinterStatusBanner';
 import TablesTab from './TablesTab';
 import StaffDismissDialog from '../../components/StaffDismissDialog';
+import { AdminPrimaryNavigation, AdminSectionNavigation } from '../../components/AdminNavigation';
 import { resolveQrBaseUrl } from '../../utils/tableDirectory';
 import { DebtsTab } from './DebtsTab';
 import { ReceiptsArchiveTab } from './ReceiptsArchiveTab';
@@ -66,11 +67,15 @@ import {
 } from 'lucide-react';
 
 export const AdminDashboard = () => {
+  const panelRef = useRef(null);
   const { user } = useAuth();
   const { activeThemes, setActiveThemes, allThemes } = useTheme();
   const { addEventListener, playChime } = useWebSocket();
   const [activePrintAlert, setActivePrintAlert] = useState(null);
   const [tab, setTab] = useState('pos'); // 'pos' | 'tables' | 'receipts' | 'staff' | 'debts' | 'overview' | ...
+  useEffect(() => {
+    panelRef.current?.closest('main')?.scrollTo({ top: 0 });
+  }, [tab]);
 
   const restaurantId = user?.restaurant_id || 1;
 
@@ -642,38 +647,14 @@ export const AdminDashboard = () => {
   };
 
   return (
-    <div className={`mx-auto px-2 sm:px-4 animate-fade-in ${tab === 'tables' ? 'tables-admin-shell ' : ''}${tab === 'pos' ? 'w-full h-full min-h-0 flex flex-col overflow-hidden gap-1 py-1' : 'max-w-7xl py-6 pb-24 space-y-4'}`}>
+    <div ref={panelRef} className={`admin-shell mx-auto px-2 sm:px-4 animate-fade-in ${tab === 'tables' ? 'tables-admin-shell ' : ''}${tab === 'pos' ? 'w-full h-full min-h-0 flex flex-col overflow-hidden gap-1 py-1' : 'w-full py-2 pb-24 space-y-4'}`}>
       {/* Printer statusi (navbat to'lib qolsa yoki printer ishlamasa ogohlantirish) */}
       {tab !== 'pos' && <PrinterStatusBanner />}
-
-      {/* Top Header — Faqat POS bo'lmagan sahifalarda chiqadi */}
-      {tab !== 'pos' && tab !== 'tables' && (
-        <div className="p-6 rounded-3xl glass-card border border-theme-border bg-gradient-to-r from-theme-surface via-theme-bg to-theme-surface flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-xl">
-          <div>
-            <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-theme-primary/15 border border-theme-primary/30 text-theme-primary text-xs font-bold mb-2">
-              <Sparkles className="w-3.5 h-3.5" />
-              <span>RestAron Boshqaruv Markazi</span>
-            </div>
-            <h1 className="text-2xl sm:text-3xl font-extrabold text-white tracking-tight">
-              Dunyo Choyxonasi — Restoran Admin Paneli
-            </h1>
-            <p className="text-xs text-theme-muted mt-1">
-              Menyular, rasmlar, stollar holati, QR kodlar va buyurtmalar nazorati.
-            </p>
-          </div>
-
-          <button
-            onClick={loadAll}
-            className="self-start sm:self-auto p-2.5 rounded-xl border border-theme-border hover:border-theme-primary bg-white/5 hover:bg-white/10 text-theme-muted hover:text-white transition-all flex items-center gap-2 text-xs font-semibold"
-          >
-            <RefreshCw className="w-4 h-4" />
-            <span>Yangilash</span>
-          </button>
-        </div>
-      )}
+      <AdminPrimaryNavigation tab={tab} onNavigate={setTab} role={user?.role} onRefresh={loadAll} />
 
       {/* Internet URL Status Banner — Faqat POS bo'lmagan sahifalarda chiqadi */}
       {tab !== 'pos' && tab !== 'tables' && lanInfo && (
+        <details className="admin-connection-details"><summary>Ulanish manzili</summary>
         <div className={`p-3.5 rounded-2xl border flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs font-semibold shadow-lg ${
           lanInfo.mode === 'internet'
             ? 'bg-emerald-500/10 border-emerald-500/40 text-emerald-300'
@@ -716,6 +697,7 @@ export const AdminDashboard = () => {
             )}
           </div>
         </div>
+        </details>
       )}
 
 
@@ -767,43 +749,9 @@ export const AdminDashboard = () => {
         </div>
       )}
 
-      {/* Tabs — Full Navigation Bar */}
-      <div className="flex items-center gap-2 overflow-x-auto pb-2 scrollbar-none no-scrollbar shrink-0">
-        {[
-          { key: 'pos', label: 'Zakas olish (POS)', icon: ShoppingCart },
-          { key: 'tables', label: 'Stollar & QR', icon: TableIcon },
-          { key: 'receipts', label: 'Cheklar Arxivi', icon: Archive },
-          { key: 'staff', label: 'Xodimlar', icon: Users },
-          { key: 'debts', label: 'Qarzlar (Nasiya)', icon: Wallet },
-          { key: 'overview', label: 'Xulosa', icon: LayoutDashboard },
-          { key: 'menu', label: 'Menyu & Taomlar', icon: UtensilsCrossed },
-          { key: 'payments', label: 'Kassa Hisoboti', icon: FileSpreadsheet },
-          { key: 'waiter_kpi', label: 'Ofitsiantlar KPI', icon: Trophy },
-          { key: 'themes', label: 'Dizayn & Temalar', icon: Palette },
-          { key: 'settings', label: 'Sozlamalar', icon: Settings },
-          { key: 'reviews', label: 'Baholar', icon: Star },
-        ].filter((t) => user?.role !== 'cashier' || ['pos', 'receipts', 'debts', 'payments'].includes(t.key)).map((t) => {
-          const Icon = t.icon;
-          const isActive = tab === t.key;
-          return (
-            <button
-              key={t.key}
-              data-tab={t.key}
-              id={`admin-tab-${t.key}`}
-              onClick={() => setTab(t.key)}
-              className={`flex items-center gap-2 px-4 py-2.5 rounded-2xl text-xs font-bold whitespace-nowrap transition-all ${
-                isActive
-                  ? 'bg-theme-primary text-white shadow-glow scale-102'
-                  : 'bg-theme-surface/60 border border-theme-border text-theme-muted hover:text-white hover:border-theme-primary/40'
-              }`}
-            >
-              <Icon className="w-4 h-4" />
-              <span>{t.label}</span>
-            </button>
-          );
-        })}
-      </div>
-
+      <div className={`admin-work-area ${!['pos', 'tables'].includes(tab) ? 'with-sections' : ''}`}>
+        <AdminSectionNavigation tab={tab} onNavigate={setTab} role={user?.role} />
+        <section className="admin-page-content" aria-label="Tanlangan bo‘lim">
       {/* TAB 1: OVERVIEW */}
       {tab === 'overview' && (
         <div className="space-y-6">
@@ -1552,6 +1500,9 @@ export const AdminDashboard = () => {
           )}
         </div>
       )}
+
+        </section>
+      </div>
 
       {/* ─── MODAL: CATEGORY CREATE / EDIT ───────────────────────────── */}
       {showCategoryModal && (

@@ -198,7 +198,7 @@ export const App = () => {
 
           {/* If Logged in as Staff */}
           {user && (
-            <div className="h-[100dvh] flex flex-col overflow-hidden">
+            <div className="staff-app-shell h-[100dvh] flex flex-col overflow-hidden">
               <div className="shrink-0">
                 <Navbar currentView={currentView} onNavigate={setCurrentView} />
               </div>

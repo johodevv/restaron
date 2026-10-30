@@ -1527,7 +1527,7 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
               )}
             </div>
 
-            <div data-testid="pos-order-footer" className="px-3 py-2 bg-slate-950 border-t border-slate-700 shrink-0 space-y-2">
+            <div data-testid="pos-order-footer" className={`${canCheckout ? 'pos-payment-footer ' : ''}px-3 py-2 bg-slate-950 border-t border-slate-700 shrink-0 space-y-2`}>
               {kitchenSendSuccess && <p role="status" className="text-xs text-emerald-300 truncate">{label('✅ Buyurtma oshxona navbatiga qabul qilindi')}</p>}
               {(activeOrder?.items || []).some(i => i.is_weighted && !isPriced(i)) && <p className="text-xs text-red-300">{label('Narxi kiritilmagan taom bor:')} {(activeOrder?.items || []).filter(i => i.is_weighted && !isPriced(i)).length}</p>}
               <div className="flex items-center gap-2">

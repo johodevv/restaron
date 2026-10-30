@@ -73,8 +73,12 @@ const Toggle = ({ checked, onChange, label, description, icon: Icon, color = 'th
   </div>
 );
 
-const SettingsSection = ({ title, icon: Icon, children, accentColor = 'text-theme-primary' }) => (
-  <div className="p-5 rounded-3xl glass-card border border-theme-border bg-theme-surface/80 shadow-xl space-y-4">
+const SETTINGS_PAGES = [
+  ['restaurant', 'Restoran'], ['service', 'Xizmat va kassa'], ['receipt', 'Chek ko‘rinishi'],
+  ['printers', 'Printer va oshxona'], ['permissions', 'QR va imkoniyatlar'], ['telegram', 'Telegram'], ['sms', 'SMS'],
+];
+const SettingsSection = ({ section, active, title, icon: Icon, children, accentColor = 'text-theme-primary' }) => (
+  <div id={`settings-panel-${section}`} role="region" aria-labelledby={`settings-tab-${section}`} hidden={active !== section} className="settings-section p-5 rounded-2xl glass-card border border-theme-border bg-theme-surface/80 shadow-xl space-y-4">
     <div className={`flex items-center gap-2 font-bold text-sm ${accentColor}`}>
       <Icon className="w-4 h-4" />
       <span>{title}</span>
@@ -84,6 +88,7 @@ const SettingsSection = ({ title, icon: Icon, children, accentColor = 'text-them
 );
 
 export const RestaurantSettingsTab = ({ restaurantId }) => {
+  const [settingsPage, setSettingsPage] = useState('restaurant');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [savedOk, setSavedOk] = useState(false);
@@ -378,13 +383,13 @@ export const RestaurantSettingsTab = ({ restaurantId }) => {
   return (
     <form onSubmit={handleSave} className="space-y-6 animate-fade-in">
       {/* Header */}
-      <div className="p-6 rounded-3xl glass-card border border-theme-border bg-theme-surface/85 shadow-xl flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+      <div className="p-4 rounded-2xl glass-card border border-theme-border bg-theme-surface/85 shadow-xl flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <div className="flex items-center gap-2 text-theme-primary text-xs font-bold uppercase tracking-wider mb-1">
             <Settings className="w-4 h-4" />
             <span>Restoran Sozlamalari</span>
           </div>
-          <h2 className="text-xl sm:text-2xl font-black text-white">
+          <h2 className="text-lg sm:text-xl font-bold text-white">
             Kassa, Chek & Integratsiya Sozlamalari
           </h2>
           <p className="text-xs text-theme-muted mt-1">
@@ -412,6 +417,7 @@ export const RestaurantSettingsTab = ({ restaurantId }) => {
 
       {/* Dastur versiyasi — yangilanish yetib kelganini tekshirish uchun */}
       {appVersion && (
+        <details className="admin-connection-details"><summary>Dastur versiyasi: {appVersion.version || 'nomalum'}</summary>
         <div className="p-3.5 rounded-2xl bg-black/30 border border-theme-border/70 flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-2.5">
             <span className="text-base">🔖</span>
@@ -434,10 +440,16 @@ export const RestaurantSettingsTab = ({ restaurantId }) => {
             )}
           </div>
         </div>
+        </details>
       )}
 
+      <div className="settings-workspace">
+        <nav className="settings-navigation" aria-label="Sozlamalar bo‘limlari">
+          {SETTINGS_PAGES.map(([id, title]) => <button key={id} id={`settings-tab-${id}`} type="button" aria-controls={`settings-panel-${id}`} aria-pressed={settingsPage === id} onClick={() => setSettingsPage(id)}>{title}</button>)}
+        </nav>
+        <div className="min-w-0">
       {/* ─── Section 1: Restoran Ma'lumotlari ─────────────────────────── */}
-      <SettingsSection title="Restoran Ma'lumotlari" icon={Globe}>
+      <SettingsSection section="restaurant" active={settingsPage} title="Restoran Ma'lumotlari" icon={Globe}>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div>
             <label className="block text-[11px] font-semibold text-theme-muted mb-1">Restoran Nomi:</label>
@@ -481,7 +493,7 @@ export const RestaurantSettingsTab = ({ restaurantId }) => {
       </SettingsSection>
 
       {/* ─── Section 2: Xizmat Haqi va Kassa ─────────────────────────── */}
-      <SettingsSection title="💰 Xizmat Haqi (Service Fee) & Kassa Sozlamalari" icon={Percent} accentColor="text-amber-400">
+      <SettingsSection section="service" active={settingsPage} title="💰 Xizmat Haqi (Service Fee) & Kassa Sozlamalari" icon={Percent} accentColor="text-amber-400">
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           {/* Service Fee with live preview like Ali Poster */}
           <div className="sm:col-span-2">
@@ -540,7 +552,7 @@ export const RestaurantSettingsTab = ({ restaurantId }) => {
       </SettingsSection>
 
       {/* ─── Section 3: Xprinter (Thermal Printer) ────────────────────── */}
-      <SettingsSection title="🖨️ Xprinter Termoprinter Sozlamalari" icon={Printer} accentColor="text-blue-400">
+      <SettingsSection section="receipt" active={settingsPage} title="🖨️ Xprinter Termoprinter Sozlamalari" icon={Printer} accentColor="text-blue-400">
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           {/* Paper Width */}
           <div>
@@ -906,7 +918,7 @@ export const RestaurantSettingsTab = ({ restaurantId }) => {
       </SettingsSection>
 
       {/* ─── Section 3.5: 3 ta Chek Printerlari va Oshxona Routing ───────────────── */}
-      <SettingsSection title="🖨️ 3 ta Chek Printerlari va Oshxona Routing Sozlamasi" icon={Printer} accentColor="text-amber-400">
+      <SettingsSection section="printers" active={settingsPage} title="🖨️ 3 ta Chek Printerlari va Oshxona Routing Sozlamasi" icon={Printer} accentColor="text-amber-400">
         {printerKitchen1Name?.trim() && printerKitchen1Name.trim().toLowerCase() === printerKitchen2Name?.trim().toLowerCase() && (
           <p role="alert" className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-amber-200">
             Ikkala oshxona bir xil printer manziliga ulangan. Ikki alohida LAN printer ishlatilsa, har biriga alohida IP manzil kiriting.
@@ -1422,7 +1434,7 @@ export const RestaurantSettingsTab = ({ restaurantId }) => {
       </SettingsSection>
 
       {/* ─── Section 4: Xususiyat Togglelari ─────────────────────────── */}
-      <SettingsSection title="⚙️ Funksiya va Huquq Sozlamalari" icon={ShieldCheck} accentColor="text-emerald-400">
+      <SettingsSection section="permissions" active={settingsPage} title="⚙️ Funksiya va Huquq Sozlamalari" icon={ShieldCheck} accentColor="text-emerald-400">
         <div className="space-y-2">
           <Toggle
             checked={directQrAccess}
@@ -1451,7 +1463,7 @@ export const RestaurantSettingsTab = ({ restaurantId }) => {
       </SettingsSection>
 
       {/* ─── Section 5: Telegram Bot ──────────────────────────────────── */}
-      <SettingsSection title="🤖 Telegram Bot Bildirgi (Xodimlar Guruhi)" icon={Bot} accentColor="text-cyan-400">
+      <SettingsSection section="telegram" active={settingsPage} title="🤖 Telegram Bot Bildirgi (Xodimlar Guruhi)" icon={Bot} accentColor="text-cyan-400">
         <Toggle
           checked={enableTelegramNotifications}
           onChange={setEnableTelegramNotifications}
@@ -1491,7 +1503,7 @@ export const RestaurantSettingsTab = ({ restaurantId }) => {
       </SettingsSection>
 
       {/* ─── Section 6: SMS Eslatmalar ────────────────────────────────── */}
-      <SettingsSection title="📲 SMS Eslatmalar (Nasiya Daftari)" icon={Smartphone} accentColor="text-purple-400">
+      <SettingsSection section="sms" active={settingsPage} title="📲 SMS Eslatmalar (Nasiya Daftari)" icon={Smartphone} accentColor="text-purple-400">
         <Toggle
           checked={enableSmsReminders}
           onChange={setEnableSmsReminders}
@@ -1533,6 +1545,8 @@ export const RestaurantSettingsTab = ({ restaurantId }) => {
       </SettingsSection>
 
       {/* ─── Save Button (bottom sticky) ───────────────────────────────── */}
+        </div>
+      </div>
       <div className="sticky bottom-4 z-10">
         <div className="p-3 rounded-2xl bg-black/80 backdrop-blur-md border border-theme-border/70 flex items-center justify-between gap-4">
           <div className="text-xs text-theme-muted">
