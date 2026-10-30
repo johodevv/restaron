@@ -12,6 +12,8 @@ const labels = [
   ['Mijoz ma’lumotlari', 'Данные гостя', 'Customer details'], ['Telefon', 'Телефон', 'Phone'], ['Manzil', 'Адрес', 'Address'],
   ['Davom etish', 'Продолжить', 'Continue'], ['Buyurtma qidirish', 'Найти заказ', 'Find order'], ['Raqam, ism yoki telefon...', 'Номер, имя или телефон...', 'Number, name or phone...'],
   ['Taomlar', 'Блюда', 'Dishes'],
+  ['Buyurtma', 'Заказ', 'Order'], ['Buyurtmani ko‘rish', 'Посмотреть заказ', 'View order'],
+  ['Buyurtma ko‘rinishi', 'Вид заказа', 'Order view'],
   ['Printer navbati', 'Очередь печати', 'Print queue'], ['ta chek', 'чеков', 'tickets'],
   ['Tafsilotlar', 'Подробнее', 'Details'], ['tasdiq kutilmoqda', 'ожидают подтверждения', 'awaiting confirmation'],
   ['Qog‘ozda chiqdi', 'Напечатан на бумаге', 'Printed on paper'], ['Qayta yuborish', 'Отправить повторно', 'Resend'],

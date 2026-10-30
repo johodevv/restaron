@@ -210,9 +210,11 @@ export const WebSocketProvider = ({ children, restaurantId = 1, tableId = null }
     const onVisible = () => { if (document.visibilityState === 'visible') resume(); };
     document.addEventListener('visibilitychange', onVisible);
     window.addEventListener('online', resume);
+    window.addEventListener('pageshow', resume);
     return () => {
       document.removeEventListener('visibilitychange', onVisible);
       window.removeEventListener('online', resume);
+      window.removeEventListener('pageshow', resume);
       connection.dispose();
     };
   }, [token, user?.id, user?.role, user?.restaurant_id, restaurantId, tableId, playChime, addNotification]);

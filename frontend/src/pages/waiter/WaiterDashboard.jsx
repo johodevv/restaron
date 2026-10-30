@@ -1347,6 +1347,13 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
       ) : (
         /* ── POS EKRANI (stol zakazi) ──────────────────────────────── */
         <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
+          <nav aria-label={label('Buyurtma ko‘rinishi')} className="pos-mobile-navigation lg:hidden shrink-0 flex items-center gap-2 px-2 py-1.5 border-b border-slate-700 bg-slate-950">
+            <span className="flex-1 min-w-0 text-xs font-bold truncate">
+              {orderType === 'table' ? [selectedTable?.room, selectedTable?.name || `${label('Stol #')}${selectedTable?.number || ''}`].filter(Boolean).join(' · ') : activeOrder?.order_number || label('+ Yangi zakaz')}
+            </span>
+            <button type="button" aria-pressed={mobileTab === 'menu'} onClick={() => setMobileTab('menu')} className={`min-h-[44px] px-3 rounded-xl text-sm font-bold ${mobileTab === 'menu' ? 'bg-emerald-700 text-white' : 'bg-slate-800 text-slate-300'}`}>{label('Taomlar')}</button>
+            <button type="button" aria-pressed={mobileTab === 'cart'} onClick={() => setMobileTab('cart')} className={`min-h-[44px] px-3 rounded-xl text-sm font-bold ${mobileTab === 'cart' ? 'bg-emerald-700 text-white' : 'bg-slate-800 text-slate-300'}`}>{label('Buyurtma')} ({(activeOrder?.items || []).reduce((sum, item) => sum + item.quantity, 0)})</button>
+          </nav>
           <div className="flex-1 flex flex-col lg:flex-row overflow-hidden min-h-0">
             {/* ── Chap Panel: Tanlangan Stol va Zakaz (Katta va qulay shriftlar) ─────────── */}
             <div
@@ -1369,9 +1376,6 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
               {orderType !== 'table' && <button aria-label={label('Mijoz ma’lumotlari')} title={label('Mijoz ma’lumotlari')} onClick={() => setCustomerDetailsOpen(true)} className="w-10 min-h-[44px] shrink-0 flex items-center justify-center rounded-lg text-cyan-300 hover:bg-slate-800"><User size={19} /></button>}
               {orderType === 'table' && activeOrder && selectedTable && <button aria-label={label("Ko'chirish")} title={label("Ko'chirish")} onClick={() => setTransferModalOpen(true)} className="w-10 min-h-[44px] shrink-0 flex items-center justify-center text-amber-300 hover:bg-slate-800 rounded-lg"><ArrowRightLeft size={19} /></button>}
               <button aria-label={label('💬 Izoh')} title={label('💬 Izoh')} onClick={() => setKitchenNoteModalOpen(true)} className="w-10 min-h-[44px] shrink-0 flex items-center justify-center rounded-lg text-slate-300 hover:bg-slate-800"><MessageSquare size={19} />{kitchenNote && <span className="text-emerald-400">•</span>}</button>
-              <button type="button" aria-label={mobileTab === 'cart' ? 'Menyuni ochish' : 'Savatni yoyish'} aria-expanded={mobileTab === 'cart'} onClick={() => setMobileTab(mobileTab === 'cart' ? 'menu' : 'cart')} className="lg:hidden min-h-[44px] px-2 rounded-lg bg-slate-800 text-slate-200 flex items-center gap-1 text-xs font-bold">
-                {mobileTab === 'cart' ? <ChevronUp size={18} /> : <ChevronDown size={18} />}{mobileTab === 'cart' ? label('Taomlar') : label('Savat')}
-              </button>
               {canCheckout && <button aria-label={label('🧾 Chek')} title={label('🧾 Chek')} disabled={!activeOrder || printingBill} onClick={handlePrintBill} className="w-10 min-h-[44px] shrink-0 flex items-center justify-center rounded-lg text-slate-300 hover:bg-slate-800 disabled:opacity-30"><Receipt size={19} /></button>}
             </div>
 
@@ -1557,7 +1561,7 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
 
           {/* ── O'ng Panel: Kategoriyalar va Taomlar Gridi (Katta va qulay kartochkalar) ───── */}
           <div
-            className={`flex-1 flex flex-col bg-slate-950 overflow-hidden h-full min-h-0 ${
+            className={`pos-menu-pane flex-1 flex flex-col bg-slate-950 overflow-hidden h-full min-h-0 ${
               mobileTab === 'menu' ? 'flex' : 'hidden lg:flex'
             }`}
           >
@@ -1683,7 +1687,10 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
               </div>
             </div>
 
-
+            <button type="button" onClick={() => setMobileTab('cart')} className="lg:hidden shrink-0 min-h-[56px] px-4 py-2 bg-emerald-700 text-white flex items-center justify-between gap-3 font-bold border-t border-emerald-500">
+              <span className="flex items-center gap-2"><ShoppingCart size={20} />{label('Buyurtmani ko‘rish')}</span>
+              <span className="text-right font-mono">{(activeOrder?.total || 0).toLocaleString('uz-UZ')} <span className="text-xs">{label("so'm")}</span></span>
+            </button>
           </div>
         </div>
       </div>

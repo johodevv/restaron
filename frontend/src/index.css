@@ -345,16 +345,13 @@ button, input, select, textarea, a {
 .dunyo-pos [data-testid="pos-order-footer"] { background: #203442; }
 .dunyo-pos [aria-label="Jami hisob:"] { color: #f3faf6; font-size: 22px; font-weight: 800; }
 @media (max-width: 1023px) {
-  .dunyo-pos[data-mobile-view="menu"] .pos-order-pane { height: 48%; flex-basis: 48%; min-height: 190px; }
-  .dunyo-pos[data-mobile-view="menu"] [data-testid="pos-order-items"] .p-12 { padding: 12px; }
+  .dunyo-pos[data-mobile-view="menu"] .pos-order-pane { display: none; }
+  .dunyo-pos[data-mobile-view="cart"] .pos-order-pane { flex: 1; height: 100%; min-height: 0; }
+  .dunyo-pos[data-mobile-view="cart"] .pos-menu-pane { display: none; }
   .dunyo-pos .pos-menu-filters { padding: 8px 12px; }
   .dunyo-pos .pos-menu-filters .mb-3 { margin-bottom: 6px; }
   .dunyo-pos [data-testid="pos-order-footer"] { padding-top: 6px; padding-bottom: 6px; }
   .dunyo-pos .pos-kitchen-action { min-height: 44px; }
-}
-@media (max-height: 520px) and (max-width: 1023px) {
-  /* Landscape/keyboard: let the two panes scroll rather than overlap controls. */
-  .dunyo-pos[data-mobile-view="menu"] .pos-order-pane { min-height: 150px; }
 }
 @media (max-height: 740px) and (max-width: 1023px) {
   .dunyo-pos[data-mobile-view="menu"] .pos-product-image { display: none; }
