@@ -1,4 +1,9 @@
 /* Only the administrator/cashier editor opts into this desktop layout. */
+.admin-shell .admin-pos-workspace {
+  /* The outer main scrolls the admin page; the editor keeps its own panes. */
+  height: max(560px, calc(100dvh - 100px));
+}
+
 @media (min-width: 1024px) {
   .dunyo-pos[data-menu-layout="compact"] .pos-menu-filters { padding: 6px 8px; }
   .dunyo-pos[data-menu-layout="compact"] .pos-menu-category {

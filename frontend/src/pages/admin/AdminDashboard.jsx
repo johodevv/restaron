@@ -647,7 +647,7 @@ export const AdminDashboard = () => {
   };
 
   return (
-    <div ref={panelRef} className={`admin-shell mx-auto px-2 sm:px-4 animate-fade-in ${tab === 'tables' ? 'tables-admin-shell ' : ''}${tab === 'pos' ? 'w-full h-full min-h-0 flex flex-col overflow-hidden gap-1 py-1' : 'w-full py-2 pb-24 space-y-4'}`}>
+    <div ref={panelRef} className={`admin-shell mx-auto px-2 sm:px-4 animate-fade-in ${tab === 'tables' ? 'tables-admin-shell ' : ''}${tab === 'pos' ? 'w-full min-h-full flex flex-col gap-1 py-1' : 'w-full py-2 pb-24 space-y-4'}`}>
       {/* Printer statusi (navbat to'lib qolsa yoki printer ishlamasa ogohlantirish) */}
       {tab !== 'pos' && <PrinterStatusBanner />}
       <AdminPrimaryNavigation tab={tab} onNavigate={setTab} role={user?.role} onRefresh={loadAll} />
@@ -983,7 +983,7 @@ export const AdminDashboard = () => {
           barcha imkoniyatlar (zonalar, baliq narxi, begunok) bir xil
           ishlaydi. */}
       {tab === 'pos' && (
-        <div className="w-full flex-1 min-h-0 overflow-hidden">
+        <div className="admin-pos-workspace w-full shrink-0 overflow-hidden">
           <React.Suspense fallback={<div className="p-12 text-center text-theme-muted"><div className="w-8 h-8 border-3 border-amber-500 border-t-transparent rounded-full animate-spin mx-auto mb-2" />POS yuklanmoqda...</div>}>
             <POSView showModeSwitch={true} canCheckout={true} restaurantId={restaurantId} />
           </React.Suspense>
