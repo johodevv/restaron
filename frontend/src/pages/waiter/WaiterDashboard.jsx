@@ -315,6 +315,7 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
   const [soundEnabled, setSoundEnabled] = useState(true);
 
   const modeSwitchBusy = mutationStatus.pending > 0 || sendingToKitchen || savingWeight || savingSize || transferLoading || printingBill;
+  const insideAdminTable = useAdminOrderModes && activeTab === 'pos' && orderType === 'table' && !browsingTables;
   const selectAdminOrderMode = next => {
     if (!useAdminOrderModes || mutationQueueRef.current.pending || modeSwitchBusy) return;
     setActiveTab('pos');
@@ -1130,7 +1131,7 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
       {isPrivileged && <PrinterStatusBanner />}
 
       {/* ─── Yuqori panel ──────────────────────────────────────────── */}
-      {(isPrivileged || activeTab !== 'pos') && <header className={`min-h-[52px] py-1 bg-emerald-950/80 border-b border-emerald-800/60 px-2 sm:px-4 flex items-center justify-between shadow-lg backdrop-blur-md shrink-0 ${useAdminOrderModes ? 'flex-wrap gap-2' : ''}`}>
+      {!insideAdminTable && (isPrivileged || activeTab !== 'pos') && <header className={`min-h-[52px] py-1 bg-emerald-950/80 border-b border-emerald-800/60 px-2 sm:px-4 flex items-center justify-between shadow-lg backdrop-blur-md shrink-0 ${useAdminOrderModes ? 'flex-wrap gap-2' : ''}`}>
         <div className={`flex items-center gap-1.5 min-w-0 ${useAdminOrderModes ? 'flex-wrap' : ''}`}>
           {useAdminOrderModes ? <nav aria-label={label('Buyurtma turi')} className="flex flex-wrap items-center gap-1.5">
             {[
@@ -1361,6 +1362,7 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
         /* ── POS EKRANI (stol zakazi) ──────────────────────────────── */
         <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
           <nav aria-label={label('Buyurtma ko‘rinishi')} className="pos-mobile-navigation lg:hidden shrink-0 flex items-center gap-2 px-2 py-1.5 border-b border-slate-700 bg-slate-950">
+            {insideAdminTable && <button type="button" aria-label={label('Stollarga qaytish')} title={label('Stollarga qaytish')} disabled={modeSwitchBusy} onClick={() => selectAdminOrderMode('table')} className="min-w-[44px] min-h-[44px] rounded-xl bg-slate-800 flex items-center justify-center disabled:opacity-50"><ArrowLeft size={20} /></button>}
             {!isPrivileged && <button type="button" aria-label={label('Stollarga qaytish')} onClick={() => setBrowsingTables(true)} className="min-w-[44px] min-h-[44px] rounded-xl bg-slate-800 flex items-center justify-center"><ArrowLeft size={20} /></button>}
             <span className="flex-1 min-w-0 text-xs font-bold truncate">
               {orderType === 'table' ? [selectedTable?.room, selectedTable?.name || `${label('Stol #')}${selectedTable?.number || ''}`].filter(Boolean).join(' · ') : activeOrder?.order_number || label('+ Yangi zakaz')}
@@ -1375,6 +1377,7 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
               className="pos-order-pane w-full lg:w-[35%] lg:min-w-[360px] lg:max-w-[560px] bg-slate-900/95 border-r border-slate-800 flex flex-col shrink-0 h-full pos-order-container overflow-hidden min-h-0"
             >
             <div data-testid="pos-order-toolbar" className="flex items-center gap-1 px-2 py-1.5 shrink-0 border-b border-slate-700 bg-slate-950">
+              {insideAdminTable && <button type="button" aria-label={label('Stollarga qaytish')} title={label('Stollarga qaytish')} disabled={modeSwitchBusy} onClick={() => selectAdminOrderMode('table')} className="hidden lg:flex min-w-[44px] min-h-[44px] rounded-lg bg-slate-800 items-center justify-center disabled:opacity-50"><ArrowLeft size={20} /></button>}
               {!isPrivileged && <button type="button" aria-label={label('Stollarga qaytish')} onClick={() => setBrowsingTables(true)} className="hidden lg:flex min-w-[44px] min-h-[44px] items-center justify-center rounded-lg bg-slate-800"><ArrowLeft size={20} /></button>}
               {!useAdminOrderModes && showModeSwitch && canCheckout && <select aria-label={label('Buyurtma turi')} value={orderType} onChange={event => {
                 const next = event.target.value;

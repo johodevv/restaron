@@ -123,3 +123,7 @@ Tekshiruv: 53 frontend testi, production build va diff tekshiruvi. Qo‘shimcha 
 ## 2026-10-31 — admin umumiy sahifasini surish
 
 Admin POS tashqi qobig‘idagi h-full/overflow-hidden cheklovi olib tashlandi. Muharrirga alohida admin-pos-workspace balandligi berildi: viewportdan 100 px kam, kamida 560 px. Tashqi main allaqachon overflow-auto bo‘lgani sabab endi butun admin sahifasi pastga suriladi; yuqori navigatsiya ostida muharrir siqilmaydi. Menyu va savatning ichki surilishi ham saqlanadi. O‘zgarish admin JSX/CSS bilan chegaralangan. Production build va diff tekshiruvi o‘tdi; brauzerda amaliy scroll sinovi bajarilmadi.
+
+## 2026-10-31 — stol ichidagi ortiqcha yuqori qator
+
+Admin stol muharririda Stollar / Olib ketish / Yetkazib berish hamda Chaqiruvlar / Tayyor / ovoz / xodim qatori yashirildi. Stollarni tanlash ro‘yxatida qator ko‘rinadi. Stol ichida desktopda hisob sarlavhasi yoniga, tor ekranda menyu/buyurtma navigatsiyasiga 44 px qaytish tugmasi qo‘shildi; pending saqlash paytida qaytish bloklanadi. Ofitsiant, mijoz QR menyusi va boshqa buyurtma turlari o‘zgarmadi. 53 frontend testi, production build va diff tekshiruvi o‘tdi. Brauzerda amaliy vizual tekshiruv bajarilmadi.
