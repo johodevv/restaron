@@ -12,7 +12,7 @@ export const WebSocketProvider = ({ children, restaurantId = 1, tableId = null }
   const [connectionError, setConnectionError] = useState(null);
   const [connectionPhase, setConnectionPhase] = useState('connecting');
   const connectionRef = useRef(null);
-  const reconnect = useCallback(() => connectionRef.current?.resume(), []);
+  const reconnect = useCallback(() => connectionRef.current?.retryNow(), []);
   const listenersRef = useRef(new Map());
   const audioCtxRef = useRef(null);
 
@@ -142,6 +142,7 @@ export const WebSocketProvider = ({ children, restaurantId = 1, tableId = null }
     let established = false;
     const connection = openSocketConnection({
       url: wsUrl,
+      onRetry: () => setConnectionPhase('reconnecting'),
       onState: value => {
         setConnected(value);
         setConnectionPhase(value ? 'connected' : established ? 'reconnecting' : 'connecting');

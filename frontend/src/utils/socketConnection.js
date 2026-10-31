@@ -1,8 +1,9 @@
 // One owner per connection. Old sockets and timers cannot replace a newer login.
-export function openSocketConnection({ url, onState, onMessage, onDenied, Socket = WebSocket,
+export function openSocketConnection({ url, onState, onMessage, onDenied, onRetry = () => {}, Socket = WebSocket,
   now = Date.now, later = setTimeout, cancelLater = clearTimeout,
   repeat = setInterval, cancelRepeat = clearInterval, random = Math.random }) {
   let socket, retry, heartbeat, deadline, disposed = false, denied = false, attempts = 0, lastSeen = 0, connectingSince = 0;
+  let lastManualRetry = -Infinity;
   const clearTimers = () => { cancelLater(retry); cancelLater(deadline); cancelRepeat(heartbeat); };
   const retire = () => {
     if (!socket) return;
@@ -13,7 +14,9 @@ export function openSocketConnection({ url, onState, onMessage, onDenied, Socket
   const schedule = () => {
     if (disposed || denied) return;
     cancelLater(retry);
-    retry = later(connect, Math.min(1000 * 2 ** attempts++, 15000) + Math.floor(random() * 500));
+    const delay = Math.min(1000 * 2 ** attempts++, 15000) + Math.floor(random() * 500);
+    retry = later(connect, delay);
+    onRetry();
   };
   const reconnect = () => { clearTimers(); retire(); onState(false); schedule(); };
   // Mobile radios may disappear before readyState/onclose catch up. Never let
@@ -65,6 +68,15 @@ export function openSocketConnection({ url, onState, onMessage, onDenied, Socket
   };
   connect();
   return {
+    retryNow() {
+      // An explicit click must bypass the automatic backoff/handshake wait.
+      // Throttle rapid clicks without changing phone lifecycle resume behavior.
+      if (disposed || denied || now() - lastManualRetry < 1000) return;
+      lastManualRetry = now();
+      attempts = 0;
+      onState(false);
+      connect();
+    },
     resume() {
       if (disposed || denied) return;
       // visibilitychange, pageshow and online can arrive together. Preserve a
