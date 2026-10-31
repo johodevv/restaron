@@ -39,6 +39,7 @@ from app.schemas.order import (
     OrderNoteUpdate, OrderCheckoutRequest,
     StaleOrderResponse
 )
+from app.core.receipt_styles import layout_settings
 from app.core.printer_service import (
     format_kitchen_ticket, format_pre_check,
     DEFAULT_FONT_SIZE, printer_options, receipt_title,
@@ -185,6 +186,14 @@ async def _send_cancellation_receipt(
             f"Stol: #{order.table.number if order.table else order.order_number}\n"
             f"Ofitsiant: {waiter_name}\nTaom: {dish_name} (-{cancelled_qty} ta)\n"
             f"Vaqt: {datetime.now(UZ_TZ).strftime('%d.%m.%Y %H:%M')}\n\n\n")
+    layout = layout_settings(settings, 'kitchen')
+    if layout:
+        text = format_kitchen_ticket(
+            hall_name=order.table.room if order.table else order.hall_name,
+            room_name=None, table_number=order.table.number if order.table else order.order_number,
+            waiter_name=waiter_name, items=[{'name': dish_name, 'quantity': -cancelled_qty}],
+            station_title='BEKOR QILINDI (OTMENA)', order_number=order.order_number,
+            paper_width=getattr(settings, 'printer_paper_width', 80) or 80, layout=layout)
     for target in targets:
         await enqueue_print_job(db, restaurant_id=order.restaurant_id, order_id=order.id,
             ticket_type='cancel', printer_name=printers[target], raw_text=text, options=printer_options(settings))
@@ -1876,6 +1885,7 @@ async def print_order_bill(
     waiter_disp = (order.waiter.full_name or order.waiter.username) if order.waiter else (current_user.full_name or current_user.username)
 
     bill_text = format_pre_check(
+        layout=layout_settings(settings, 'customer'),
         restaurant_name=rest_name,
         address=(getattr(settings, "receipt_address", None) if settings else None) or (restaurant.address if restaurant else None),
         phone=(getattr(settings, "receipt_phone", None) if settings else None) or (restaurant.phone if restaurant else None),
@@ -1914,6 +1924,7 @@ async def print_order_bill(
         "order_id": order.id,
         "order_number": order.order_number,
         "raw_text": bill_text,
+        "print_document": getattr(bill_text, 'print_document', None),
         "job_id": job.id if job else None,
         "status": "queued" if job else "skipped",
         "printed": False,
@@ -2094,6 +2105,8 @@ async def _send_to_kitchen(order_id, reprint, db, current_user, idempotency, *, 
             continue
 
         ticket_text = format_kitchen_ticket(
+            layout=layout_settings(settings, 'kitchen'),
+            order_number=order.order_number,
             hall_name=order.hall_name or room_name,
             room_name=room_name,
             table_number=table_num,
@@ -2125,6 +2138,7 @@ async def _send_to_kitchen(order_id, reprint, db, current_user, idempotency, *, 
             items_json=station_items,
             notes=order.kitchen_note,
             raw_text=ticket_text,
+            print_document=getattr(ticket_text, 'print_document', None),
         ))
 
         prepared_tickets.append({
@@ -2169,6 +2183,7 @@ async def _send_to_kitchen(order_id, reprint, db, current_user, idempotency, *, 
             "printer_name": st_printer,
             "items": st_items,
             "raw_text": ticket_text,
+            "print_document": getattr(ticket_text, 'print_document', None),
             "job_id": job.id if job else None,
             "status": "queued" if job else "display",
             "printed": False,
@@ -2176,6 +2191,10 @@ async def _send_to_kitchen(order_id, reprint, db, current_user, idempotency, *, 
             "print_error": print_error,
         })
 
+    print_document = None
+    documents = [t['print_document'] for t in generated_tickets if t.get('print_document')]
+    if documents:
+        print_document = {**documents[0], 'blocks': [b for doc in documents for b in doc['blocks']]}
     res = {
         "success": True,
         "order_id": order.id,
@@ -2183,6 +2202,7 @@ async def _send_to_kitchen(order_id, reprint, db, current_user, idempotency, *, 
         "nothing_new": False,
         "tickets": generated_tickets,
         "raw_text": "\n------------------------------------------\n".join(combined_texts),
+        "print_document": print_document,
     }
     await idempotency.save_response(current_user.id, res)
     # Order, print jobs and replay response commit atomically.
@@ -2206,6 +2226,7 @@ async def _send_to_kitchen(order_id, reprint, db, current_user, idempotency, *, 
                 "waiter_name": waiter_display,
                 "tickets": generated_tickets,
                 "raw_text": main_raw_text,
+                "print_document": print_document,
                 "message": f"🔔 Yangi oshxona begunogi: Stol #{table_num}",
             }
         )
@@ -2217,6 +2238,7 @@ async def _send_to_kitchen(order_id, reprint, db, current_user, idempotency, *, 
         "nothing_new": False,
         "tickets": generated_tickets,
         "raw_text": main_raw_text,
+        "print_document": print_document,
     }
     return res
 
@@ -2494,6 +2516,7 @@ async def checkout_order(
     ]
 
     bill_text = format_pre_check(
+        layout=layout_settings(settings, 'customer'),
         restaurant_name=receipt_title(settings, restaurant, rest_name),
         # Chek sozlamasida bo'sh bo'lsa — restoran ma'lumotidan olamiz,
         # shunda telefon/manzil chekda ikki joyda sozlanmasdan ham chiqadi.
@@ -2540,6 +2563,7 @@ async def checkout_order(
         items_json=items_for_receipt,
         notes=order.receipt_note,
         raw_text=bill_text,
+        print_document=getattr(bill_text, 'print_document', None),
     )
     db.add(archive)
     await db.flush()
@@ -2594,6 +2618,7 @@ async def checkout_order(
         "advance_amount": advance,
         "amount_due": amount_due,
         "raw_text": bill_text,
+        "print_document": getattr(bill_text, 'print_document', None),
         "debt_created": bool(debt_obj),
         "kitchen": kitchen_result,
         "order": build_order_response(full_order),
@@ -2653,6 +2678,7 @@ async def checkout_order(
         "total": total,
         "payment_method": order.payment_method,
         "raw_text": bill_text,
+        "print_document": getattr(bill_text, 'print_document', None),
         "message": f"{status_lbl} to'landi va yopildi ✅",
     })
 

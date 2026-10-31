@@ -327,6 +327,7 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
     setCheckoutModalOpen(false);
     if (res?.raw_text) {
       setThermalReceiptText(res.raw_text);
+      setThermalPrintDocument(res.print_document || null);
       setReceiptModalTitle(`Kassa Cheki #${res?.order_id || activeOrder?.id || ''}`);
       setReceiptModalOpen(true);
     }
@@ -354,6 +355,7 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
   // Xprinter Thermal Receipt Modal
   const [receiptModalOpen, setReceiptModalOpen] = useState(false);
   const [thermalReceiptText, setThermalReceiptText] = useState('');
+  const [thermalPrintDocument, setThermalPrintDocument] = useState(null);
   const [receiptModalTitle, setReceiptModalTitle] = useState('Chek (Xprinter)');
 
   // Sound toggle
@@ -1092,6 +1094,7 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
       const res = await api.post(`/orders/${activeOrder.id}/print-bill`, {});
       if (res.raw_text) {
         setThermalReceiptText(res.raw_text);
+        setThermalPrintDocument(res.print_document || null);
         setReceiptModalTitle(
           `Mijoz cheki (${selectedTable?.room || orderType} N#${selectedTable?.number || activeOrder.id})`
         );
@@ -2094,6 +2097,8 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
         onClose={() => setReceiptModalOpen(false)}
         title={receiptModalTitle}
         rawText={thermalReceiptText}
+        printDocument={thermalPrintDocument}
+        restaurantId={restaurantId}
         paperWidth={80}
       />
     </div>

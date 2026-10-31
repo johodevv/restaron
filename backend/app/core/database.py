@@ -129,6 +129,10 @@ def _sync_schema_migrations(sync_conn):
             ("receipt_wifi_pass", "VARCHAR(100)"),
             ("printer_paper_width", "INTEGER DEFAULT 80"),
             ("printer_font_size", "VARCHAR(20) DEFAULT 'katta'"),
+            ("customer_receipt_style", "VARCHAR(20) NOT NULL DEFAULT 'dunyo'"),
+            ("kitchen_receipt_style", "VARCHAR(20) NOT NULL DEFAULT 'dunyo'"),
+            ("customer_receipt_options", "JSON DEFAULT NULL"),
+            ("kitchen_receipt_options", "JSON DEFAULT NULL"),
             ("printer_char_spacing", "INTEGER DEFAULT 1"),
             ("printer_line_spacing", "VARCHAR(20) DEFAULT 'oddiy'"),
             ("printer_bar_name", "VARCHAR(100) DEFAULT ''"),
@@ -210,7 +214,7 @@ def _sync_schema_migrations(sync_conn):
             ("commission_percent", "FLOAT DEFAULT 0.0"),
             ("is_approved", "BOOLEAN DEFAULT 0"),
         ],
-        "receipt_archives": [("advance_amount", "FLOAT NOT NULL DEFAULT 0")],
+        "receipt_archives": [("advance_amount", "FLOAT NOT NULL DEFAULT 0"), ("print_document", "JSON DEFAULT NULL")],
     }
 
     added = set()

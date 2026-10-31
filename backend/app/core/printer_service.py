@@ -430,7 +430,8 @@ def build_escpos_payload(raw_text: str, cut_paper: bool = True,
                          codepage: int = DEFAULT_CODEPAGE,
                          font_size: str = DEFAULT_FONT_SIZE,
                          char_spacing: Optional[int] = None,
-                         line_spacing: Optional[str] = None) -> bytes:
+                         line_spacing: Optional[str] = None,
+                         print_document: Optional[dict] = None) -> bytes:
     """
     Matnni termal printer tushunadigan baytlarga aylantiradi.
 
@@ -443,6 +444,9 @@ def build_escpos_payload(raw_text: str, cut_paper: bool = True,
     Font A (oddiy o'lcham) ni o'rnatamiz -- aks holda oldingi ishdan
     qolgan kichik shrift (Font B) bilan chop etilishi mumkin.
     """
+    if print_document:
+        from app.core.receipt_styles import raster_payload
+        return raster_payload(print_document, cut_paper=cut_paper)
     clean_text = clean_for_cp866(raw_text or "")
 
     # MUHIM: Xitoyda ishlab chiqarilgan printerlarda ko'pincha IEROGLIF
@@ -627,6 +631,8 @@ def format_kitchen_ticket(
     font_size: str = DEFAULT_FONT_SIZE,
     char_spacing: Optional[int] = None,
     is_reprint: bool = False,
+    layout: Optional[dict] = None,
+    order_number: Optional[str] = None,
 ) -> str:
     """
     Oshxona / Bar begunogi (Runner ticket) — To'liq Kirill alifbosida
@@ -726,7 +732,11 @@ def format_kitchen_ticket(
         lines.extend(_wrap_words(f"Изоҳ: {note_str}", col_width, indent="  "))
         lines.append(sep)
 
-    return "\n".join(lines) + "\n\n\n"
+    text = "\n".join(lines) + "\n\n\n"
+    if layout:
+        from app.core.receipt_styles import styled_receipt
+        return styled_receipt(text, 'kitchen', layout, paper_width, {**locals(), 'date': dt_str})
+    return text
 
 
 def format_pre_check(
@@ -750,6 +760,7 @@ def format_pre_check(
     font_size: str = DEFAULT_FONT_SIZE,
     char_spacing: Optional[int] = None,
     advance_amount: float = 0.0,
+    layout: Optional[dict] = None,
 ) -> str:
     """
     Mijoz hisob cheki (Pre-check / Bill) — To'liq Kirill alifbosida
@@ -931,7 +942,11 @@ def format_pre_check(
     foot = footer_text or "Ташрифингиз учун раҳмат! Дунё Чойхонаси (+998884593400)"
     lines.append(_center_line(latin_to_cyrillic(foot), col_width))
 
-    return "\n".join(lines) + "\n\n\n"
+    text = "\n".join(lines) + "\n\n\n"
+    if layout:
+        from app.core.receipt_styles import styled_receipt
+        return styled_receipt(text, 'customer', layout, paper_width, {**locals(), 'date': dt_str})
+    return text
 
 
 format_customer_receipt = format_pre_check
@@ -1373,6 +1388,7 @@ def print_to_network_printer(
     font_size: str = DEFAULT_FONT_SIZE,
     char_spacing: Optional[int] = None,
     line_spacing: Optional[str] = None,
+    print_document: Optional[dict] = None,
 ) -> Dict[str, Any]:
     """
     Wi-Fi yoki Ethernet (LAN kabel) orqali ulangan Xprinterga
@@ -1403,7 +1419,7 @@ def print_to_network_printer(
     try:
         payload = build_escpos_payload(raw_text, cut_paper=cut_paper,
                                        codepage=codepage, font_size=font_size,
-                                       char_spacing=char_spacing, line_spacing=line_spacing)
+                                       char_spacing=char_spacing, line_spacing=line_spacing, print_document=print_document)
 
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         s.settimeout(2.5)
@@ -1434,6 +1450,7 @@ def print_to_windows_printer(
     font_size: str = DEFAULT_FONT_SIZE,
     char_spacing: Optional[int] = None,
     line_spacing: Optional[str] = None,
+    print_document: Optional[dict] = None,
 ) -> Dict[str, Any]:
     """
     USB, Windows Spooler yoki Tarmoq (LAN/Wi-Fi IP) orqali chop etish
@@ -1445,7 +1462,7 @@ def print_to_windows_printer(
     if detect_transport(target) == "lan":
         return print_to_network_printer(target, raw_text=raw_text, cut_paper=cut_paper,
                                         codepage=codepage, font_size=font_size,
-                                        char_spacing=char_spacing, line_spacing=line_spacing)
+                                        char_spacing=char_spacing, line_spacing=line_spacing, print_document=print_document)
 
     if platform.system() != "Windows":
         return {"success": False, "error": "USB to'g'ridan-to'g'ri chop etish faqat Windows tizimida ishlaydi. Tarmoq printeri uchun IP manzil kiriting (masalan: 192.168.1.100)."}
@@ -1463,7 +1480,7 @@ def print_to_windows_printer(
 
         payload = build_escpos_payload(raw_text, cut_paper=cut_paper,
                                        codepage=codepage, font_size=font_size,
-                                       char_spacing=char_spacing, line_spacing=line_spacing)
+                                       char_spacing=char_spacing, line_spacing=line_spacing, print_document=print_document)
 
         hPrinter = win32print.OpenPrinter(target)
         try:
@@ -1492,6 +1509,7 @@ async def async_print_to_windows_printer(
     font_size: str = DEFAULT_FONT_SIZE,
     char_spacing: Optional[int] = None,
     line_spacing: Optional[str] = None,
+    print_document: Optional[dict] = None,
 ) -> Dict[str, Any]:
     """
     Sinxron printer chop etishni alohida thread'da (asyncio.to_thread) asinxron bajaradi.
@@ -1506,6 +1524,7 @@ async def async_print_to_windows_printer(
         font_size=font_size,
         char_spacing=char_spacing,
         line_spacing=line_spacing,
+        print_document=print_document,
     )
 
 

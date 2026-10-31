@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Printer, X, Copy, Check, Zap, AlertCircle, CheckCircle } from 'lucide-react';
 import api from '../utils/api';
@@ -12,10 +12,27 @@ export const ThermalReceiptModal = ({
   title = "Chek (Xprinter)",
   rawText = "",
   paperWidth = 80,
+  printDocument = null,
+  imageData = null,
+  restaurantId = 1,
 }) => {
+  paperWidth = printDocument?.paper_width || paperWidth;
   const [copied, setCopied] = useState(false);
   const [usbPrinting, setUsbPrinting] = useState(false);
   const [usbStatus, setUsbStatus] = useState(null); // { success: boolean, message: string }
+  const [image, setImage] = useState(null);
+  const [imageError, setImageError] = useState('');
+  const [imageReady, setImageReady] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    setImage(imageData || null); setImageError(''); setImageReady(false); setUsbStatus(null);
+    if (isOpen && printDocument && !imageData) {
+      api.post('/receipts/templates/render', printDocument).then(result => {
+        if (!cancelled) setImage(result.image);
+      }).catch(e => { if (!cancelled) setImageError(e.message); });
+    }
+    return () => { cancelled = true; };
+  }, [isOpen, printDocument, imageData]);
 
   if (!isOpen || !rawText) return null;
 
@@ -55,6 +72,7 @@ export const ThermalReceiptModal = ({
   };
 
   const handleBrowserPrint = () => {
+    if (printDocument && !imageReady) return;
     applyPageSize();
     // Uslub qo'llanishi uchun bir kadr kutamiz
     requestAnimationFrame(() => window.print());
@@ -73,6 +91,8 @@ export const ThermalReceiptModal = ({
       const res = await api.post('/receipts/print-raw-usb', {
         text: rawText,
         cut_paper: true,
+        print_document: printDocument,
+        restaurant_id: restaurantId,
       });
       if (res && res.success) {
         setUsbStatus({
@@ -89,13 +109,10 @@ export const ThermalReceiptModal = ({
         setTimeout(() => window.print(), 300);
       }
     } catch (err) {
-      // Bulutli server (Render Linux)
       setUsbStatus({
-        success: true,
-        message: "Brauzer orqali Xprinter'ga yuborilmoqda...",
+        success: false,
+        message: err.message || 'Chop etish tasdiqlanmadi. Printer navbatini tekshiring.',
       });
-      applyPageSize();
-        setTimeout(() => window.print(), 300);
     } finally {
       setUsbPrinting(false);
       setTimeout(() => setUsbStatus(null), 3000);
@@ -116,11 +133,11 @@ export const ThermalReceiptModal = ({
           data-paper={paperWidth >= 80 ? '80' : '58'}
           style={{ fontSize: `${printFontMm}mm` }}
         >
-          <ReceiptText text={rawText} />
+          {printDocument ? (image && <img src={image} alt="Chek" style={{ width: '100%', display: 'block' }} />) : <ReceiptText text={rawText} />}
         </div>,
         printRoot
       )}
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+    {createPortal(<div role="dialog" aria-modal="true" aria-label={title} className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm p-4 animate-in fade-in duration-200">
       <div className="bg-slate-900 border border-slate-800 rounded-3xl max-w-md w-full max-h-[90vh] flex flex-col shadow-2xl overflow-hidden">
         {/* Header */}
         <div className="px-5 py-4 bg-slate-800/80 border-b border-slate-700/60 flex items-center justify-between">
@@ -134,6 +151,7 @@ export const ThermalReceiptModal = ({
             </div>
           </div>
           <button
+            type="button"
             onClick={onClose}
             className="text-slate-400 hover:text-white p-1.5 rounded-xl hover:bg-slate-700/50 transition-colors"
           >
@@ -165,13 +183,14 @@ export const ThermalReceiptModal = ({
             className="w-full bg-white text-black p-5 rounded shadow-lg font-mono text-[12px] leading-tight select-text whitespace-pre overflow-x-auto border-t-4 border-dashed border-slate-300"
             style={{ maxWidth: paperWidth >= 80 ? '340px' : '260px', fontSize: `${previewFontPx}px` }}
           >
-            <ReceiptText text={rawText} />
+            {printDocument ? imageError ? <p className="text-red-700 whitespace-normal">{imageError}</p> : image ? <img src={image} alt="Tanlangan chek ko‘rinishi" onLoad={() => setImageReady(true)} onError={() => setImageError('Namuna rasmi ochilmadi')} style={{ width: '100%', display: 'block' }} /> : <p className="whitespace-normal">Chek tayyorlanmoqda…</p> : <ReceiptText text={rawText} />}
           </div>
         </div>
 
         {/* Footer Actions */}
         <div className="p-4 bg-slate-800/80 border-t border-slate-700/60 flex flex-wrap items-center justify-between gap-2.5">
           <button
+            type="button"
             onClick={handleCopy}
             className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-slate-300 bg-slate-700/60 hover:bg-slate-700 rounded-xl transition-colors"
           >
@@ -182,8 +201,9 @@ export const ThermalReceiptModal = ({
           <div className="flex items-center gap-2">
             {/* Direct USB Print (No dialog) */}
             <button
+              type="button"
               onClick={handleUsbDirectPrint}
-              disabled={usbPrinting}
+              disabled={usbPrinting || !!(printDocument && !imageReady)}
               className="flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold text-white bg-blue-600 hover:bg-blue-500 disabled:opacity-50 rounded-xl shadow-md transition-all active:scale-95"
               title="USB orqali ulangan Xprinterga to'g'ridan-to'g'ri chop etish"
             >
@@ -193,7 +213,9 @@ export const ThermalReceiptModal = ({
 
             {/* Standard Browser Print */}
             <button
+              type="button"
               onClick={handleBrowserPrint}
+              disabled={!!(printDocument && !imageReady)}
               className="flex items-center gap-1.5 px-4 py-2 text-xs font-bold text-slate-950 bg-emerald-400 hover:bg-emerald-300 rounded-xl shadow-lg shadow-emerald-500/20 transition-all active:scale-95"
             >
               <Printer className="w-3.5 h-3.5" />
@@ -202,7 +224,7 @@ export const ThermalReceiptModal = ({
           </div>
         </div>
       </div>
-    </div>
+    </div>, document.body)}
     </>
   );
 };

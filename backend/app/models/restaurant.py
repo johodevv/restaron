@@ -85,6 +85,10 @@ class RestaurantSettings(Base):
     # Chek shrifti o'lchami: "normal" | "katta" | "juda_katta"
     # Keksa odamlar o'qiy olishi uchun "katta" tavsiya etiladi.
     printer_font_size = Column(String(20), default="katta", nullable=True)
+    customer_receipt_style = Column(String(20), default="dunyo", nullable=False, server_default="dunyo")
+    kitchen_receipt_style = Column(String(20), default="dunyo", nullable=False, server_default="dunyo")
+    customer_receipt_options = Column(JSON, nullable=True)
+    kitchen_receipt_options = Column(JSON, nullable=True)
     # Harflar orasidagi masofa (nuqta). Termal printerda harflar
     # bir-biriga yopishib chiqadi — keksa odamga o'qish qiyin.
     printer_char_spacing = Column(Integer, default=1, nullable=True)

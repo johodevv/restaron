@@ -99,6 +99,7 @@ export const OrdersView = ({ restaurantId = 1, initialType = 'takeaway' }) => {
   const [selectedOrderForCheckout, setSelectedOrderForCheckout] = useState(null);
   const [thermalOpen, setThermalOpen] = useState(false);
   const [thermalRawText, setThermalRawText] = useState('');
+  const [thermalPrintDocument, setThermalPrintDocument] = useState(null);
   const [thermalTitle, setThermalTitle] = useState('Chek');
 
   // New order modal
@@ -228,6 +229,7 @@ export const OrdersView = ({ restaurantId = 1, initialType = 'takeaway' }) => {
       const res = await api.post(`/orders/${orderId}/send-to-kitchen?reprint=true`);
       if (res?.raw_text) {
         setThermalRawText(res.raw_text);
+        setThermalPrintDocument(res.print_document || null);
         setThermalTitle(`Chek — ${orderNum}`);
         setThermalOpen(true);
       } else {
@@ -689,6 +691,7 @@ export const OrdersView = ({ restaurantId = 1, initialType = 'takeaway' }) => {
           setSelectedOrderForCheckout(null);
           if (res?.raw_text) {
             setThermalRawText(res.raw_text);
+            setThermalPrintDocument(res.print_document || null);
             setThermalTitle(`Chek — ${selectedOrderForCheckout?.order_number}`);
             setThermalOpen(true);
           }
@@ -703,6 +706,8 @@ export const OrdersView = ({ restaurantId = 1, initialType = 'takeaway' }) => {
         onClose={() => setThermalOpen(false)}
         title={thermalTitle}
         rawText={thermalRawText}
+        printDocument={thermalPrintDocument}
+        restaurantId={restaurantId}
         paperWidth={80}
       />
     </div>

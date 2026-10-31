@@ -96,6 +96,7 @@ export const AdminDashboard = () => {
   const [checkoutTableLabel, setCheckoutTableLabel] = useState('');
   const [thermalOpen, setThermalOpen] = useState(false);
   const [thermalRawText, setThermalRawText] = useState('');
+  const [thermalPrintDocument, setThermalPrintDocument] = useState(null);
   const [thermalTitle, setThermalTitle] = useState('Chek');
   const [selectedBillTable, setSelectedBillTable] = useState(null);
   const [staffActionLoading, setStaffActionLoading] = useState(null);
@@ -331,6 +332,7 @@ export const AdminDashboard = () => {
       // kassir uni brauzerdan chiqara oladi.
       if (res?.raw_text) {
         setThermalRawText(res.raw_text);
+        setThermalPrintDocument(res.print_document || null);
         setThermalTitle(`Hisob Cheki — Stol #${tableNumber}`);
         setThermalOpen(true);
       }
@@ -352,6 +354,7 @@ export const AdminDashboard = () => {
           waiter: event.waiter_name || 'Ofitsiant',
           tickets: event.tickets || [],
           raw_text: event.raw_text,
+          print_document: event.print_document || null,
           time: new Date().toLocaleTimeString(),
         });
         loadAll();
@@ -725,7 +728,7 @@ export const AdminDashboard = () => {
                 type="button"
                 onClick={async () => {
                   try {
-                    await api.post('/receipts/print-raw-usb', { text: activePrintAlert.raw_text });
+                    await api.post('/receipts/print-raw-usb', { text: activePrintAlert.raw_text, print_document: activePrintAlert.print_document, restaurant_id: restaurantId });
                     alert("✅ Chek printerga qayta yuborildi!");
                   } catch (e) {
                     alert("Xatolik: " + e.message);
@@ -1832,6 +1835,8 @@ export const AdminDashboard = () => {
         onClose={() => setThermalOpen(false)}
         title={thermalTitle}
         rawText={thermalRawText}
+        printDocument={thermalPrintDocument}
+        restaurantId={restaurantId}
         paperWidth={80}
       />
 
@@ -1845,6 +1850,7 @@ export const AdminDashboard = () => {
           setCheckoutOrder(null);
           if (res?.raw_text) {
             setThermalRawText(res.raw_text);
+            setThermalPrintDocument(res.print_document || null);
             setThermalTitle(`Hisob Cheki — ${checkoutTableLabel}`);
             setThermalOpen(true);
           }

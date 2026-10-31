@@ -98,6 +98,9 @@ async def enqueue_print_job(
     DIQQAT: commit QILMAYDI, chaqiruvchi commit qilishi kerak!
     Commit'dan keyin `wake_printer_worker()` chaqiriladi.
     """
+    document = getattr(raw_text, 'print_document', None)
+    if document:
+        options = {**(options or {}), 'print_document': document}
     job = PrintJob(
         restaurant_id=restaurant_id,
         order_id=order_id,

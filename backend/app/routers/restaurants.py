@@ -15,6 +15,7 @@ from app.models.restaurant import Restaurant, RestaurantSettings
 from app.models.commission import CommissionLog
 from app.models.order import Order, OrderStatus
 from app.models.user import User
+from app.core.receipt_styles import ReceiptAppearance, layout_settings, validate_fonts
 
 router = APIRouter(prefix="/restaurants", tags=["🏪 Restoran"])
 
@@ -55,6 +56,10 @@ class SettingsUpdate(BaseModel):
     printer_paper_width: Optional[Literal[58, 80]] = None
     printer_codepage: Optional[int] = Field(None, ge=0, le=255)
     printer_font_size: Optional[Literal['normal', 'katta', 'juda_katta']] = None
+    customer_receipt_style: Optional[Literal['dunyo', 'aliposter']] = None
+    kitchen_receipt_style: Optional[Literal['dunyo', 'aliposter']] = None
+    customer_receipt_options: Optional[ReceiptAppearance] = None
+    kitchen_receipt_options: Optional[ReceiptAppearance] = None
     printer_char_spacing: Optional[int] = Field(None, ge=0, le=10)
     printer_line_spacing: Optional[Literal['zich', 'oddiy', 'keng', 'juda_keng']] = None
     archive_retention_years: Optional[int] = Field(None, ge=1, le=20)
@@ -196,6 +201,13 @@ async def update_settings(
             settings.extra_settings = {**(settings.extra_settings or {}), 'active_themes': list(dict.fromkeys(value))}
             continue
         setattr(settings, field, value)
+    try:
+        for kind in ('customer', 'kitchen'):
+            layout = layout_settings(settings, kind)
+            if layout:
+                validate_fonts(layout)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc))
     await db.flush()
     return {"success": True}
 

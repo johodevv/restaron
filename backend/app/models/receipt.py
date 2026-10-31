@@ -50,6 +50,7 @@ class ReceiptArchive(Base):
     notes = Column(Text, nullable=True)
     # Xprinter uchun tayyorlangan matn (58mm/80mm format)
     raw_text = Column(Text, nullable=True)
+    print_document = Column(JSON, nullable=True)
 
     created_at = Column(UTCDateTime(), server_default=func.now(), index=True)
 

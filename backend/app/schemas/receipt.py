@@ -28,6 +28,7 @@ class ReceiptArchiveResponse(BaseModel):
     items_json: Optional[Any] = None
     notes: Optional[str] = None
     raw_text: Optional[str] = None
+    print_document: Optional[Dict[str, Any]] = None
     created_at: datetime
 
     class Config:

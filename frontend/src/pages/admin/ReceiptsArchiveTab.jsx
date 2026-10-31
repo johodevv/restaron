@@ -33,6 +33,7 @@ export const ReceiptsArchiveTab = ({ restaurantId }) => {
   // Thermal Receipt Modal
   const [thermalModalOpen, setThermalModalOpen] = useState(false);
   const [thermalRawText, setThermalRawText] = useState('');
+  const [thermalPrintDocument, setThermalPrintDocument] = useState(null);
   const [thermalTitle, setThermalTitle] = useState('Arxiv Cheki');
   const [reprintingId, setReprintingId] = useState(null);
 
@@ -79,6 +80,7 @@ export const ReceiptsArchiveTab = ({ restaurantId }) => {
       const res = await api.get(`/receipts/${r.id}`);
       if (!res.raw_text) throw new Error('Bu chekda saqlangan matn yo‘q.');
       setThermalRawText(res.raw_text);
+      setThermalPrintDocument(res.print_document || null);
       setThermalTitle(`Chek #${r.receipt_number} (Arxivdan)`);
       setThermalModalOpen(true);
     } catch (err) {
@@ -323,6 +325,8 @@ export const ReceiptsArchiveTab = ({ restaurantId }) => {
         onClose={() => setThermalModalOpen(false)}
         title={thermalTitle}
         rawText={thermalRawText}
+        printDocument={thermalPrintDocument}
+        restaurantId={restaurantId}
         paperWidth={80}
       />
     </div>

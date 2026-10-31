@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import api from '../../utils/api';
+import ReceiptStyleSettings, { receiptAppearance } from '../../components/ReceiptStyleSettings';
 import {
   Settings,
   Percent,
@@ -99,6 +100,7 @@ export const RestaurantSettingsTab = ({ restaurantId }) => {
   const [printerCodepage, setPrinterCodepage] = useState(17);
   // Chek shrifti o'lchami: keksa odamlar o'qiy olishi uchun
   const [printerFontSize, setPrinterFontSize] = useState('katta');
+  const [receiptStyles, setReceiptStyles] = useState({ customer: { style: 'dunyo', options: {} }, kitchen: { style: 'dunyo', options: {} } });
   // Harflar orasidagi masofa (nuqta) va qatorlar orasi
   const [printerCharSpacing, setPrinterCharSpacing] = useState(1);
   const [printerLineSpacing, setPrinterLineSpacing] = useState('oddiy');
@@ -235,6 +237,9 @@ export const RestaurantSettingsTab = ({ restaurantId }) => {
         font_size: printerFontSize,
         char_spacing: printerCharSpacing,
         line_spacing: printerLineSpacing,
+        sample_kind: printerKey === 'p1' ? 'customer' : 'kitchen',
+        receipt_style: receiptStyles[printerKey === 'p1' ? 'customer' : 'kitchen'].style,
+        appearance: receiptAppearance(printerKey === 'p1' ? 'customer' : 'kitchen', receiptStyles[printerKey === 'p1' ? 'customer' : 'kitchen'].options),
       });
       alert(`✅ ${printerName} printeriga test cheki muvaffaqiyatli yuborildi!`);
     } catch (err) {
@@ -260,6 +265,7 @@ export const RestaurantSettingsTab = ({ restaurantId }) => {
         setPrinterPaperWidth(s.printer_paper_width ?? 80);
         setPrinterCodepage(s.printer_codepage || 17);
         setPrinterFontSize(s.printer_font_size || 'katta');
+        setReceiptStyles({ customer: { style: s.customer_receipt_style || 'dunyo', options: s.customer_receipt_options || {} }, kitchen: { style: s.kitchen_receipt_style || 'dunyo', options: s.kitchen_receipt_options || {} } });
         setPrinterCharSpacing(
           s.printer_char_spacing === null || s.printer_char_spacing === undefined
             ? 1
@@ -332,6 +338,10 @@ export const RestaurantSettingsTab = ({ restaurantId }) => {
         printer_paper_width: parseInt(printerPaperWidth) || 80,
         printer_codepage: parseInt(printerCodepage) || 17,
         printer_font_size: printerFontSize,
+        customer_receipt_style: receiptStyles.customer.style,
+        kitchen_receipt_style: receiptStyles.kitchen.style,
+        customer_receipt_options: receiptStyles.customer.options,
+        kitchen_receipt_options: receiptStyles.kitchen.options,
         printer_char_spacing: printerCharSpacing,
         printer_line_spacing: printerLineSpacing,
         archive_retention_years: parseInt(archiveRetentionYears) || 3,
@@ -553,6 +563,7 @@ export const RestaurantSettingsTab = ({ restaurantId }) => {
 
       {/* ─── Section 3: Xprinter (Thermal Printer) ────────────────────── */}
       <SettingsSection section="receipt" active={settingsPage} title="🖨️ Xprinter Termoprinter Sozlamalari" icon={Printer} accentColor="text-blue-400">
+        <ReceiptStyleSettings value={receiptStyles} onChange={setReceiptStyles} paperWidth={printerPaperWidth} restaurantId={restaurantId} header={receiptHeader} footer={receiptFooter} />
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           {/* Paper Width */}
           <div>
@@ -616,7 +627,7 @@ export const RestaurantSettingsTab = ({ restaurantId }) => {
                 <span>🧾 Chek Shabloni & Jonli Ko'rinishi (Live Preview)</span>
               </h4>
               <p className="text-[11px] text-theme-muted">
-                Admin paneldan chek matnlarini, sarlavhani va pastki qismini o'zgartiring. Chek real vaqtda yangilanadi.
+                Dunyo uslubining matn namunasi. AliPoster uslubining haqiqiy ko‘rinishi uchun yuqoridagi «Namuna chekni ko‘rish» tugmasini bosing.
               </p>
             </div>
 

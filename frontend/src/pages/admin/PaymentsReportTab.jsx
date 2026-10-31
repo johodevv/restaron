@@ -34,6 +34,7 @@ export const PaymentsReportTab = ({ restaurantId }) => {
   // Thermal Print Modal
   const [thermalModalOpen, setThermalModalOpen] = useState(false);
   const [thermalRawText, setThermalRawText] = useState('');
+  const [thermalPrintDocument, setThermalPrintDocument] = useState(null);
   const [thermalModalTitle, setThermalModalTitle] = useState('Hisobot Cheki');
   const [actionLoading, setActionLoading] = useState(null);
 
@@ -85,6 +86,7 @@ export const PaymentsReportTab = ({ restaurantId }) => {
         report_type: reportType === 'X' ? 'x_report' : 'z_report',
       });
       setThermalRawText(res.raw_text);
+      setThermalPrintDocument(res.print_document || null);
       const shiftNum = res.shift_number || 1;
       setThermalModalTitle(
         reportType === 'X'
@@ -113,6 +115,7 @@ export const PaymentsReportTab = ({ restaurantId }) => {
       if (found) {
         const reprintRes = await api.post(`/receipts/${found.id}/reprint`);
         setThermalRawText(reprintRes.raw_text);
+        setThermalPrintDocument(reprintRes.print_document || null);
         setThermalModalTitle(`Chek #${orderNum} (Arxivdan)`);
         setThermalModalOpen(true);
       } else {
@@ -453,6 +456,8 @@ export const PaymentsReportTab = ({ restaurantId }) => {
         onClose={() => setThermalModalOpen(false)}
         title={thermalModalTitle}
         rawText={thermalRawText}
+        printDocument={thermalPrintDocument}
+        restaurantId={restaurantId}
         paperWidth={80}
       />
     </div>

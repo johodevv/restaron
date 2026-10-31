@@ -29,6 +29,7 @@ from app.models.user import User, UserRole
 from app.models.order import Order, OrderItem, OrderStatus, CallStatus
 from app.models.restaurant import Restaurant, RestaurantSettings
 from app.models.receipt import ReceiptArchive
+from app.core.receipt_styles import layout_settings
 from app.core.printer_service import (
     format_pre_check, DEFAULT_FONT_SIZE,
     printer_options, receipt_title,
@@ -1211,6 +1212,7 @@ async def print_table_bill(
     waiter_disp = ", ".join(waiter_names) if waiter_names else (current_user.full_name or current_user.username)
 
     bill_text = format_pre_check(
+        layout=layout_settings(settings, 'customer'),
         restaurant_name=rest_name,
         # Chek sozlamasida bo'sh bo'lsa — restoran ma'lumotidan olamiz.
         address=(getattr(settings, "receipt_address", None) if settings else None)
@@ -1249,6 +1251,7 @@ async def print_table_bill(
         payment_method="pre_check",
         items_json=items_for_receipt,
         raw_text=bill_text,
+        print_document=getattr(bill_text, 'print_document', None),
     )
     db.add(archive)
 
@@ -1274,6 +1277,7 @@ async def print_table_bill(
         "printer_name": cust_printer,
         "message": f"Chek {cust_printer} printeri navbatiga qo'shildi",
         "raw_text": bill_text,
+        "print_document": getattr(bill_text, 'print_document', None),
         "total": grand_total,
     }
 

@@ -3,6 +3,7 @@ Cheklar Arxivi (3 yilgacha saqlash) va Smena Hisobotlari (X/Z Report) API
 Xprinter uchun chek formatlash va qayta chop etish
 """
 import asyncio
+import base64
 from datetime import date, datetime, timezone, timedelta
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -32,6 +33,8 @@ from app.core.printer_service import (
     _center_line, _pad_line,
 )
 from app.core.printer_queue import enqueue_print_job, wake_printer_worker
+from app.core.receipt_styles import (ReceiptAppearance, ReceiptDocument, layout_settings,
+                                     font_status, validate_fonts, png_bytes, appearance_defaults)
 
 router = APIRouter(prefix="/receipts", tags=["🖨️ Cheklar Arxivi va Kassa Hisobotlari"])
 
@@ -52,6 +55,66 @@ class DirectPrintRequest(BaseModel):
     # saqlashdan oldin sinab ko'rishi uchun
     char_spacing: Optional[int] = None
     line_spacing: Optional[str] = None
+    print_document: Optional[ReceiptDocument] = None
+    sample_kind: Literal['customer', 'kitchen'] = 'customer'
+    receipt_style: Optional[Literal['dunyo', 'aliposter']] = None
+    appearance: Optional[ReceiptAppearance] = None
+
+
+class TemplatePreviewRequest(BaseModel):
+    kind: Literal['customer', 'kitchen'] = 'customer'
+    style: Literal['dunyo', 'aliposter'] = 'dunyo'
+    appearance: Optional[ReceiptAppearance] = None
+    paper_width: Literal[58, 80] = 80
+    restaurant_id: int = 1
+    header: str = 'Dunyo Choyxonasi'
+    footer: str = 'Tashrifingiz uchun rahmat!'
+
+
+def sample_ticket(kind, layout, paper_width=80, header='Dunyo Choyxonasi', footer=None, sample_fee=12, **kwargs):
+    items = [dict(name="Qo'y kabob", quantity=2, unit_price=32000, total_price=64000),
+             dict(name='Kola', size='1.5 L', quantity=1, unit_price=15000, total_price=15000),
+             dict(name='Non', quantity=4, unit_price=2000, total_price=8000)]
+    if kind == 'kitchen':
+        return format_kitchen_ticket(hall_name='Zal', room_name=None, table_number=1,
+            waiter_name='Namuna ofitsiant', items=items, station_title='Oshxona — SINOV',
+            order_number='SINOV', kitchen_note='Piyozsiz', paper_width=paper_width, layout=layout, **kwargs)
+    return format_pre_check(restaurant_name=header, address='Xiva', phone='+998 90 000 00 00',
+        table_name='Zal #1', waiter_name='Namuna ofitsiant', order_number='SINOV', items=items,
+        subtotal=87000, service_fee_percent=sample_fee, service_fee_amount=round(87000 * sample_fee / 100, 2), discount=0, total=round(87000 * (1 + sample_fee / 100), 2),
+        footer_text=footer, paper_width=paper_width, layout=layout, **kwargs)
+
+
+@router.get('/templates/fonts')
+async def receipt_fonts(user: User = Depends(require_role('admin', 'developer'))):
+    return await asyncio.to_thread(font_status, True)
+
+
+@router.post('/templates/preview')
+async def preview_template(payload: TemplatePreviewRequest,
+                           user: User = Depends(require_role('admin', 'developer'))):
+    layout = None
+    if payload.style == 'aliposter':
+        layout = (payload.appearance or ReceiptAppearance(**appearance_defaults(payload.kind))).model_dump()
+    try:
+        def prepare():
+            text = sample_ticket(payload.kind, layout, payload.paper_width, payload.header, payload.footer)
+            doc = getattr(text, 'print_document', None)
+            return {'raw_text': str(text), 'print_document': doc,
+                    'image': 'data:image/png;base64,' + base64.b64encode(png_bytes(doc)).decode() if doc else None}
+        return await asyncio.to_thread(prepare)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc))
+
+
+@router.post('/templates/render')
+async def render_template(document: ReceiptDocument,
+                          user: User = Depends(require_role('admin', 'cashier', 'waiter', 'developer'))):
+    try:
+        data = await asyncio.to_thread(png_bytes, document.model_dump())
+        return {'image': 'data:image/png;base64,' + base64.b64encode(data).decode()}
+    except ValueError as exc:
+        raise HTTPException(422, str(exc))
 
 
 
@@ -228,6 +291,11 @@ async def resolve_print_job(job_id: int, action: Literal['printed', 'retry'],
         if job.order_id is not None and await db.scalar(select(Order.id).where(Order.id == job.order_id, Order.restaurant_id == job.restaurant_id)) is None:
             raise HTTPException(409, 'Buyurtmasi topilmagan eski vazifani qayta yuborib bo‘lmaydi')
         job.raw_text = '*** TAKROR / QAYTA YUBORILDI ***\n' + job.raw_text
+        if (job.options or {}).get('print_document'):
+            import copy
+            options = copy.deepcopy(job.options)
+            options['print_document']['blocks'].insert(0, {'cells': ['ТАКРОР / ҚАЙТА ЮБОРИЛДИ'], 'role': 'header'})
+            job.options = options
         job.next_attempt_at = datetime.now(timezone.utc)
     job.alerted = False
     job.last_error = None
@@ -314,6 +382,7 @@ async def reprint_receipt(
         "receipt_number": r.receipt_number,
         "receipt_type": r.receipt_type,
         "raw_text": r.raw_text,
+        "print_document": r.print_document,
         "items": r.items_json,
         "total": r.total_amount,
         "created_at": r.created_at,
@@ -562,6 +631,8 @@ async def print_receipt_usb(
     popts = printer_options(settings)
 
     target_printer = (printer_name or (getattr(settings, "printer_customer_name", None) if settings else None) or "XP-Q80A").strip()
+    if r.print_document:
+        popts['print_document'] = r.print_document
 
     ticket_type = "bill"
     if r.receipt_type == "kitchen":
@@ -602,6 +673,25 @@ async def get_receipt_pdf(
     r = result.scalar_one_or_none()
     if not r:
         raise HTTPException(status_code=404, detail="Chek arxivi topilmadi")
+
+    if r.print_document:
+        from fastapi.responses import Response
+        from io import BytesIO
+        from reportlab.pdfgen import canvas
+        from reportlab.lib.utils import ImageReader
+        from app.core.receipt_styles import render_document
+        def make_pdf():
+            image = render_document(r.print_document)
+            width = r.print_document.get('paper_width', 80) * 72 / 25.4
+            height = image.height * 72 / 203
+            output = BytesIO()
+            pdf = canvas.Canvas(output, pagesize=(width, height))
+            image_width = image.width * 72 / 203
+            pdf.drawImage(ImageReader(image.convert('RGB')), (width - image_width) / 2, 0,
+                          width=image_width, height=height)
+            pdf.save()
+            return output.getvalue()
+        return Response(await asyncio.to_thread(make_pdf), media_type='application/pdf')
 
     import os
     import re
@@ -682,6 +772,12 @@ async def print_raw_usb(
     paper_width = getattr(st, "printer_paper_width", 80) or 80
 
     text = payload.text or ""
+    if payload.print_document:
+        popts['print_document'] = payload.print_document.model_dump()
+        try:
+            validate_fonts(payload.print_document.appearance)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc))
     if payload.sample_receipt or not text.strip():
         # Namuna chek — tanlangan shrift va qog'oz kengligi bo'yicha
         # serverda yasaladi, shuning uchun qator kengligi aynan to'g'ri
@@ -692,29 +788,17 @@ async def print_raw_usb(
         rest = rest_res.scalar_one_or_none()
         _cfg_fee = getattr(st, "service_fee_percent", None)
         _sample_fee = 12.0 if _cfg_fee is None else float(_cfg_fee)
-        text = format_pre_check(
-            restaurant_name=receipt_title(st, rest),
-            address=(rest.address if rest else None),
-            phone=(rest.phone if rest else None),
-            table_name="Namuna 1",
-            waiter_name=(current_user.full_name or current_user.username),
-            order_number="SINOV",
-            items=[
-                {"name": "Qo'y kabob", "quantity": 2, "unit_price": 32000, "total_price": 64000},
-                {"name": "Kola", "size": "1.5 L", "quantity": 1, "unit_price": 15000, "total_price": 15000},
-                {"name": "Non", "quantity": 4, "unit_price": 2000, "total_price": 8000},
-            ],
-            subtotal=87000,
-            service_fee_percent=_sample_fee,
-            service_fee_amount=87000 * (_sample_fee / 100.0),
-            discount=0.0,
-            total=87000 * (1 + _sample_fee / 100.0),
-            receipt_note="SINOV CHEKI — shriftni tekshirish uchun",
-            footer_text=getattr(st, "receipt_footer", None),
-            paper_width=paper_width,
-            font_size=fsize,
-            char_spacing=popts["char_spacing"],
-        )
+        layout = layout_settings(st, payload.sample_kind)
+        if payload.receipt_style == 'dunyo':
+            layout = None
+        elif payload.receipt_style == 'aliposter':
+            layout = (payload.appearance or ReceiptAppearance(**appearance_defaults(payload.sample_kind))).model_dump()
+        try:
+            text = sample_ticket(payload.sample_kind, layout, paper_width, receipt_title(st, rest),
+                                 getattr(st, 'receipt_footer', None), sample_fee=_sample_fee,
+                                 font_size=fsize, char_spacing=popts['char_spacing'])
+        except ValueError as exc:
+            raise HTTPException(422, str(exc))
 
     target_printer = (payload.printer_name or (getattr(st, "printer_customer_name", None) if st else None) or "XP-Q80A").strip()
     job = await enqueue_print_job(
