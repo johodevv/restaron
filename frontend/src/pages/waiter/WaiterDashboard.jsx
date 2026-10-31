@@ -51,7 +51,7 @@ import {
   ShoppingCart
 } from 'lucide-react';
 
-export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckout: propCanCheckout, restaurantId: propRestaurantId, onOrderViewChange } = {}) => {
+export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckout: propCanCheckout, restaurantId: propRestaurantId, onOrderViewChange, compactMenu = false } = {}) => {
   const { lang, getLocalizedName } = useLanguage();
   const label = text => posLabel(text, lang);
   const { user, isAdmin, isCashier, canCheckout: authCanCheckout } = useAuth();
@@ -1030,7 +1030,7 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
       : allItems;
 
   return (
-    <div className="dunyo-pos relative h-full min-h-0 overflow-hidden bg-slate-950 text-slate-100 flex flex-col font-sans select-none" data-mobile-view={mobileTab} data-testid="pos-workspace">
+    <div className="dunyo-pos relative h-full min-h-0 overflow-hidden bg-slate-950 text-slate-100 flex flex-col font-sans select-none" data-menu-layout={compactMenu ? 'compact' : undefined} data-mobile-view={mobileTab} data-testid="pos-workspace">
       {/* 6. Ulanish yo'q bo'lsa tepada sariq banner: Aloqa yo'q, qayta ulanmoqda */}
       {connected === false && (showConnectionNotice || connectionError) && (
         <div className="bg-amber-500/95 text-slate-950 font-bold px-4 py-2 text-center text-xs sm:text-sm flex items-center justify-center gap-2 shadow-md shrink-0 z-50">
@@ -1502,7 +1502,7 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
             {/* Top Categories Strip */}
             <div className="pos-menu-filters p-3 bg-slate-900/70 border-b border-slate-800 shrink-0">
               {/* 5. Taom ro'yxatida tezkor qidiruv maydoni (nom bo'yicha filtr) */}
-              <div className="mb-3 relative">
+              {!compactMenu && <div className="mb-3 relative">
                 <Search className="w-5 h-5 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
                 <input
                   type="text"
@@ -1521,9 +1521,9 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
                     <X className="w-4 h-4" />
                   </button>
                 )}
-              </div>
+              </div>}
 
-              {searchItemQuery.trim() && (
+              {!compactMenu && searchItemQuery.trim() && (
                 <div className="mb-2 px-1 flex items-center justify-between text-xs sm:text-sm text-slate-400">
                   <span>{label("Qidiruv natijasi:")}{' '}
                     <strong className="text-emerald-400 font-bold">{displayedItems.length}{label("ta")}</strong>{label("taom")}</span>

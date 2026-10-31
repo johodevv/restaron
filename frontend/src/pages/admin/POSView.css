@@ -1,0 +1,16 @@
+/* Only the administrator/cashier editor opts into this desktop layout. */
+@media (min-width: 1024px) {
+  .dunyo-pos[data-menu-layout="compact"] .pos-menu-filters { padding: 6px 8px; }
+  .dunyo-pos[data-menu-layout="compact"] .pos-menu-category {
+    flex-basis: 125px;
+    min-height: 34px;
+    padding: 3px 6px;
+    border-radius: 6px;
+    font-size: 13px;
+    line-height: 14px;
+  }
+  .dunyo-pos[data-menu-layout="compact"] .pos-menu-category-count {
+    padding: 0 3px;
+    line-height: 16px;
+  }
+}

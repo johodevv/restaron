@@ -100,3 +100,12 @@ Bu o‘zgarish server kodini ham o‘z ichiga oladi: orders jadvaliga nullable m
 Kategoriya tugmalari 360 px da uch ustun, 640 px dan to‘rt, 1280 px dan besh ustun asosida joylashadi. Flex-grow oxirgi qatordagi qolgan kenglikni ham tugmalarga beradi. Oraliq 4 px, aniq ko‘k-kulrang border, oq matn va tanlangan kategoriyada yashil fon/och border bor; glow va scale olib tashlandi. Uzun nomlar kesilmay qatorga o‘raladi, son belgisi o‘ngda qoladi, bosish balandligi kamida 44 px.
 
 49 frontend testi, production build va diff tekshiruvi o‘tdi. Chrome 360 px mobil emulyatsiyada alohida lokal test bazasidagi 12 kategoriya (Asosiy taomlar, Banichniy ichimliklar va boshqalar) 4 qatorga sig‘di, barcha nom/sonlar va borderlar ko‘rindi; qator oxirida bo‘sh ustun qolmadi. Savdo yoki to‘lov amali bajarilmadi. Oldingi turnda foydalanuvchi Esc bilan to‘xtatgan vizual tekshiruv shu turnda yakunlandi.
+
+
+## 2026-10-31 — admin menyusini ixchamlashtirish va matnni kattalashtirish
+
+Faqat admin/kassirning POSView oynasi compactMenu rejimini yoqadi: taom qidiruvi bu oynada render qilinmaydi. Desktop (1024 px va kengroq) uchun alohida POSView.css kategoriya tugmalarining flex asosini 125 px, minimal balandligini 34 px, paddingini 3/6 px qiladi. Kategoriyalar kamroq joy egallab, taomlar ro‘yxatiga joy ochadi. Foydalanuvchi keyingi skrinshotda ushbu admin joylashuvini ma’qulladi va faqat matnni biroz kattalashtirishni so‘radi: shrift 12 dan 13 px ga oshirildi; line-height, padding, kenglik asosi, oraliq va balandlik qoidalari saqlandi. Son belgisining 10 px shrifti avvalgidek.
+
+Mavjud savdo muharriri umumiy bo‘lgani sabab qo‘shimcha propning standart qiymati false; faqat admin wrapper uni yoqadi. CSS ham data-menu-layout=compact belgisi bilan chegaralangan. Ofitsiantning qidiruvi, kategoriya o‘lchamlari, ranglari va buyurtma oqimi o‘zgarmaydi. Chrome’da yangi build bilan ofitsiantning 360 px ko‘rinishi amalda qayta ochilib, qidiruv va 12 kategoriyaning avvalgi 4 qatori saqlangani tekshirildi. Adminning alohida amaliy sinovi brauzer URL nazoratidagi vosita xatosi bilan to‘xtagan edi; adminning joylashuvini keyinchalik foydalanuvchi skrinshot va fikri bilan tasdiqladi. Oxirgi 13 px matn o‘zgarishi uchun alohida brauzer tasdig‘i olinmadi.
+
+49 frontend regressiya testi va production build o‘tdi; faqat shrift o‘zgargach production build yana muvaffaqiyatli bajarildi. Backend, baza, printer va server boshqaruvi bu qismda o‘zgarmadi. Ishchi server qayta ishga tushirilmadi; tayyor distni mavjud server o‘qishi mumkin.
