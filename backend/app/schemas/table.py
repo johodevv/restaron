@@ -53,6 +53,9 @@ class TableResponse(TableBase):
     qr_token: str
     qr_image_url: Optional[str] = None
     status: TableStatus
+    is_occupied: bool = False
+    active_order_id: Optional[int] = None
+    open_orders_count: int = 0
     is_active: bool
     is_unlocked: bool = False
     current_pin: Optional[str] = None

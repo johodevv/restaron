@@ -416,7 +416,33 @@ async def list_tables(
         .order_by(Table.number)
     )
     tables = result.scalars().all()
-    return [TableResponse.model_validate(t) for t in tables]
+    return await table_responses_with_accounts(db, tables)
+
+
+async def table_responses_with_accounts(db, tables):
+    """Open accounts determine occupancy even if a historical status is stale.
+
+    Derive the display without rewriting any table, order or money on a GET.
+    """
+    ids = [table.id for table in tables]
+    if not ids:
+        return []
+    rows = (await db.execute(select(Order.table_id, func.count(Order.id), func.min(Order.id)).where(
+        Order.table_id.in_(ids), Order.is_paid == False,
+        Order.status.notin_([OrderStatus.PAID, OrderStatus.CANCELLED]),
+    ).group_by(Order.table_id))).all()
+    accounts = {table_id: (count, order_id) for table_id, count, order_id in rows}
+    responses = []
+    for table in tables:
+        response = TableResponse.model_validate(table)
+        count, order_id = accounts.get(table.id, (0, None))
+        response.open_orders_count = count
+        response.active_order_id = order_id if count == 1 else None
+        response.is_occupied = count > 0 or table.status == TableStatus.OCCUPIED
+        if count and table.status == TableStatus.AVAILABLE:
+            response.status = TableStatus.OCCUPIED
+        responses.append(response)
+    return responses
 
 
 @router.get(
@@ -1262,7 +1288,7 @@ async def get_table(
     table = result.scalar_one_or_none()
     if not table:
         raise HTTPException(status_code=404, detail="Stol topilmadi")
-    return TableResponse.model_validate(table)
+    return (await table_responses_with_accounts(db, [table]))[0]
 
 
 @router.patch("/{table_id}", response_model=TableResponse, summary="Stolni yangilash")
@@ -1487,6 +1513,8 @@ async def transfer_table(
 
     if from_table.restaurant_id != to_table.restaurant_id:
         raise HTTPException(403, "Boshqa restoranga ko'chirib bo'lmaydi")
+    if not from_table.is_active or not to_table.is_active or to_table.status == TableStatus.MAINTENANCE:
+        raise HTTPException(409, "Faol bo'lmagan yoki ta'mirdagi stolga ko'chirib bo'lmaydi")
     if to_table.deposit_amount or to_table.status == TableStatus.RESERVED:
         raise HTTPException(409, "Maqsad stol bron qilingan; bo'sh stol tanlang")
     to_open_count = await open_orders_count(db, to_table_id)
@@ -1495,6 +1523,8 @@ async def transfer_table(
             status_code=409,
             detail=f"Maqsad stol #{to_table.number} da ochiq buyurtmalar mavjud. Bo'sh stolni tanlang",
         )
+    if to_table.status == TableStatus.OCCUPIED:
+        raise HTTPException(409, "Maqsad stolda mijoz bor; boshqa bo'sh stol tanlang")
 
     active_orders = await get_open_orders(db, from_table_id)
     if not active_orders:
@@ -1502,10 +1532,13 @@ async def transfer_table(
             status_code=409,
             detail=f"Stol #{from_table.number} da ko'chiriladigan ochiq buyurtma topilmadi",
         )
+    if len(active_orders) != 1:
+        raise HTTPException(409, "Manba stolda bir nechta eski hisob bor; kassir tekshirishi kerak")
 
     for ord in active_orders:
         ord.table_id = to_table.id
         ord.hall_name = to_table.room or f"Zal #{to_table.number}"
+        ord.version = (ord.version or 0) + 1
 
     # Eski stolni bo'shatamiz, yangi stolni band qilamiz
     from_table.status = TableStatus.AVAILABLE

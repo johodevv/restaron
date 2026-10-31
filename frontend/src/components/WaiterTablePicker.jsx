@@ -34,7 +34,7 @@ export default function WaiterTablePicker({ tables, zone, onZone, onSelect, labe
               const reserved = table.status === 'reserved';
               return <button type="button" key={table.id} data-table-id={table.id} disabled={maintenance || disabled} onClick={() => onSelect(table)} className={`min-h-[112px] p-4 rounded-2xl text-left border-2 active:scale-[.98] ${maintenance ? 'bg-slate-800 border-slate-600 opacity-50' : busy ? 'bg-slate-800 border-red-500' : reserved ? 'bg-slate-800 border-amber-500' : 'bg-slate-800 border-emerald-500'}`}>
                 <strong className="block text-2xl text-white">{table.name || `${label('Stol #')}${table.number}`}</strong>
-                {showingOccupied && <span className="block mt-1 text-sm text-slate-300 break-words">{table.room?.trim() || label('Zonasiz')}</span>}
+                {(showingOccupied || transfer) && <span className="block mt-1 text-sm text-slate-300 break-words">{table.room?.trim() || label('Zonasiz')}</span>}
                 <span className={`block mt-2 text-sm font-semibold ${busy ? 'text-red-300' : reserved ? 'text-amber-300' : 'text-emerald-300'}`}>{label(maintenance ? 'Ta’mirda' : busy ? (transfer ? 'Bandga qo‘shish' : 'Band') : reserved ? 'Bron qilingan' : "Bo'sh")}</span>
               </button>;
             })}

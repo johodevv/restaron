@@ -231,11 +231,14 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
 
 
   const handleTransferTable = async (targetTableId) => {
-    if (!selectedTable || !targetTableId || mutationQueueRef.current.pending) return;
+    if (!selectedTable || !targetTableId || mutationQueueRef.current.pending || transferLoading) return;
     setTransferLoading(true);
     try {
       const target = tables.find(table => table.id === targetTableId);
-      if (target?.is_occupied || target?.status === 'occupied') {
+      // Never decide from a stale table tile: the destination may have an account.
+      const destinationOrders = await api.get(`/orders/table/${targetTableId}/active`);
+      if (destinationOrders?.length) {
+        setTables(previous => previous.map(table => table.id === targetTableId ? { ...table, status: 'occupied', is_occupied: true } : table));
         const preview = await api.get(`/tables/${selectedTable.id}/merge-preview/${targetTableId}`);
         setMergePreview({ ...preview, source_label: [selectedTable.room, selectedTable.name || `${label('Stol #')}${selectedTable.number}`].filter(Boolean).join(' · '), target_label: [target.room, target.name || `${label('Stol #')}${target.number}`].filter(Boolean).join(' · '), key: crypto.randomUUID?.() || `merge_${Date.now()}` });
         return;
@@ -244,10 +247,17 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
       showToast(res.message || "Buyurtma muvaffaqiyatli ko'chirildi! ✅", 'success');
       setTransferModalOpen(false);
       const dest = tables.find((t) => t.id === targetTableId);
-      if (dest) setSelectedTable(dest);
+      latestRequestIdRef.current += 1;
+      fetchVersionRef.current += 1;
+      selectionKeyRef.current = `table:${targetTableId}`;
+      activeOrderRef.current = null;
+      setActiveOrder(null);
+      if (dest) setSelectedTable({ ...dest, status: 'occupied', is_occupied: true });
+      await fetchTableActiveOrder(targetTableId);
       loadInitialData();
     } catch (err) {
       showToast(err.message || "Ko'chirishda xatolik yuz berdi", 'urgent');
+      if (err.status === 409) loadInitialData();
     } finally {
       setTransferLoading(false);
     }
@@ -524,7 +534,7 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
       if (mutationQueueRef.current?.has(`table:${tableIdToFetch}`) || version !== fetchVersionRef.current || mutationVersion !== latestRequestIdRef.current || selectionKeyRef.current !== `table:${tableIdToFetch}`) return;
       if (activeOrders?.length > 1) {
         setActiveOrder(null);
-        setLoadError("Stolda bir nechta eski hisob bor. Kassir tekshirishi kerak");
+        setOrderReadError("Stolda bir nechta eski hisob bor. Kassir tekshirishi kerak");
         return;
       }
       setOrderReadError(null);
@@ -1998,6 +2008,7 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
               </button>
             </div>
 
+            <p className="shrink-0 mb-3 font-semibold text-emerald-300">{[selectedTable.room, selectedTable.name || `${label('Stol #')}${selectedTable.number}`].filter(Boolean).join(' · ')}{activeOrder?.order_number ? ` · ${activeOrder.order_number}` : ''}</p>
             {mergePreview ? <div className="flex-1 min-h-0 overflow-y-auto p-3 space-y-4 text-slate-200">
               <p className="font-bold text-base">{mergePreview.source_label} → {mergePreview.target_label}</p>
               <p className="text-xs text-slate-400">{mergePreview.source_number} → {mergePreview.target_number}</p>
