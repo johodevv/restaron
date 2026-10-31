@@ -22,6 +22,17 @@ export function tableDirectory(tables, zones, { query = '', zone = '', status = 
   return { active, matches, groups, counts, zoneOptions };
 }
 
+// The occupied view spans all areas, but keeps the complete area navigation.
+export function tablePickerDirectory(tables, zone, occupiedOnly = false) {
+  const directory = tableDirectory(tables, [], { zone: occupiedOnly ? '' : zone });
+  const isOccupied = table => table.is_occupied || tableStatus(table) === 'occupied';
+  return {
+    ...directory,
+    matches: occupiedOnly ? directory.matches.filter(isOccupied) : directory.matches,
+    occupiedCount: directory.active.filter(isOccupied).length,
+  };
+}
+
 export function normalizeQrBaseUrl(value) {
   const url = new URL(String(value).trim());
   if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash) {

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { tableDirectory, normalizeQrBaseUrl, qrAddressKind, resolveQrBaseUrl } from '../src/utils/tableDirectory.js';
+import { tableDirectory, tablePickerDirectory, normalizeQrBaseUrl, qrAddressKind, resolveQrBaseUrl } from '../src/utils/tableDirectory.js';
 
 const tables = [
   { id: 1, number: 2, room: 'Zal', status: 'occupied', is_active: true },
@@ -9,6 +9,35 @@ const tables = [
   { id: 4, number: 61, room: null, status: 'maintenance', is_active: true },
   { id: 5, number: 3, room: 'Zal', status: 'available', is_active: false },
 ];
+
+test('occupied picker spans zones and includes live occupancy flags, excluding inactive and reserved-only tables', () => {
+  const fixture = [...tables,
+    { id: 6, number: 2, room: 'Xona', status: 'available', is_occupied: true },
+    { id: 7, number: 3, room: 'Xona', status: 'occupied', is_active: false },
+    { id: 8, number: 4, room: null, status: 'occupied' },
+  ];
+  const result = tablePickerDirectory(fixture, 'Terrassa', true);
+  assert.deepEqual(result.matches.map(table => table.id), [1, 6, 8]);
+  assert.equal(result.occupiedCount, 3);
+  assert.deepEqual(result.zoneOptions, tableDirectory(fixture, []).zoneOptions);
+});
+
+test('occupied picker count and results update when tables open and close, including an empty result', () => {
+  const available = tables.map(table => ({ ...table, status: 'available', is_occupied: false }));
+  assert.deepEqual(tablePickerDirectory(available, 'Zal', true).matches, []);
+  assert.equal(tablePickerDirectory(available, 'Zal', true).occupiedCount, 0);
+  const changed = available.map(table => table.id === 2 ? { ...table, is_occupied: true } : table);
+  const result = tablePickerDirectory(changed, 'Zal', true);
+  assert.deepEqual(result.matches.map(table => table.id), [2]);
+  assert.equal(result.occupiedCount, 1);
+});
+
+test('default picker keeps the original zone filtering and all its table statuses', () => {
+  const result = tablePickerDirectory(tables, 'Terrassa');
+  assert.deepEqual(result.matches, tableDirectory(tables, [], { zone: 'Terrassa' }).matches);
+  assert.deepEqual(result.matches.map(table => table.id), [3, 2]);
+  assert.equal(result.occupiedCount, 1);
+});
 
 test('number search prioritises exact matches and keeps same-number tables in different rooms', () => {
   const result = tableDirectory(tables, [], { query: '#2' });

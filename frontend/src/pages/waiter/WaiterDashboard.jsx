@@ -16,6 +16,8 @@ import { ThermalReceiptModal } from '../../components/ThermalReceiptModal';
 import CheckoutModal from '../../components/CheckoutModal';
 import PrinterStatusBanner from '../../components/PrinterStatusBanner';
 import WaiterTablePicker from '../../components/WaiterTablePicker';
+import CounterOrderPicker from '../../components/CounterOrderPicker';
+import { openCounterOrders } from '../../utils/counterOrders';
 import confetti from 'canvas-confetti';
 import {
   UtensilsCrossed,
@@ -51,7 +53,7 @@ import {
   ShoppingCart
 } from 'lucide-react';
 
-export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckout: propCanCheckout, restaurantId: propRestaurantId, onOrderViewChange, compactMenu = false } = {}) => {
+export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckout: propCanCheckout, restaurantId: propRestaurantId, onOrderViewChange, compactMenu = false, adminOrderNavigation = false } = {}) => {
   const { lang, getLocalizedName } = useLanguage();
   const label = text => posLabel(text, lang);
   const { user, isAdmin, isCashier, canCheckout: authCanCheckout } = useAuth();
@@ -81,6 +83,7 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
   const isPrivileged = user?.role === 'admin' || user?.role === 'cashier' || user?.role === 'developer';
   const canCheckout = propCanCheckout !== undefined ? propCanCheckout : isPrivileged;
   const showModeSwitch = propShowModeSwitch !== undefined ? propShowModeSwitch : isPrivileged;
+  const useAdminOrderModes = adminOrderNavigation && isPrivileged && showModeSwitch && canCheckout;
 
   // Ekran: 'pos' (stollar zakazi) | 'calls' (Chaqiruvlar) | 'ready' (Oshxonadan tayyor)
   const [activeTab, setActiveTab] = useState('pos');
@@ -109,9 +112,12 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
   const [selectedTable, setSelectedTable] = useState(null);
   // Stol zonasi (Zal / Terrassa / Ko'cha / VIP). '' — hammasi.
   const [selectedZone, setSelectedZone] = useState('');
+  const [showOccupiedTables, setShowOccupiedTables] = useState(false);
   const [transferZone, setTransferZone] = useState('');
   const [showTableBrowser, setShowTableBrowser] = useState(false);
   const [browsingTables, setBrowsingTables] = useState(!isPrivileged);
+  const [browsingCounterOrders, setBrowsingCounterOrders] = useState(false);
+  const [openingCounterOrderId, setOpeningCounterOrderId] = useState(null);
   const [customerDetailsOpen, setCustomerDetailsOpen] = useState(false);
   const [showOrderPicker, setShowOrderPicker] = useState(false);
   const [orderSearch, setOrderSearch] = useState('');
@@ -279,7 +285,7 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
       setReceiptModalTitle(`Kassa Cheki #${res?.order_id || activeOrder?.id || ''}`);
       setReceiptModalOpen(true);
     }
-    if (selectedTable) {
+    if (selectedTable && (!useAdminOrderModes || (orderType === 'table' && activeOrder?.table_id === selectedTable.id))) {
       setTables((prev) =>
         prev.map((t) =>
           t.id === selectedTable.id
@@ -292,6 +298,10 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
       );
     }
     setActiveOrder(null);
+    if (useAdminOrderModes && orderType !== 'table') {
+      setOrders(previous => previous.filter(order => order.id !== activeOrder?.id));
+      setBrowsingCounterOrders(true);
+    }
     confetti({ particleCount: 50, spread: 60, origin: { y: 0.8 } });
     loadInitialData();
   };
@@ -303,6 +313,65 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
 
   // Sound toggle
   const [soundEnabled, setSoundEnabled] = useState(true);
+
+  const modeSwitchBusy = mutationStatus.pending > 0 || sendingToKitchen || savingWeight || savingSize || transferLoading || printingBill;
+  const selectAdminOrderMode = next => {
+    if (!useAdminOrderModes || mutationQueueRef.current.pending || modeSwitchBusy) return;
+    setActiveTab('pos');
+    setBrowsingTables(next === 'table');
+    setBrowsingCounterOrders(next !== 'table');
+    setOpeningCounterOrderId(null);
+    latestRequestIdRef.current += 1;
+    loadInitialData();
+    // Clicking the current mode must not clear its order or customer details.
+    if (next === orderType) return;
+    fetchVersionRef.current += 1;
+    selectionKeyRef.current = next === 'table' ? `table:${selectedTable?.id || ''}` : next;
+    orderTypeRef.current = next;
+    activeOrderRef.current = null;
+    setActiveOrder(null);
+    setOrderLoading(false);
+    setOrderReadError(null);
+    setCustomerName(''); setCustomerPhone(''); setDeliveryAddress('');
+    setOrderSearch(''); setKitchenNote(''); setKitchenSendSuccess(false);
+    setMobileTab('menu');
+    setShowTableBrowser(false); setShowOrderPicker(false); setCustomerDetailsOpen(false);
+    setOrderType(next);
+  };
+
+  const createCounterOrder = () => {
+    if (!useAdminOrderModes || modeSwitchBusy || mutationQueueRef.current.pending) return;
+    latestRequestIdRef.current += 1;
+    activeOrderRef.current = null;
+    setActiveOrder(null); setOrderLoading(false); setOrderReadError(null);
+    setCustomerName(''); setCustomerPhone(''); setDeliveryAddress(''); setKitchenNote('');
+    setKitchenSendSuccess(false); setMobileTab('menu');
+    setBrowsingCounterOrders(false); setCustomerDetailsOpen(true);
+  };
+
+  const openCounterOrder = async order => {
+    if (!useAdminOrderModes || modeSwitchBusy || mutationQueueRef.current.pending) return;
+    const scope = selectionKeyRef.current;
+    const request = ++latestRequestIdRef.current;
+    setOpeningCounterOrderId(order.id);
+    try {
+      const fresh = await api.get(`/orders/${order.id}`);
+      if (request !== latestRequestIdRef.current || selectionKeyRef.current !== scope) return;
+      if (!openCounterOrders([fresh], orderType).length) {
+        showToast(label('Hisob allaqachon yopilgan. Ro‘yxat yangilandi.'), 'warning');
+        loadInitialData(); return;
+      }
+      activeOrderRef.current = fresh;
+      setActiveOrder(fresh); setOrderLoading(false); setOrderReadError(null);
+      setCustomerName(fresh.customer_name || ''); setCustomerPhone(fresh.customer_phone || '');
+      setDeliveryAddress(fresh.delivery_address || ''); setKitchenNote(fresh.kitchen_note || '');
+      setKitchenSendSuccess(false); setMobileTab('menu'); setBrowsingCounterOrders(false);
+    } catch (error) {
+      if (request === latestRequestIdRef.current) showToast(error.message, 'urgent');
+    } finally {
+      if (request === latestRequestIdRef.current) setOpeningCounterOrderId(null);
+    }
+  };
 
   // Back/Forward navigates the panel; it must never send, delete or pay for an order.
   const navigationDialog = receiptModalOpen ? 'receipt' : checkoutModalOpen ? 'checkout'
@@ -1061,8 +1130,17 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
       {isPrivileged && <PrinterStatusBanner />}
 
       {/* ─── Yuqori panel ──────────────────────────────────────────── */}
-      {(isPrivileged || activeTab !== 'pos') && <header className="min-h-[52px] py-1 bg-emerald-950/80 border-b border-emerald-800/60 px-2 sm:px-4 flex items-center justify-between shadow-lg backdrop-blur-md shrink-0">
-        <div className="flex items-center gap-1.5 min-w-0">
+      {(isPrivileged || activeTab !== 'pos') && <header className={`min-h-[52px] py-1 bg-emerald-950/80 border-b border-emerald-800/60 px-2 sm:px-4 flex items-center justify-between shadow-lg backdrop-blur-md shrink-0 ${useAdminOrderModes ? 'flex-wrap gap-2' : ''}`}>
+        <div className={`flex items-center gap-1.5 min-w-0 ${useAdminOrderModes ? 'flex-wrap' : ''}`}>
+          {useAdminOrderModes ? <nav aria-label={label('Buyurtma turi')} className="flex flex-wrap items-center gap-1.5">
+            {[
+              { type: 'table', text: 'Stollar', Icon: UtensilsCrossed },
+              { type: 'takeaway', text: 'Olib ketish', Icon: ShoppingBag },
+              { type: 'delivery', text: 'Yetkazib berish', Icon: Bike },
+            ].map(({ type, text, Icon }) => <button key={type} type="button" data-testid={`pos-mode-${type}`} aria-pressed={activeTab === 'pos' && orderType === type} disabled={modeSwitchBusy} onClick={() => selectAdminOrderMode(type)} className={`min-h-[44px] flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-black border transition-colors disabled:opacity-50 ${activeTab === 'pos' && orderType === type ? 'bg-emerald-600 border-emerald-500 text-white' : 'bg-slate-900 border-slate-700 text-slate-200 hover:border-emerald-500'}`}>
+              <Icon className="w-4 h-4" /><span>{label(text)}</span>
+            </button>)}
+          </nav> : <>
           {/* "Stollar" — chaqiruvlar yoki tayyor taomlardan POS ekraniga
               qaytish tugmasi. */}
           <button
@@ -1079,7 +1157,7 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
             {activeTab === 'pos' && !browsingTables ? <ArrowLeft className="w-4 h-4" /> : <UtensilsCrossed className="w-4 h-4" />}
             <span>{label("Stollar")}</span>
           </button>
-
+          </>}
         </div>
 
         {/* Right Info: Chaqiruvlar badgi, Waiter Name, Sound toggle */}
@@ -1263,8 +1341,12 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
             </div>
           )}
         </div>
+      ) : useAdminOrderModes && browsingCounterOrders && orderType !== 'table' ? (
+        <CounterOrderPicker orders={orders} type={orderType} label={label} loading={loading} openingOrderId={openingCounterOrderId} disabled={modeSwitchBusy} onCreate={createCounterOrder} onSelect={openCounterOrder} />
       ) : browsingTables && orderType === 'table' ? (
-        <WaiterTablePicker headingActions={!isPrivileged && <button type="button" aria-label={`${label('Chaqiruvlar')}${calls.length ? ` (${calls.length})` : ''}`} onClick={() => setActiveTab('calls')} className="relative min-w-[44px] min-h-[44px] rounded-xl bg-slate-800 border border-slate-600 flex items-center justify-center text-slate-200"><BellRing size={20} />{calls.length > 0 && <span className="absolute -top-1 -right-1 bg-red-600 text-white rounded-full px-1.5 text-xs font-bold">{calls.length}</span>}</button>} tables={tables} zone={selectedZone} onZone={setSelectedZone} label={label} loading={loading} onSelect={table => {
+        <WaiterTablePicker occupiedOnly={showOccupiedTables} onOccupiedOnlyChange={useAdminOrderModes ? setShowOccupiedTables : undefined} disabled={useAdminOrderModes && mutationStatus.pending > 0}
+          headingActions={!isPrivileged && <button type="button" aria-label={`${label('Chaqiruvlar')}${calls.length ? ` (${calls.length})` : ''}`} onClick={() => setActiveTab('calls')} className="relative min-w-[44px] min-h-[44px] rounded-xl bg-slate-800 border border-slate-600 flex items-center justify-center text-slate-200"><BellRing size={20} />{calls.length > 0 && <span className="absolute -top-1 -right-1 bg-red-600 text-white rounded-full px-1.5 text-xs font-bold">{calls.length}</span>}</button>} tables={tables} zone={selectedZone} onZone={setSelectedZone} label={label} loading={loading} onSelect={table => {
+          if (useAdminOrderModes && mutationQueueRef.current.pending) return;
           latestRequestIdRef.current += 1;
           selectionKeyRef.current = `table:${table.id}`;
           setActiveOrder(null);
@@ -1294,7 +1376,7 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
             >
             <div data-testid="pos-order-toolbar" className="flex items-center gap-1 px-2 py-1.5 shrink-0 border-b border-slate-700 bg-slate-950">
               {!isPrivileged && <button type="button" aria-label={label('Stollarga qaytish')} onClick={() => setBrowsingTables(true)} className="hidden lg:flex min-w-[44px] min-h-[44px] items-center justify-center rounded-lg bg-slate-800"><ArrowLeft size={20} /></button>}
-              {showModeSwitch && canCheckout && <select aria-label={label('Buyurtma turi')} value={orderType} onChange={event => {
+              {!useAdminOrderModes && showModeSwitch && canCheckout && <select aria-label={label('Buyurtma turi')} value={orderType} onChange={event => {
                 const next = event.target.value;
                 if (next === orderType) return;
                 setOrderType(next); setActiveOrder(null); setCustomerName(''); setCustomerPhone(''); setDeliveryAddress(''); setOrderSearch('');
@@ -1302,7 +1384,7 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
               }} className="w-[100px] min-h-[44px] rounded-lg bg-slate-900 border border-slate-700 px-1 text-xs font-bold shrink-0">
                 <option value="table">{label('Stolda')}</option><option value="takeaway">{label('Olib ketish')}</option><option value="delivery">{label('Dastavka')}</option>
               </select>}
-              <button data-testid="pos-select-order" aria-label={label(orderType === 'table' ? 'Stol tanlash' : 'Buyurtma tanlash')} aria-haspopup="dialog" onClick={() => orderType === 'table' ? setShowTableBrowser(true) : setShowOrderPicker(true)} className="flex-1 min-w-0 min-h-[44px] px-2 text-left rounded-lg hover:bg-slate-800">
+              <button data-testid="pos-select-order" aria-label={label(orderType === 'table' ? 'Stol tanlash' : 'Buyurtma tanlash')} aria-haspopup={orderType === 'table' || !useAdminOrderModes ? 'dialog' : undefined} onClick={() => orderType === 'table' ? setShowTableBrowser(true) : useAdminOrderModes ? selectAdminOrderMode(orderType) : setShowOrderPicker(true)} className="flex-1 min-w-0 min-h-[44px] px-2 text-left rounded-lg hover:bg-slate-800">
                 <strong className="block truncate text-base">{orderType === 'table' ? (selectedTable?.name || `${label('Stol #')}${selectedTable?.number || 1}`) : (activeOrder?.order_number || label('+ Yangi zakaz'))} <span className="text-slate-400">⌄</span></strong>
                 <span className="block text-[11px] text-slate-400 truncate">{orderType === 'table' ? [selectedTable?.room, selectedTable?.is_occupied || selectedTable?.status === 'occupied' ? label('Band') : label("Bo'sh")].filter(Boolean).join(' · ') : customerName || label('Buyurtmalar ro‘yxati')}</span>
               </button>
@@ -1670,7 +1752,9 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
             <h2 id="pos-table-picker-title" className="text-xl font-bold">{label('Stol tanlash')}</h2>
             <button type="button" aria-label={label('Yopish')} onClick={() => setShowTableBrowser(false)} className="w-11 h-11 flex items-center justify-center rounded-xl hover:bg-slate-800"><X size={22} /></button>
           </div>
-          <WaiterTablePicker tables={tables} zone={selectedZone} onZone={setSelectedZone} label={label} loading={loading} onSelect={table => {
+          <WaiterTablePicker occupiedOnly={showOccupiedTables} onOccupiedOnlyChange={useAdminOrderModes ? setShowOccupiedTables : undefined} disabled={useAdminOrderModes && mutationStatus.pending > 0}
+            tables={tables} zone={selectedZone} onZone={setSelectedZone} label={label} loading={loading} onSelect={table => {
+            if (useAdminOrderModes && mutationQueueRef.current.pending) return;
             latestRequestIdRef.current += 1; selectionKeyRef.current = `table:${table.id}`;
             setActiveOrder(null); setSelectedTable(table); setShowTableBrowser(false); setMobileTab('menu');
             if (selectedTable?.id === table.id) fetchTableActiveOrder(table);

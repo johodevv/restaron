@@ -3,6 +3,10 @@ import { latinToCyrillic } from '../context/LanguageContext';
 const labels = [
   ['Stol tanlang', 'Выберите стол', 'Choose a table'], ['Avval zona, keyin stolni tanlang', 'Выберите зону, затем стол', 'Choose an area, then a table'],
   ['Zonalar', 'Зоны', 'Areas'], ['Stol raqami yoki nomi', 'Номер или название стола', 'Table number or name'],
+  ['Band stollar', 'Занятые столы', 'Occupied tables'], ['Band stol yo‘q', 'Занятых столов нет', 'No occupied tables'], ['Zonasiz', 'Без зоны', 'No area'],
+  ['Yetkazib berish', 'Доставка', 'Delivery'],
+  ['Yangi buyurtma', 'Создать заказ', 'New order'],
+  ['Hisob allaqachon yopilgan. Ro‘yxat yangilandi.', 'Счёт уже закрыт. Список обновлён.', 'This order is already closed. The list was refreshed.'],
   ['Stolni almashtirish', 'Сменить стол', 'Change table'], ['ta stol', 'столов', 'tables'],
   ['Ta’mirda', 'Недоступен', 'Unavailable'], ['Bron qilingan', 'Забронирован', 'Reserved'],
   ['Stol topilmadi', 'Стол не найден', 'No tables found'], ['Yuklanmoqda...', 'Загрузка...', 'Loading...'],
