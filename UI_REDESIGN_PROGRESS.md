@@ -127,3 +127,7 @@ Admin POS tashqi qobig‘idagi h-full/overflow-hidden cheklovi olib tashlandi. M
 ## 2026-10-31 — stol ichidagi ortiqcha yuqori qator
 
 Admin stol muharririda Stollar / Olib ketish / Yetkazib berish hamda Chaqiruvlar / Tayyor / ovoz / xodim qatori yashirildi. Stollarni tanlash ro‘yxatida qator ko‘rinadi. Stol ichida desktopda hisob sarlavhasi yoniga, tor ekranda menyu/buyurtma navigatsiyasiga 44 px qaytish tugmasi qo‘shildi; pending saqlash paytida qaytish bloklanadi. Ofitsiant, mijoz QR menyusi va boshqa buyurtma turlari o‘zgarmadi. 53 frontend testi, production build va diff tekshiruvi o‘tdi. Brauzerda amaliy vizual tekshiruv bajarilmadi.
+
+## 2026-10-31 — asosiy navigatsiyani logo qatoriga ko‘chirish
+
+Admin/kassir Navbar ichiga asosiy navigatsiya joyi qo‘shildi. AdminPrimaryNavigation mavjud tab va yangilash handlerlarini React portal orqali shu joyga chiqaradi; eski alohida qator takrorlanmaydi. Logo, Buyurtma olish / Stollar va QR / Boshqaruv / yangilash hamda til/tema/foydalanuvchi boshqaruvlari 1440 px dan keng ekranda bitta qatorda. Torroq ekranda navigatsiya shu yuqori panel ichida pastki qatorga tushadi va gorizontal suriladi. Ofitsiant va mijoz Navbar standart joylashuvi saqlangan. 53 frontend testi, production build va diff tekshiruvi o‘tdi. Brauzerda amaliy vizual sinov bajarilmadi.

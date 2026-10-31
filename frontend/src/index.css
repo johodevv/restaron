@@ -307,6 +307,14 @@ button, input, select, textarea, a {
 .admin-nav-button:hover { background: #324d5e; }
 .admin-nav-button[aria-current="page"] { background: #087451; border-color: #34d399; color: white; }
 .admin-nav-button:focus-visible, .settings-navigation button:focus-visible { outline: 3px solid #7dd3fc; outline-offset: 2px; }
+.admin-navbar .admin-navbar-content { max-width: none; height: auto; min-height: 64px; padding-top: 8px; padding-bottom: 8px; flex-wrap: wrap; gap: 12px; }
+.admin-navbar-navigation { order: 3; flex: 1 0 100%; min-width: 0; }
+.admin-navbar-navigation .admin-primary-nav { position: static; padding: 0; background: transparent; }
+.admin-navbar-navigation .admin-nav-button { min-height: 44px; padding: 8px 12px; gap: 8px; flex-shrink: 0; }
+@media (min-width: 1440px) {
+  .admin-navbar .admin-navbar-content { flex-wrap: nowrap; }
+  .admin-navbar-navigation { order: 0; flex: 1 1 auto; }
+}
 .admin-work-area { flex: 1; min-height: 0; min-width: 0; }
 .admin-work-area.with-sections { display: grid; grid-template-columns: 220px minmax(0,1fr); gap: 20px; align-items: start; }
 .admin-page-content { min-height: 0; min-width: 0; height: 100%; }

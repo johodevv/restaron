@@ -1,4 +1,5 @@
-import React from 'react';
+import React, { useLayoutEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { ShoppingCart, Table, Settings, LayoutDashboard, Archive, Users, Wallet, UtensilsCrossed, FileSpreadsheet, Trophy, Palette, Star, RefreshCw } from 'lucide-react';
 
 const sections = [
@@ -11,13 +12,18 @@ function NavButton({ id, title, icon: Icon, tab, onNavigate }) {
   return <button type="button" data-tab={id} id={`admin-tab-${id}`} aria-current={tab === id ? 'page' : undefined} onClick={() => onNavigate(id)} className="admin-nav-button"><Icon size={20} /><span>{title}</span></button>;
 }
 export function AdminPrimaryNavigation({ tab, onNavigate, role, onRefresh }) {
+  const [headerSlot, setHeaderSlot] = useState(null);
+  useLayoutEffect(() => {
+    setHeaderSlot(document.getElementById('admin-primary-navigation-slot'));
+  }, []);
   const management = !['pos', 'tables'].includes(tab);
-  return <nav aria-label="Asosiy boshqaruv" className="admin-primary-nav">
+  const navigation = <nav aria-label="Asosiy boshqaruv" className="admin-primary-nav">
     <NavButton id="pos" title="Buyurtma olish" icon={ShoppingCart} tab={tab} onNavigate={onNavigate} />
     {allowed(role, 'tables') && <NavButton id="tables" title="Stollar va QR" icon={Table} tab={tab} onNavigate={onNavigate} />}
     <button type="button" aria-current={management ? 'page' : undefined} onClick={() => onNavigate(role === 'cashier' ? 'receipts' : 'overview')} className="admin-nav-button"><Settings size={20} /><span>Boshqaruv</span></button>
     {onRefresh && <button type="button" aria-label="Ma’lumotlarni yangilash" title="Yangilash" onClick={onRefresh} className="admin-nav-button ml-auto"><RefreshCw size={20} /></button>}
   </nav>;
+  return headerSlot ? createPortal(navigation, headerSlot) : navigation;
 }
 export function AdminSectionNavigation({ tab, onNavigate, role }) {
   if (['pos', 'tables'].includes(tab)) return null;

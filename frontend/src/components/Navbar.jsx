@@ -33,12 +33,13 @@ export const Navbar = ({
   const { connected } = useWebSocket();
   const { lang, setLang, t } = useLanguage();
   const [themeModalOpen, setThemeModalOpen] = useState(false);
+  const hasAdminNavigation = user?.role === 'admin' || user?.role === 'cashier';
   useNavigationOverlay('theme', themeModalOpen, setThemeModalOpen);
 
   return (
     <>
-      <header className={`app-navbar ${user ? 'staff-navbar' : ''} sticky top-0 z-40 w-full backdrop-blur-xl bg-theme-surface/80 border-b border-theme-border/60 transition-colors`}>
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between gap-4">
+      <header className={`app-navbar ${user ? 'staff-navbar' : ''} ${hasAdminNavigation ? 'admin-navbar' : ''} sticky top-0 z-40 w-full backdrop-blur-xl bg-theme-surface/80 border-b border-theme-border/60 transition-colors`}>
+        <div className={`max-w-7xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between gap-4 ${hasAdminNavigation ? 'admin-navbar-content' : ''}`}>
           {/* Logo & Brand */}
           <div
             onClick={() => {
@@ -74,6 +75,8 @@ export const Navbar = ({
               )}
             </div>
           </div>
+
+          {hasAdminNavigation && <div id="admin-primary-navigation-slot" className="admin-navbar-navigation" />}
 
           {/* Action Items */}
           <div className="flex items-center gap-2 sm:gap-3 shrink-0">
