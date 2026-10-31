@@ -18,7 +18,6 @@ import { WaiterKpiTab } from './WaiterKpiTab';
 import { RestaurantSettingsTab } from './RestaurantSettingsTab';
 const POSView = React.lazy(() => import('./POSView'));
 import BookingModal from '../../components/BookingModal';
-import OrderCard from '../../components/OrderCard';
 import {
   LayoutDashboard,
   ShoppingBag,
@@ -863,95 +862,6 @@ export const AdminDashboard = () => {
                 {staff.filter(person => person.is_active).length} nafar
               </div>
             </div>
-          </div>
-
-          {/* ─── Faol Buyurtmalar (Real-time Zakazlar) ────────────────────── */}
-          <div className="space-y-3 pt-2">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-              <div className="flex items-center gap-2.5">
-                <div className="w-9 h-9 rounded-xl bg-theme-primary/20 text-theme-primary flex items-center justify-center font-bold">
-                  🛍️
-                </div>
-                <div>
-                  <h3 className="text-base font-black text-white">So'nggi va Faol Buyurtmalar</h3>
-                  <p className="text-[11px] text-theme-muted">Olib ketish, Dastavka va Zaldagi buyurtmalar nazorati</p>
-                </div>
-              </div>
-
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => setTab('pos')}
-                  className="px-3 py-1.5 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30 text-amber-300 text-xs font-bold transition-all"
-                >
-                  Olib ketish ({recentOrders.filter(o => o.order_type === 'takeaway').length})
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setTab('pos')}
-                  className="px-3 py-1.5 rounded-xl bg-cyan-500/15 hover:bg-cyan-500/25 border border-cyan-500/30 text-cyan-300 text-xs font-bold transition-all"
-                >
-                  Dastavka ({recentOrders.filter(o => o.order_type === 'delivery').length})
-                </button>
-              </div>
-            </div>
-
-            {recentOrders.length === 0 ? (
-              <div className="p-8 rounded-3xl glass-card border border-dashed border-theme-border text-center text-xs text-theme-muted">
-                Hozirda yangi buyurtmalar mavjud emas
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3.5 sm:gap-4 w-full overflow-x-hidden p-1 sm:p-2">
-                {recentOrders.slice(0, 6).map((order) => (
-                  <OrderCard
-                    key={order.id}
-                    order={order}
-                    onConfirm={async (ord) => {
-                      try {
-                        await api.patch(`/orders/${ord.id}/status`, { status: 'preparing' });
-                        loadAll();
-                      } catch (e) {
-                        alert(e.message || 'Xatolik');
-                      }
-                    }}
-                    onUpdateStatus={async (ordId, st) => {
-                      try {
-                        await api.patch(`/orders/${ordId}/status`, { status: st });
-                        loadAll();
-                      } catch (e) {
-                        alert(e.message || 'Xatolik');
-                      }
-                    }}
-                    onDeliver={async (ordId) => {
-                      try {
-                        await api.patch(`/orders/${ordId}/deliver`, {});
-                        loadAll();
-                      } catch (e) {
-                        alert(e.message || 'Xatolik');
-                      }
-                    }}
-                    onPrint={async (ordId, ordNum) => {
-                      try {
-                        const res = await api.post(`/orders/${ordId}/send-to-kitchen?reprint=true`);
-                        if (res?.raw_text) {
-                          setThermalRawText(res.raw_text);
-                          setThermalTitle(`Chek — ${ordNum}`);
-                          setThermalOpen(true);
-                        } else {
-                          alert('Chek printerga yuborildi!');
-                        }
-                      } catch (e) {
-                        alert(e.message || 'Chek chiqarishda xatolik');
-                      }
-                    }}
-                    onCheckout={(ord) => {
-                      setCheckoutTableLabel(ord.table_number ? `Stol #${ord.table_number}` : ord.order_number);
-                      setCheckoutOrder(ord);
-                    }}
-                  />
-                ))}
-              </div>
-            )}
           </div>
 
           {/* Realtime instructions */}

@@ -127,6 +127,12 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
   const [activeOrder, setActiveOrder] = useState(null);
   const [orderLoading, setOrderLoading] = useState(false);
   const [orderReadError, setOrderReadError] = useState(null);
+  const [feeEditor, setFeeEditor] = useState(null);
+  const [feeValue, setFeeValue] = useState('');
+  const [feeError, setFeeError] = useState('');
+  const [savingFee, setSavingFee] = useState(false);
+  const feeSaveLock = useRef(false);
+  useEffect(() => { setFeeEditor(null); setFeeError(''); }, [activeOrder?.id]);
   const initialLoadRef = useRef(false);
 
   // Tortiladigan taom (baliq, go'sht) og'irligini kiritish oynasi
@@ -227,11 +233,40 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
     setOrderReadError(null);
     setWeightModalItem(null);
     setSizeModalItem(null);
+    setFeeEditor(null); setFeeError('');
   }, [selectionKey]);
+
+  const saveAccountFee = async event => {
+    event.preventDefault();
+    if (!feeEditor || feeSaveLock.current || mutationQueueRef.current.pending) return;
+    const text = feeValue.trim().replace(',', '.');
+    const percent = Number(text);
+    if (!/^\d{1,3}(\.\d{1,2})?$/.test(text) || percent > 100) { setFeeError('0–100 oralig‘ida foiz kiriting.'); return; }
+    feeSaveLock.current = true; setSavingFee(true); setFeeError('');
+    const scope = selectionKeyRef.current;
+    try {
+      const fresh = await api.patch(`/orders/${feeEditor.id}/service-fee`, { percent, expected_version: feeEditor.version });
+      if (selectionKeyRef.current === scope) {
+        const next = latestOrder(activeOrderRef.current, fresh);
+        activeOrderRef.current = next; setActiveOrder(next); setFeeEditor(null);
+      }
+    } catch (error) {
+      setFeeError(error.message);
+      if (error.status === 409) {
+        try {
+          const fresh = await api.get(`/orders/${feeEditor.id}`);
+          if (selectionKeyRef.current === scope) {
+            activeOrderRef.current = fresh; setActiveOrder(fresh);
+            setFeeEditor({ id: fresh.id, version: fresh.version });
+          }
+        } catch (_) { /* Keep the error and editor visible for a deliberate retry. */ }
+      }
+    } finally { feeSaveLock.current = false; setSavingFee(false); }
+  };
 
 
   const handleTransferTable = async (targetTableId) => {
-    if (!selectedTable || !targetTableId || mutationQueueRef.current.pending || transferLoading) return;
+    if (!selectedTable || !targetTableId || mutationQueueRef.current.pending || transferLoading || feeSaveLock.current) return;
     setTransferLoading(true);
     try {
       const target = tables.find(table => table.id === targetTableId);
@@ -324,7 +359,7 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
   // Sound toggle
   const [soundEnabled, setSoundEnabled] = useState(true);
 
-  const modeSwitchBusy = mutationStatus.pending > 0 || sendingToKitchen || savingWeight || savingSize || transferLoading || printingBill;
+  const modeSwitchBusy = mutationStatus.pending > 0 || sendingToKitchen || savingWeight || savingSize || transferLoading || printingBill || savingFee;
   const insideAdminTable = useAdminOrderModes && activeTab === 'pos' && orderType === 'table' && !browsingTables;
   const selectAdminOrderMode = next => {
     if (!useAdminOrderModes || mutationQueueRef.current.pending || modeSwitchBusy) return;
@@ -777,7 +812,7 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
 
   // One recoverable queue owns create/add/delta, including rapid first taps.
   const handleAddItem = menuItem => {
-    if (orderLoading || orderReadError || mutationQueueRef.current.error || sendingToKitchen) return;
+    if (orderLoading || orderReadError || mutationQueueRef.current.error || sendingToKitchen || feeSaveLock.current) return;
     if (menuItem.is_stop_list || menuItem.is_available === false) {
       showToast(`"${menuItem.name}" hozirda stop-listda (tugagan)`, 'warning'); return;
     }
@@ -796,7 +831,7 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
 
   const handleQtyChange = (item, delta) => {
     const current = activeOrderRef.current?.items?.find(line => line.id === item.id);
-    if (!current || mutationQueueRef.current.error || sendingToKitchen) return;
+    if (!current || mutationQueueRef.current.error || sendingToKitchen || feeSaveLock.current) return;
     if (delta < 0 && !canDecreaseOrderItem(user, current)) {
       showToast('Oshxonaga yuborilgan taomni ofitsiant yoki admin kamaytiradi.', 'warning'); return;
     }
@@ -806,7 +841,7 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
 
   // Delete item from order — Darhol ekrandan olib tashlaydi
   const handleDeleteItem = async (itemId) => {
-    if (!activeOrder || mutationQueueRef.current.pending) return;
+    if (!activeOrder || mutationQueueRef.current.pending || feeSaveLock.current) return;
     const item = activeOrder.items?.find(line => line.id === itemId);
     if (!item || !canDeleteOrderItem(user, item)) {
       showToast('Oshxonaga yuborilgan taomni ofitsiant yoki admin o‘chiradi.', 'warning'); return;
@@ -935,6 +970,7 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
   // chiqadi — "2 somsa" emas. Tugma bo'sh bosilsa hech narsa chiqmaydi;
   // begunok printerdan chiqmagan bo'lsa "qayta chiqarish" so'raladi.
   const handleSendToKitchen = async (reprint = false) => {
+    if (feeSaveLock.current) return;
     if (!activeOrder || !activeOrder.items || activeOrder.items.length === 0) {
       showToast("Buyurtmada taomlar yo'q! Avval o'ng tomondan taom qo'shing.", "warning");
       return;
@@ -1039,6 +1075,7 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
   // Admin zakas olgandan keyin darhol mijoz chekini chiqarish.
   // Ofitsiantda bu tugma yo'q — chekni kassa (admin) chiqaradi.
   const handlePrintBill = async () => {
+    if (feeSaveLock.current) return;
     if (!selectedTable && orderType === 'table') {
       showToast('Avval stolni tanlang', 'warning');
       return;
@@ -1570,12 +1607,14 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
                   <p className="text-[10px] text-slate-400 truncate">{label('Taomlar:')} {(activeOrder?.subtotal || 0).toLocaleString('uz-UZ')}</p>
                   <p aria-label={label('Jami hisob:')} className="text-lg sm:text-xl leading-6 font-bold font-mono text-emerald-400 whitespace-nowrap">{(activeOrder?.total || 0).toLocaleString('uz-UZ')} <span className="text-[10px] font-normal text-slate-400">{label("so'm")}</span></p>
                   <p className="text-[10px] text-slate-400 truncate">{label('Xizmat (')}{activeOrder?.service_fee_percent ?? 12}%): {(activeOrder?.service_fee_amount || 0).toLocaleString('uz-UZ')}</p>
+                  {useAdminOrderModes && <button type="button" disabled={!activeOrder || activeOrder.is_paid || modeSwitchBusy || !!activeOrder.integrity_warning} onClick={() => { setFeeEditor({ id: activeOrder.id, version: activeOrder.version }); setFeeValue(String(activeOrder.service_fee_percent ?? 0)); setFeeError(''); }} className="min-h-[32px] text-xs text-emerald-300 underline disabled:opacity-40">{label('Foizni o‘zgartirish')}</button>}
                 </div>
                 <button onClick={() => handleSendToKitchen(false)} disabled={!activeOrder || sendingToKitchen || Boolean(activeOrder.integrity_warning)} className="pos-kitchen-action shrink-0 min-h-[48px] px-3 rounded-xl bg-emerald-700 hover:bg-emerald-600 text-white font-bold text-sm disabled:opacity-35 flex items-center justify-center gap-1">
                   <Send size={18} /><span>{sendingToKitchen ? label('Chop...') : label('Oshxonaga')}</span>
                   {activeOrder && (activeOrder.items || []).some(i => i.quantity > (i.sent_quantity || 0)) && <span className="rounded-md bg-black/15 px-1.5 py-0.5 text-xs">{activeOrder.items.reduce((sum,i) => sum + Math.max(0,i.quantity-(i.sent_quantity||0)),0)}</span>}
                 </button>
                 {canCheckout && <button onClick={async () => {
+                  if (feeSaveLock.current) return;
                   const scope = selectionKey;
                   await orderQueueRef.current;
                   if (selectionKeyRef.current !== scope || !activeOrderRef.current) return;
@@ -1585,6 +1624,12 @@ export const WaiterDashboard = ({ showModeSwitch: propShowModeSwitch, canCheckou
                   } catch (err) { showToast(err.message, 'urgent'); }
                 }} disabled={!activeOrder || !activeOrder.items?.length || Boolean(activeOrder.integrity_warning)} className="shrink-0 min-h-[48px] px-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs disabled:opacity-35 flex items-center justify-center gap-1"><CreditCard size={18} />{label("To'lov")}</button>}
               </div>
+              {useAdminOrderModes && feeEditor && <form onSubmit={saveAccountFee} className="flex flex-wrap items-center gap-2 rounded-lg border border-slate-600 p-2 text-xs">
+                <label>{label('Xizmat haqi (%)')}<input aria-label={label('Xizmat haqi (%)')} inputMode="decimal" value={feeValue} disabled={savingFee} onChange={e => setFeeValue(e.target.value)} className="ml-2 w-20 min-h-[44px] px-2 rounded-lg bg-slate-800 border border-slate-600 text-base" /></label>
+                <button type="submit" disabled={modeSwitchBusy} className="min-h-[44px] px-3 rounded-lg bg-emerald-700 font-bold disabled:opacity-40">{label(savingFee ? 'Saqlanmoqda...' : 'Saqlash')}</button>
+                <button type="button" disabled={savingFee} onClick={() => setFeeEditor(null)} className="min-h-[44px] px-3">{label('Bekor qilish')}</button>
+                {feeError && <p role="alert" className="w-full text-red-300">{feeError}</p>}
+              </form>}
             </div>
           </div>
 

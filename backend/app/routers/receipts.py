@@ -3,7 +3,7 @@ Cheklar Arxivi (3 yilgacha saqlash) va Smena Hisobotlari (X/Z Report) API
 Xprinter uchun chek formatlash va qayta chop etish
 """
 import asyncio
-from datetime import datetime, timezone, timedelta
+from datetime import date, datetime, timezone, timedelta
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, and_, or_
@@ -63,6 +63,8 @@ async def list_receipts(
     search: Optional[str] = Query(None, description="Chek raqami, stol yoki ofitsiant ismi"),
     start_date: Optional[datetime] = None,
     end_date: Optional[datetime] = None,
+    from_day: Optional[date] = None,
+    to_day: Optional[date] = None,
     limit: int = Query(50, le=200),
     offset: int = 0,
     db: AsyncSession = Depends(get_db),
@@ -70,6 +72,13 @@ async def list_receipts(
 ):
     """Arxivdagi cheklarni qidirish va filtrlash"""
     query = select(ReceiptArchive).where(ReceiptArchive.restaurant_id == restaurant_id)
+
+    if from_day and to_day and from_day > to_day:
+        raise HTTPException(422, 'Boshlanish sanasi tugash sanasidan katta bo‘lmasin')
+    if from_day:
+        query = query.where(ReceiptArchive.created_at >= uz_day_bounds_utc(from_day)[0])
+    if to_day:
+        query = query.where(ReceiptArchive.created_at < uz_day_bounds_utc(to_day)[1])
 
     if receipt_type:
         query = query.where(ReceiptArchive.receipt_type == receipt_type)
@@ -94,7 +103,7 @@ async def list_receipts(
             )
         )
 
-    query = query.order_by(ReceiptArchive.created_at.desc()).offset(offset).limit(limit)
+    query = query.order_by(ReceiptArchive.created_at.desc(), ReceiptArchive.id.desc()).offset(offset).limit(limit)
     result = await db.execute(query)
     receipts = result.scalars().all()
     return receipts

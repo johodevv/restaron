@@ -4,6 +4,7 @@ To'liq WebSocket integratsiyasi va 'Yetkazib berdim' funksiyasi bilan
 """
 import asyncio
 import uuid
+from pydantic import BaseModel, Field
 from datetime import datetime, timezone, timedelta
 from fastapi import APIRouter, Depends, HTTPException, status, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -53,6 +54,45 @@ from app.websockets.manager import manager
 from app.core.idempotency import IdempotencyHandler, get_idempotency_handler
 
 router = APIRouter(prefix="/orders", tags=["📋 Buyurtmalar"])
+
+
+class OrderServiceFeeRequest(BaseModel):
+    percent: float = Field(ge=0, le=100, allow_inf_nan=False)
+    expected_version: int = Field(gt=0)
+
+
+@router.patch('/{order_id}/service-fee', response_model=OrderResponse)
+async def set_order_service_fee(order_id: int, payload: OrderServiceFeeRequest,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_role('admin', 'cashier', 'developer'))):
+    from app.core.audit import log_audit_event
+    await lock_rows(db, Order, [order_id])
+    order = await load_order_full(db, order_id)
+    if not order:
+        raise HTTPException(404, 'Buyurtma topilmadi')
+    if order.is_paid or order.status in (OrderStatus.PAID, OrderStatus.CANCELLED):
+        raise HTTPException(409, 'Yopilgan hisobning xizmat haqini o‘zgartirib bo‘lmaydi')
+    if order.version != payload.expected_version:
+        raise HTTPException(409, 'Hisob o‘zgargan. Yangilangan hisobni tekshirib qayta saqlang')
+    if order.table_id:
+        await lock_rows(db, Table, [order.table_id])
+    before = dict(percent=order.service_fee_percent, total=order.total)
+    order.service_fee_percent = round(payload.percent, 2)
+    await recalc_order_totals(db, order)
+    deposit = (order.table.deposit_amount or 0) if order.table else 0
+    if order.total < 0 or deposit > order.total:
+        raise HTTPException(409, 'Yangi jami chegirma yoki avansdan kam; avval kassada tekshiring')
+    await db.flush()
+    audit = await log_audit_event(db, order.restaurant_id, 'order_service_fee_changed', user=user,
+        entity_type='order', entity_id=order.id,
+        details=dict(before=before, after=dict(percent=order.service_fee_percent, total=order.total)))
+    if audit is None:
+        raise HTTPException(500, 'O‘zgarish tarixi saqlanmadi; foiz o‘zgartirilmadi')
+    result = build_order_response(order)
+    await db.commit()
+    await manager.broadcast_to_restaurant(order.restaurant_id,
+        dict(type='order_updated', order_id=order.id, table_id=order.table_id, order=result.model_dump(mode='json')))
+    return result
 
 UZ_TZ = timezone(timedelta(hours=5))
 logger = logging.getLogger("orders")

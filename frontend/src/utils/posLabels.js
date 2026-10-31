@@ -6,6 +6,7 @@ const labels = [
   ['Band stollar', 'Занятые столы', 'Occupied tables'], ['Band stol yo‘q', 'Занятых столов нет', 'No occupied tables'], ['Zonasiz', 'Без зоны', 'No area'],
   ['Yetkazib berish', 'Доставка', 'Delivery'],
   ['Yangi buyurtma', 'Создать заказ', 'New order'],
+  ['Foizni o‘zgartirish', 'Изменить процент', 'Change rate'], ['Xizmat haqi (%)', 'Обслуживание (%)', 'Service fee (%)'],
   ['Hisob allaqachon yopilgan. Ro‘yxat yangilandi.', 'Счёт уже закрыт. Список обновлён.', 'This order is already closed. The list was refreshed.'],
   ['Stolni almashtirish', 'Сменить стол', 'Change table'], ['ta stol', 'столов', 'tables'],
   ['Ta’mirda', 'Недоступен', 'Unavailable'], ['Bron qilingan', 'Забронирован', 'Reserved'],

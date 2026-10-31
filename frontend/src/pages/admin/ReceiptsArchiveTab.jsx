@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import api from '../../utils/api';
 import {
   Receipt,
@@ -23,6 +23,12 @@ export const ReceiptsArchiveTab = ({ restaurantId }) => {
   const [search, setSearch] = useState('');
   const [receiptType, setReceiptType] = useState('');
   const [paymentMethod, setPaymentMethod] = useState('');
+  const [fromDay, setFromDay] = useState('');
+  const [toDay, setToDay] = useState('');
+  const [submittedSearch, setSubmittedSearch] = useState('');
+  const [page, setPage] = useState(0);
+  const [error, setError] = useState('');
+  const requestRef = useRef(0);
 
   // Thermal Receipt Modal
   const [thermalModalOpen, setThermalModalOpen] = useState(false);
@@ -31,36 +37,47 @@ export const ReceiptsArchiveTab = ({ restaurantId }) => {
   const [reprintingId, setReprintingId] = useState(null);
 
   const fetchReceipts = async () => {
+    const request = ++requestRef.current;
+    if (fromDay && toDay && fromDay > toDay) {
+      setError('Boshlanish sanasi tugash sanasidan katta bo‘lmasin.'); setReceipts([]); setLoading(false); return;
+    }
     setLoading(true);
+    setError('');
     try {
-      const params = new URLSearchParams({ restaurant_id: restaurantId, limit: '100' });
-      if (search.trim()) params.append('search', search.trim());
+      const params = new URLSearchParams({ restaurant_id: restaurantId, limit: '100', offset: String(page * 100) });
+      if (submittedSearch) params.append('search', submittedSearch);
+      if (fromDay) params.append('from_day', fromDay);
+      if (toDay) params.append('to_day', toDay);
       if (receiptType) params.append('receipt_type', receiptType);
       if (paymentMethod) params.append('payment_method', paymentMethod);
 
       const data = await api.get(`/receipts/?${params.toString()}`);
-      setReceipts(data || []);
+      if (request === requestRef.current) setReceipts(data || []);
     } catch (err) {
       console.error('Error fetching receipts archive:', err);
+      if (request === requestRef.current) { setError(err.message || 'Cheklar yuklanmadi.'); setReceipts([]); }
     } finally {
-      setLoading(false);
+      if (request === requestRef.current) setLoading(false);
     }
   };
 
   useEffect(() => {
     fetchReceipts();
-  }, [restaurantId, receiptType, paymentMethod]);
+    return () => { requestRef.current += 1; };
+  }, [restaurantId, receiptType, paymentMethod, fromDay, toDay, submittedSearch, page]);
 
   const handleSearchSubmit = (e) => {
     e.preventDefault();
-    fetchReceipts();
+    setPage(0); setSubmittedSearch(search.trim());
+    if (page === 0 && submittedSearch === search.trim()) fetchReceipts();
   };
 
   // Reprint Receipt from Archive
   const handleReprint = async (r) => {
     setReprintingId(r.id);
     try {
-      const res = await api.post(`/receipts/${r.id}/reprint`);
+      const res = await api.get(`/receipts/${r.id}`);
+      if (!res.raw_text) throw new Error('Bu chekda saqlangan matn yo‘q.');
       setThermalRawText(res.raw_text);
       setThermalTitle(`Chek #${r.receipt_number} (Arxivdan)`);
       setThermalModalOpen(true);
@@ -141,7 +158,7 @@ export const ReceiptsArchiveTab = ({ restaurantId }) => {
               </h3>
               <span className="text-[11px] text-theme-muted">
                 Quyidagi ro'yxatdagi {paid.length} ta chek bo'yicha
-                {(receiptType || paymentMethod || search) ? ' (filtr qo\'llangan)' : ''}
+                {(receiptType || paymentMethod || submittedSearch || fromDay || toDay) ? ' (filtr qo\'llangan)' : ''}
               </span>
             </div>
             <div className="grid grid-cols-2 lg:grid-cols-5 gap-2.5">
@@ -159,10 +176,17 @@ export const ReceiptsArchiveTab = ({ restaurantId }) => {
       {/* Filter and Search Bar */}
       <div className="p-4 rounded-2xl bg-black/40 border border-theme-border/70 flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-wrap items-center gap-2">
+          <label className="text-xs text-theme-muted">Sanadan (Toshkent)
+            <input type="date" aria-label="Boshlanish sanasi" value={fromDay} onChange={e => { setFromDay(e.target.value); setPage(0); }} className="block min-h-[44px] rounded-xl px-3 bg-theme-surface border border-theme-border text-white" />
+          </label>
+          <label className="text-xs text-theme-muted">Sanagacha (shu kun ham)
+            <input type="date" aria-label="Tugash sanasi" value={toDay} onChange={e => { setToDay(e.target.value); setPage(0); }} className="block min-h-[44px] rounded-xl px-3 bg-theme-surface border border-theme-border text-white" />
+          </label>
+          {(fromDay || toDay) && <button type="button" onClick={() => { setFromDay(''); setToDay(''); setPage(0); }} className="min-h-[44px] px-3 text-xs text-theme-muted">Sanani tozalash</button>}
           {/* Receipt Type Filter */}
           <select
             value={receiptType}
-            onChange={(e) => setReceiptType(e.target.value)}
+            onChange={(e) => { setReceiptType(e.target.value); setPage(0); }}
             className="px-3 py-1.5 rounded-xl bg-theme-surface border border-theme-border text-white text-xs focus:outline-none focus:border-theme-primary"
           >
             <option value="">Barcha Chek Turlari</option>
@@ -174,7 +198,7 @@ export const ReceiptsArchiveTab = ({ restaurantId }) => {
           {/* Payment Method Filter */}
           <select
             value={paymentMethod}
-            onChange={(e) => setPaymentMethod(e.target.value)}
+            onChange={(e) => { setPaymentMethod(e.target.value); setPage(0); }}
             className="px-3 py-1.5 rounded-xl bg-theme-surface border border-theme-border text-white text-xs focus:outline-none focus:border-theme-primary"
           >
             <option value="">Barcha To'lovlar</option>
@@ -206,6 +230,7 @@ export const ReceiptsArchiveTab = ({ restaurantId }) => {
         </form>
       </div>
 
+      {error && <p role="alert" className="p-3 rounded-xl bg-red-950 text-red-200">{error}</p>}
       {/* Receipts Table */}
       <div className="rounded-3xl glass-card border border-theme-border overflow-hidden shadow-2xl">
         <div className="overflow-x-auto">
@@ -245,7 +270,7 @@ export const ReceiptsArchiveTab = ({ restaurantId }) => {
                         #{r.receipt_number}
                       </td>
                       <td className="py-3 px-3 text-zinc-400 text-[11px] whitespace-nowrap">
-                        {r.created_at ? new Date(r.created_at).toLocaleString() : '—'}
+                        {r.created_at ? new Date(r.created_at).toLocaleString('uz-UZ', { timeZone: 'Asia/Tashkent' }) : '—'}
                       </td>
                       <td className="py-3 px-3 font-bold text-white font-sans whitespace-nowrap">
                         {r.table_name || '—'}
@@ -275,7 +300,7 @@ export const ReceiptsArchiveTab = ({ restaurantId }) => {
                           className="px-3 py-1.5 rounded-xl bg-theme-primary/15 hover:bg-theme-primary/25 border border-theme-primary/40 text-theme-primary hover:text-white text-xs font-bold flex items-center justify-center gap-1.5 transition-all shadow-sm active:scale-95 disabled:opacity-50 mx-auto"
                         >
                           <Printer className={`w-3.5 h-3.5 ${reprintingId === r.id ? 'animate-pulse' : ''}`} />
-                          <span>{reprintingId === r.id ? 'Yuklanmoqda...' : 'Chop etish'}</span>
+                          <span>{reprintingId === r.id ? 'Yuklanmoqda...' : 'Ko‘rish / chop etish'}</span>
                         </button>
                       </td>
                     </tr>
@@ -287,6 +312,11 @@ export const ReceiptsArchiveTab = ({ restaurantId }) => {
         </div>
       </div>
 
+      <div className="flex items-center justify-between gap-3 text-sm">
+        <button type="button" disabled={loading || page === 0} onClick={() => setPage(p => p - 1)} className="min-h-[44px] px-4 rounded-xl bg-theme-surface border border-theme-border disabled:opacity-40">Oldingi</button>
+        <span>{page + 1}-sahifa · {receipts.length} ta chek</span>
+        <button type="button" disabled={loading || receipts.length < 100} onClick={() => setPage(p => p + 1)} className="min-h-[44px] px-4 rounded-xl bg-theme-surface border border-theme-border disabled:opacity-40">Keyingi</button>
+      </div>
       {/* Realistic Thermal Receipt Modal for Xprinter */}
       <ThermalReceiptModal
         isOpen={thermalModalOpen}
